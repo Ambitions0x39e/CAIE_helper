@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Admin page not used while distribution
+pages/admin.py 
+
+# Virtual environments
+.venv
+
+# UserData
+.env
+
+# In development
+in_dev/
