@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from core.settings import AppSettings, MailConfig, app_settings
 from core.storage import CSVStore
-from modules.downloader import DownloadRequest, PaperDownloader
+from modules.downloader import DownloadRequest, DownloadSource, PaperDownloader
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
 from modules.visualizer import PaperVisualizer
@@ -118,18 +118,27 @@ tab_download, tab_manage, tab_analytics = st.tabs(
 with tab_download:
     st.header("Download Past Paper")
 
-    paper_id = st.text_input(
+    # Single-row two-column label bar: left = "Paper ID", right = source control
+    label_col, src_col = st.columns([3, 1], vertical_alignment="bottom")
+    paper_id = label_col.text_input(
         "Paper ID",
         placeholder="9702_s23_qp_11",
         help="Must follow the format: <subject>_<session>_qp_<variant>",
     )
+    source: DownloadSource = src_col.segmented_control(
+        "Source",
+        options=["CIEFrank", "PapaCambridge"],
+        default="CIEFrank",
+        key="dl_source",
+        label_visibility="visible",
+    )  # type: ignore[assignment]
 
     if st.button("⬇️ Download", type="primary"):
         if not paper_id:
             st.warning("Please enter a Paper ID.")
         else:
             try:
-                request = DownloadRequest(paper_id=paper_id)
+                request = DownloadRequest(paper_id=paper_id, source=source)
             except ValidationError as exc:
                 st.error(fmt_validation_error(exc))
                 st.stop()
