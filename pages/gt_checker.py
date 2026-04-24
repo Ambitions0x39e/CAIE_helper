@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from core.gt_parser import GTDocument, GTParser, GradeThreshold
 from core.settings import app_settings
 from core.storage import CSVStore
-from modules.downloader import DownloadRequest, PaperDownloader
+from modules.downloader import DownloadRequest, DownloadSource, PaperDownloader
 
 st.set_page_config(
     page_title="CIE Helper — GT Checker",
@@ -167,7 +167,16 @@ st.markdown(
     + " · ".join(f"`{c}`" for c in option.components)
 )
 
-# Session override (auto-filled from filename)
+# Source selector on top row, session input below
+src_col, _ = st.columns([1, 2])
+with src_col:
+    bulk_source: DownloadSource = st.segmented_control(
+        "Source",
+        options=["CIEFrank", "PapaCambridge"],
+        default="CIEFrank",
+        key="bulk_source",
+    )  # type: ignore[assignment]
+
 session_input = st.text_input(
     "Session",
     value=gt_doc.session,
@@ -190,7 +199,7 @@ if st.button("⬇️ Bulk Download All Components", type="primary"):
                 text=f"Downloading `{paper_id}`…",
             )
             try:
-                req = DownloadRequest(paper_id=paper_id)
+                req = DownloadRequest(paper_id=paper_id, source=bulk_source)
                 result = downloader.download(req)
                 dl_results[component] = result.success
                 if not result.success:

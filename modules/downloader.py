@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 import requests
 from pydantic import BaseModel, field_validator, model_validator
@@ -11,10 +11,24 @@ from core.models import PaperRecord
 from core.settings import app_settings
 from core.storage import CSVStore
 
-# Timeout for HTTP requests (connect, read) in seconds
-_BASE_URL: Final[str] = "https://cie.fraft.cn/obj/common/Fetch/redir"
 _REQUEST_TIMEOUT: Final[tuple[int, int]] = (10, 30)
 _CHUNK_SIZE: Final[int] = 8192
+
+# Source base URLs
+_URL_CIEFRANK: Final[str] = "https://cie.fraft.cn/obj/common/Fetch/redir"
+_URL_PAPACAMBRIDGE: Final[str] = (
+    "https://pastpapers.papacambridge.com/directories/CAIE/CAIE-pastpapers/upload"
+)
+
+DownloadSource = Literal["CIEFrank", "PapaCambridge"]
+_DEFAULT_SOURCE: Final[DownloadSource] = "CIEFrank"
+
+
+def _build_url(source: DownloadSource, filename: str) -> str:
+    """Construct the full PDF URL for a given source and filename stem."""
+    if source == "CIEFrank":
+        return f"{_URL_CIEFRANK}/{filename}.pdf"
+    return f"{_URL_PAPACAMBRIDGE}/{filename}.pdf"
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +41,8 @@ class DownloadRequest(BaseModel):
 
     model_config = {"strict": True}
 
-    paper_id: str  # e.g. 9702_s23_qp_11
+    paper_id: str
+    source: DownloadSource = _DEFAULT_SOURCE
 
     @field_validator("paper_id")
     @classmethod
@@ -46,7 +61,6 @@ class DownloadRequest(BaseModel):
 
     @model_validator(mode="after")
     def derive_ms_id(self) -> DownloadRequest:
-        # GT files have no MS counterpart
         if "_qp_" in self.paper_id:
             self._ms_id: str = self.paper_id.replace("_qp_", "_ms_")
         else:
@@ -63,11 +77,11 @@ class DownloadRequest(BaseModel):
 
     @property
     def qp_url(self) -> str:
-        return f"{_BASE_URL}/{self.paper_id}.pdf"
+        return _build_url(self.source, self.paper_id)
 
     @property
     def ms_url(self) -> str:
-        return f"{_BASE_URL}/{self.ms_id}.pdf"
+        return _build_url(self.source, self.ms_id)
 
 
 # ---------------------------------------------------------------------------

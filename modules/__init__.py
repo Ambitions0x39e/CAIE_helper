@@ -1,4 +1,4 @@
-from modules.downloader import DownloadRequest, DownloadResult, PaperDownloader
+from modules.downloader import DownloadRequest, DownloadResult, DownloadSource, PaperDownloader
 from modules.mailer import GoodNotesMailer, MailRequest, MailResult
 from modules.manager import (
     DeleteRequest,
@@ -13,6 +13,7 @@ from modules.visualizer import PaperVisualizer
 __all__ = [
     "DownloadRequest",
     "DownloadResult",
+    "DownloadSource",
     "PaperDownloader",
     "GoodNotesMailer",
     "MailRequest",
