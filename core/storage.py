@@ -93,9 +93,12 @@ class CSVStore:
             raise KeyError(f"paper_id '{paper_id}' not found in store")
         self.save_all(filtered)
 
-    def to_dataframe(self) -> pd.DataFrame:
+    def to_dataframe(
+        self, records: Sequence[PaperRecord] | None = None
+    ) -> pd.DataFrame:
         """Return a DataFrame of all records (useful for Streamlit display)."""
-        records = self.load_all()
+        if records is None:
+            records = self.load_all()
         return pd.DataFrame(
             [self._record_to_row(r) for r in records], columns=_COLUMNS
         )
