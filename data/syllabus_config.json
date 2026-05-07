@@ -90,7 +90,12 @@
   {
     "syllabus_id": "9231",
     "name": "Further Mathematics (AS-A2)",
-    "paper_types": []
+    "paper_types": [
+      { "digit": "1", "name": "Further Pure Mathematics 1" },
+      { "digit": "2", "name": "Further Pure Mathematics 2" },
+      { "digit": "3", "name": "Further Mechanics" },
+      { "digit": "4", "name": "Further Probability & Statistics" }
+    ]
   },
   {
     "syllabus_id": "9389",
@@ -108,11 +113,6 @@
     "paper_types": []
   },
   {
-    "syllabus_id": "9608",
-    "name": "Computer Science (AS-A2)",
-    "paper_types": []
-  },
-  {
     "syllabus_id": "9609",
     "name": "Business (AS-A2)",
     "paper_types": []
@@ -120,7 +120,10 @@
   {
     "syllabus_id": "9618",
     "name": "Computer Science (AS-A2)",
-    "paper_types": []
+    "paper_types": [
+      { "digit": "1", "name": "AS Theory" },
+      { "digit": "2", "name": "AS Programming" }
+    ]
   },
   {
     "syllabus_id": "9696",
