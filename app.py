@@ -319,7 +319,7 @@ with tab_manage:
 
         # ── List view ────────────────────────────────────────────
         elif view == "List":
-            hide_completed = st.toggle("Hide completed", value=False)
+            hide_completed = st.toggle("Hide completed", value=True)
 
             filtered = all_records
             if hide_completed:

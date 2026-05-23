@@ -18,10 +18,10 @@ class MailConfig(BaseSettings):
         populate_by_name=True,
     )
 
-    smtp_server: str = Field(default="smtp.gmail.com")
+    smtp_server: str | None = Field(default="smtp.gmail.com")
     smtp_port: int = Field(default=465, ge=1, le=65535)
     sender_email: EmailStr
-    sender_app_password: SecretStr
+    sender_app_password: SecretStr | None
     goodnotes_email: EmailStr
 
     @field_validator("smtp_port", mode="before")
