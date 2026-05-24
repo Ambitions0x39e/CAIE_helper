@@ -71,7 +71,7 @@ def submit_score_dialog():
     raw = col1.number_input("Score Achieved", min_value=0.0, step=1.0)
     total = col2.number_input("Total Marks", min_value=0.1, step=1.0, value=100.0)
 
-    if st.button("✅ Submit", type="primary", use_container_width=True):
+    if st.button("✅ Submit", type="primary", width="stretch"):
         try:
             update = ScoreUpdate(
                 paper_id=selected_id,
@@ -294,7 +294,7 @@ with tab_manage:
         # ── Database view ────────────────────────────────────────
         if view is None or view == "Database":
             df = store.to_dataframe(all_records)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
             st.subheader("Open PDF Locally")
             all_ids = [r.paper_id for r in all_records]
@@ -319,7 +319,7 @@ with tab_manage:
 
         # ── List view ────────────────────────────────────────────
         elif view == "List":
-            hide_completed = st.toggle("Hide completed", value=False)
+            hide_completed = st.toggle("Hide completed", value=True)
 
             filtered = all_records
             if hide_completed:
