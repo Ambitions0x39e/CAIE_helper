@@ -202,7 +202,7 @@ class PaperManager:
             for attr in ("qp_path", "ms_path"):
                 raw_path: str = getattr(target, attr)
                 path = Path(raw_path)
-                if path.exists():
+                if raw_path and path.exists():
                     try:
                         path.unlink()
                         files_deleted.append(str(path))

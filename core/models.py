@@ -13,8 +13,8 @@ class PaperRecord(BaseModel):
 
     paper_id: str
     status: Literal["Pending", "Completed"] = "Pending"
-    qp_path: str
-    ms_path: str
+    qp_path: str = ""
+    ms_path: str = ""
     score_raw: float | None = None
     score_total: float | None = None
     sent_to_gn: bool = False
@@ -60,11 +60,8 @@ class PaperRecord(BaseModel):
 
     @field_validator("qp_path", "ms_path")
     @classmethod
-    def paths_must_be_non_empty(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("File path cannot be empty")
-        return v
+    def paths_strip(cls, v: str) -> str:
+        return v.strip()
 
     # ------------------------------------------------------------------
     # Cross-field validators

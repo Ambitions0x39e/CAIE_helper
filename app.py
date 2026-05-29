@@ -201,7 +201,18 @@ with tab_download:
         label_visibility="visible",
     )  # type: ignore[assignment]
 
-    if st.button("⬇️ Download", type="primary"):
+    st.markdown(
+        "<style>"
+        "div[data-testid='stHorizontalBlock']:has([data-testid='stBaseButton-primary'])"
+        "{gap:0!important}"
+        " div[data-testid='stHorizontalBlock']:has([data-testid='stBaseButton-primary'])>div"
+        "{padding-left:0!important;padding-right:0!important}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    btn_col1, btn_col2, _ = st.columns([1, 1, 4])
+
+    if btn_col1.button("⬇️ Download", type="primary"):
         if not paper_id:
             st.warning("Please enter a Paper ID.")
         else:
@@ -226,6 +237,17 @@ with tab_download:
                     # Store the downloaded paper_id so the Send button can reference it
                     st.session_state["last_downloaded_id"] = result.paper_id
                     st.session_state["last_downloaded_qp"] = result.qp_path
+
+    if btn_col2.button("📝 Record"):
+        if not paper_id:
+            st.warning("Please enter a Paper ID.")
+        else:
+            downloader = PaperDownloader(store=store)
+            result = downloader.record_only(paper_id)
+            if not result.success:
+                st.error(f"Record failed: {result.error}")
+            else:
+                st.success(f"✅ Recorded (no PDF): `{result.paper_id}`")
 
     # Send to GoodNotes — only shown after a successful download
     if "last_downloaded_id" in st.session_state:

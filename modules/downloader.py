@@ -173,6 +173,27 @@ class PaperDownloader:
             ms_path=str(ms_path),
         )
 
+    def record_only(self, paper_id: str) -> DownloadResult:
+        """
+        Register a paper in the store without downloading its PDFs.
+        Useful for papers completed on physical copies.
+        Reuses DownloadRequest's paper_id format validation.
+        """
+        try:
+            request = DownloadRequest(paper_id=paper_id)
+        except Exception as exc:  # noqa: BLE001
+            return DownloadResult(success=False, paper_id=paper_id, error=str(exc))
+
+        record = PaperRecord(paper_id=request.paper_id, status="Pending")
+        try:
+            self._store.append(record)
+        except ValueError as exc:
+            return DownloadResult(
+                success=False, paper_id=request.paper_id, error=str(exc)
+            )
+
+        return DownloadResult(success=True, paper_id=request.paper_id)
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
