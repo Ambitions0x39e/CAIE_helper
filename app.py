@@ -372,7 +372,47 @@ with tab_manage:
                                 if not res.success:
                                     st.error(res.error)
 
-                            with bc3.popover("🗑️"):
+                            with bc3.popover("···"):
+                                # ── Send to GoodNotes ──────────────────
+                                _gn_disabled = mail_config is None or not record.qp_path
+                                _gn_help = (
+                                    "Configure SMTP in the sidebar first."
+                                    if mail_config is None
+                                    else "No QP file for this record."
+                                    if not record.qp_path
+                                    else None
+                                )
+                                if st.button(
+                                    "📨 Send to GoodNotes",
+                                    key=f"lgn_{record.paper_id}",
+                                    disabled=_gn_disabled,
+                                    help=_gn_help,
+                                ):
+                                    try:
+                                        mail_req = MailRequest(
+                                            paper_id=record.paper_id,
+                                            qp_path=record.qp_path,
+                                        )
+                                    except ValidationError as exc:
+                                        st.error(fmt_validation_error(exc))
+                                        mail_req = None
+                                    if mail_req is not None:
+                                        with st.spinner("Sending…"):
+                                            mailer = GoodNotesMailer(
+                                                config=mail_config,  # type: ignore[arg-type]
+                                                store=store,
+                                            )
+                                            mail_res = mailer.send(mail_req)
+                                        if mail_res.success:
+                                            st.success(f"✅ Sent to {mail_res.recipient}")
+                                            if mail_res.error:
+                                                st.warning(mail_res.error)
+                                        else:
+                                            st.error(f"Failed: {mail_res.error}")
+
+                                st.divider()
+
+                                # ── Delete ─────────────────────────────
                                 st.caption(
                                     f"Delete **{record.paper_id}**?"
                                 )
