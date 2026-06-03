@@ -91,6 +91,12 @@ class PaperVisualizer:
     # Private: overall metrics
     # ------------------------------------------------------------------
 
+    def _render_paper_type_metrics(self, df: pd.DataFrame) -> None:
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Attempts", len(df))
+        col2.metric("Average", f"{df['percentage'].mean():.1f}%")
+        col3.metric("Best", f"{df['percentage'].max():.1f}%")
+
     def _render_overall_metrics(self, df: pd.DataFrame) -> None:
         st.markdown("**Overall**")
         avg = df["percentage"].mean()
@@ -150,15 +156,22 @@ class PaperVisualizer:
                     type_df = syl_df[syl_df["paper_type_digit"] == digit].copy()
                     type_df = type_df.reset_index(drop=True)
                     type_df["attempt"] = type_df.index + 1
-                    self._render_trend_chart(type_df, label=f"Paper {digit}")
+                    self._render_trend_chart(type_df, label=f"Paper {digit}", show_metrics=True)
                     self._render_score_table(type_df)
 
     # ------------------------------------------------------------------
     # Private: chart + table
     # ------------------------------------------------------------------
 
-    def _render_trend_chart(self, df: pd.DataFrame, label: str = "Score Trend") -> None:
+    def _render_trend_chart(
+        self,
+        df: pd.DataFrame,
+        label: str = "Score Trend",
+        show_metrics: bool = False,
+    ) -> None:
         st.markdown(f"**{label} — Trend**")
+        if show_metrics:
+            self._render_paper_type_metrics(df)
         if len(df) < _MIN_PAPERS_FOR_TREND:
             st.caption("Need at least 2 attempts to draw a trend line.")
             return
