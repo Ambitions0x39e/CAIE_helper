@@ -18,35 +18,28 @@ def _completed(paper_id: str, raw: float, total: float) -> PaperRecord:
     )
 
 
-def test_render_paper_type_metrics_shows_three_columns(monkeypatch):
-    """_render_paper_type_metrics renders 3 columns with Attempts, Average, Best."""
-    calls: list[tuple[str, object]] = []
-
-    class FakeCol:
-        def metric(self, label: str, value: object) -> None:
-            calls.append((label, value))
-
+def test_render_trend_chart_merges_metrics_into_heading(monkeypatch):
+    """_render_trend_chart with show_metrics=True renders title + Attempts/Average/Best inline."""
+    markdowns: list[str] = []
     monkeypatch.setattr(
-        "streamlit.columns",
-        lambda n: [FakeCol(), FakeCol(), FakeCol()],
+        "streamlit.markdown",
+        lambda text, unsafe_allow_html=False: markdowns.append(text),
     )
+    monkeypatch.setattr("streamlit.caption", lambda text: None)
+    monkeypatch.setattr("streamlit.line_chart", lambda *a, **kw: None)
 
     records = [_completed("9702_s23_qp_11", 60, 100), _completed("9702_s24_qp_11", 80, 100)]
     viz = PaperVisualizer(records=records)
 
-    df = pd.DataFrame([{"percentage": 60.0}, {"percentage": 80.0}])
-    viz._render_paper_type_metrics(df)
+    df = pd.DataFrame(
+        [{"percentage": 60.0, "attempt": 1}, {"percentage": 80.0, "attempt": 2}]
+    )
+    viz._render_trend_chart(df, label="Paper 1", show_metrics=True)
 
-    labels = [c[0] for c in calls]
-    assert "Attempts" in labels
-    assert "Average" in labels
-    assert "Best" in labels
-
-    attempts_val = next(v for l, v in calls if l == "Attempts")
-    assert attempts_val == 2
-
-    avg_val = next(v for l, v in calls if l == "Average")
-    assert avg_val == "70.0%"
-
-    best_val = next(v for l, v in calls if l == "Best")
-    assert best_val == "80.0%"
+    assert markdowns, "Expected at least one st.markdown call"
+    heading = markdowns[0]
+    assert "Paper 1" in heading
+    assert "Attempts: 2" in heading
+    assert "Average: 70.0%" in heading
+    assert "Best: 80.0%" in heading
+    assert "Trend" not in heading

@@ -91,12 +91,6 @@ class PaperVisualizer:
     # Private: overall metrics
     # ------------------------------------------------------------------
 
-    def _render_paper_type_metrics(self, df: pd.DataFrame) -> None:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Attempts", len(df))
-        col2.metric("Average", f"{df['percentage'].mean():.1f}%")
-        col3.metric("Best", f"{df['percentage'].max():.1f}%")
-
     def _render_overall_metrics(self, df: pd.DataFrame) -> None:
         st.markdown("**Overall**")
         avg = df["percentage"].mean()
@@ -169,9 +163,19 @@ class PaperVisualizer:
         label: str = "Score Trend",
         show_metrics: bool = False,
     ) -> None:
-        st.markdown(f"**{label} — Trend**")
         if show_metrics:
-            self._render_paper_type_metrics(df)
+            attempts = len(df)
+            avg = df["percentage"].mean()
+            best = df["percentage"].max()
+            st.markdown(
+                f"**{label}** &nbsp;<small style='color:gray'>"
+                f"Attempts: {attempts} &nbsp;·&nbsp; "
+                f"Average: {avg:.1f}% &nbsp;·&nbsp; "
+                f"Best: {best:.1f}%</small>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(f"**{label}**")
         if len(df) < _MIN_PAPERS_FOR_TREND:
             st.caption("Need at least 2 attempts to draw a trend line.")
             return
