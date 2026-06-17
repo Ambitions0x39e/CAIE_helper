@@ -82,8 +82,14 @@ def submit_score_dialog():
 
     selected_id = st.selectbox("Select Paper", options=pending_ids)
     col1, col2 = st.columns(2)
-    raw = col1.number_input("Score Achieved", min_value=0.0, step=1.0)
-    total = col2.number_input("Total Marks", min_value=0.1, step=1.0, value=100.0)
+    raw = col1.number_input(
+        "Score Achieved", min_value=0.0, step=1.0,
+        key=f"draft_raw_{selected_id}",
+    )
+    total = col2.number_input(
+        "Total Marks", min_value=0.1, step=1.0, value=100.0,
+        key=f"draft_total_{selected_id}",
+    )
 
     if st.button("✅ Submit", type="primary", width="stretch"):
         try:
