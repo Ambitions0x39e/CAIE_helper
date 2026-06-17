@@ -3,12 +3,26 @@ from __future__ import annotations
 import streamlit as st
 from pydantic import ValidationError
 
-from core.settings import AppSettings, MailConfig, app_settings
+from core.settings import AppSettings, GraderConfig, MailConfig, app_settings
 from core.storage import CSVStore
 from modules.downloader import DownloadRequest, DownloadSource, PaperDownloader
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
 from modules.visualizer import PaperVisualizer
+from core.models import PaperType, SUBJECT_PAPER_TYPES, detect_paper_type
+from modules.ms_parser import PaperConfig, parse_mark_scheme
+from modules.grader import (
+    GradingReport,
+    QuestionResult,
+    detect_handwriting_pages,
+    grade_question,
+    parse_grading_result,
+    render_pages,
+)
+import fitz
+import json
+import tempfile
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +161,47 @@ with st.sidebar:
         except OSError as exc:
             st.error(f"Could not write .env: {exc}")
 
+    st.divider()
+    st.markdown("**Grader API (Qwen-VL)**")
+
+    _grader_saved = GraderConfig.try_load()
+
+    grader_api_key = st.text_input(
+        "API Key",
+        type="password",
+        value=_grader_saved.api_key.get_secret_value() if _grader_saved else "",
+        key="grader_api_key",
+    )
+    grader_base_url = st.text_input(
+        "Base URL",
+        value=_grader_saved.base_url if _grader_saved else "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        key="grader_base_url",
+    )
+    grader_model = st.text_input(
+        "Model",
+        value=_grader_saved.model if _grader_saved else "qwen3-vl-flash",
+        key="grader_model",
+    )
+
+    grader_config: GraderConfig | None = None
+    if grader_api_key:
+        try:
+            grader_config = GraderConfig(
+                api_key=grader_api_key,
+                base_url=grader_base_url,
+                model=grader_model,
+            )
+            st.success("✅ Grader API config valid")
+        except ValidationError as exc:
+            st.error(fmt_validation_error(exc))
+
+    if st.button("💾 Save grader credentials", disabled=grader_config is None):
+        try:
+            grader_config.save_to_env()
+            st.success("Saved to .env")
+        except OSError as exc:
+            st.error(f"Could not write .env: {exc}")
+
 
 # ---------------------------------------------------------------------------
 # Submit Score — fixed top-right button
@@ -175,8 +230,8 @@ st.markdown(
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_download, tab_manage, tab_analytics = st.tabs(
-    ["📥 Download", "📋 Manage", "📊 Analytics"]
+tab_download, tab_manage, tab_analytics, tab_mark = st.tabs(
+    ["📥 Download", "📋 Manage", "📊 Analytics", "✏️ Mark"]
 )
 
 # ---------------------------------------------------------------------------
@@ -477,3 +532,296 @@ with tab_analytics:
     if all_records is not None:
         visualizer = PaperVisualizer(records=all_records)
         visualizer.render()
+
+# ---------------------------------------------------------------------------
+# Tab 4 — Mark (AI Grading)
+# ---------------------------------------------------------------------------
+
+with tab_mark:
+    st.header("AI-Powered Grading")
+    st.caption("Parse a mark scheme, upload your answer paper, and let AI grade it question by question.")
+
+    if grader_config is None:
+        st.warning("Configure the Grader API credentials in the sidebar first.")
+    else:
+        # ── Step 1: Select / parse mark scheme ─────────────────
+        st.subheader("Step 1 — Mark Scheme")
+
+        ms_source = st.radio(
+            "Mark scheme source",
+            options=["From downloaded paper", "Upload PDF"],
+            horizontal=True,
+            key="ms_source",
+        )
+
+        ms_pdf_path: str | None = None
+        paper_type: PaperType | None = None
+
+        if ms_source == "From downloaded paper":
+            try:
+                all_records = store.load_all()
+            except ValueError:
+                all_records = []
+
+            supported_records = [
+                r for r in all_records
+                if r.ms_path and detect_paper_type(r.paper_id) is not None
+            ]
+
+            if not supported_records:
+                st.info("No supported papers with mark schemes found. Download a math/further-math paper first, or upload directly.")
+            else:
+                ms_paper = st.selectbox(
+                    "Select paper",
+                    options=[r.paper_id for r in supported_records],
+                    key="ms_paper_select",
+                )
+                target = next((r for r in supported_records if r.paper_id == ms_paper), None)
+                if target:
+                    ms_pdf_path = target.ms_path
+                    paper_type = detect_paper_type(target.paper_id)
+        else:
+            uploaded_ms = st.file_uploader(
+                "Upload Mark Scheme PDF",
+                type=["pdf"],
+                key="ms_upload",
+            )
+            if uploaded_ms is not None:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                tmp.write(uploaded_ms.read())
+                tmp.flush()
+                ms_pdf_path = tmp.name
+                paper_type = PaperType.MATH
+
+        start_page = st.number_input(
+            "Mark scheme content starts at page",
+            min_value=1,
+            value=6,
+            help="CIE mark schemes typically have headers on pages 1-5. Content starts on page 6.",
+            key="ms_start_page",
+        )
+
+        if ms_pdf_path and paper_type and st.button("🔍 Parse Mark Scheme", type="primary"):
+            with st.spinner("Parsing mark scheme…"):
+                try:
+                    paper_config = parse_mark_scheme(ms_pdf_path, paper_type=paper_type, start_page=start_page)
+                    st.session_state["paper_config"] = paper_config
+                    st.session_state["paper_type"] = paper_type
+                    st.success(
+                        f"Parsed **{paper_config.paper_id}** — "
+                        f"{len(paper_config.questions)} questions, "
+                        f"{paper_config.total_marks} total marks"
+                    )
+                except Exception as exc:
+                    st.error(f"Failed to parse mark scheme: {exc}")
+
+        # Show parsed config
+        if "paper_config" in st.session_state:
+            pc: PaperConfig = st.session_state["paper_config"]
+            with st.expander(f"Parsed: {pc.paper_id} ({len(pc.questions)} questions)", expanded=False):
+                for qid, qcfg in pc.questions.items():
+                    st.markdown(f"**{qid}** — {qcfg.max_marks} marks")
+                    st.code(qcfg.mark_scheme, language=None)
+
+            # ── Step 2: Upload answer paper ─────────────────────
+            st.divider()
+            st.subheader("Step 2 — Answer Paper")
+
+            uploaded_answer = st.file_uploader(
+                "Upload annotated answer paper (PDF from GoodNotes)",
+                type=["pdf"],
+                key="answer_upload",
+            )
+
+            if uploaded_answer is not None:
+                answer_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                answer_tmp.write(uploaded_answer.read())
+                answer_tmp.flush()
+                st.session_state["answer_pdf_path"] = answer_tmp.name
+
+            if "answer_pdf_path" in st.session_state:
+                answer_doc = fitz.open(st.session_state["answer_pdf_path"])
+                total_pages = len(answer_doc)
+                hw_pages = detect_handwriting_pages(answer_doc)
+                answer_doc.close()
+
+                st.info(
+                    f"PDF has **{total_pages}** pages. "
+                    f"Handwriting detected on pages: **{hw_pages or 'none'}**"
+                )
+
+                # Page assignment per question
+                st.markdown("**Assign pages to questions:**")
+                page_assignments: dict[str, list[int]] = {}
+
+                cols_per_row = 3
+                q_items = list(pc.questions.items())
+                for row_start in range(0, len(q_items), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    for col_idx, (qid, qcfg) in enumerate(q_items[row_start:row_start + cols_per_row]):
+                        with cols[col_idx]:
+                            pages_str = st.text_input(
+                                f"{qid} ({qcfg.max_marks}m)",
+                                placeholder="e.g. 2,3",
+                                key=f"pages_{qid}",
+                                help="Comma-separated page numbers (1-indexed)",
+                            )
+                            if pages_str.strip():
+                                try:
+                                    pages = [int(p.strip()) for p in pages_str.split(",") if p.strip()]
+                                    page_assignments[qid] = pages
+                                except ValueError:
+                                    st.error(f"Invalid page numbers for {qid}")
+
+                # ── Step 3: Grade ─────────────────────────────────
+                st.divider()
+                st.subheader("Step 3 — Grade")
+
+                # Thinking mode toggle
+                enable_thinking = st.toggle(
+                    "Enable thinking mode",
+                    value=grader_config.enable_thinking,
+                    key="mark_thinking_toggle",
+                    help="Let the model reason step-by-step before grading (slower but potentially more accurate)",
+                )
+
+                questions_to_grade = st.multiselect(
+                    "Questions to grade",
+                    options=list(pc.questions.keys()),
+                    default=list(page_assignments.keys()),
+                    key="grade_questions",
+                )
+
+                can_grade = (
+                    questions_to_grade
+                    and all(q in page_assignments for q in questions_to_grade)
+                )
+
+                if not can_grade and questions_to_grade:
+                    missing = [q for q in questions_to_grade if q not in page_assignments]
+                    st.warning(f"Assign pages to: {', '.join(missing)}")
+
+                if st.button("🚀 Start Grading", type="primary", disabled=not can_grade):
+                    # Apply thinking toggle to a copy of grader config
+                    grade_cfg = GraderConfig(
+                        api_key=grader_config.api_key.get_secret_value(),
+                        base_url=grader_config.base_url,
+                        model=grader_config.model,
+                        dpi=grader_config.dpi,
+                        enable_thinking=enable_thinking,
+                    )
+
+                    answer_doc = fitz.open(st.session_state["answer_pdf_path"])
+                    results: list[QuestionResult] = []
+                    total_score = 0
+                    total_max = 0
+
+                    progress = st.progress(0, text="Grading…")
+                    for i, qid in enumerate(questions_to_grade):
+                        progress.progress(
+                            (i) / len(questions_to_grade),
+                            text=f"Grading {qid}…",
+                        )
+                        qcfg = pc.questions[qid]
+                        pages = page_assignments[qid]
+                        images = render_pages(answer_doc, pages, dpi=grade_cfg.dpi)
+
+                        try:
+                            raw = grade_question(
+                                config=grade_cfg,
+                                images=images,
+                                question_id=qid,
+                                mark_scheme=qcfg.mark_scheme,
+                                max_marks=qcfg.max_marks,
+                                paper_type=st.session_state.get("paper_type", PaperType.MATH),
+                            )
+                            result = parse_grading_result(raw)
+                            results.append(result)
+                            total_score += result.total
+                            total_max += result.max
+                        except Exception as exc:
+                            st.error(f"Failed to grade {qid}: {exc}")
+
+                    progress.progress(1.0, text="Done!")
+                    answer_doc.close()
+
+                    # Save results to temp JSON for two-phase persistence
+                    report = GradingReport(
+                        results=results,
+                        total_score=total_score,
+                        total_max=total_max,
+                    )
+                    tmp_result = tempfile.NamedTemporaryFile(
+                        delete=False, suffix=".json", mode="w", encoding="utf-8",
+                    )
+                    tmp_result.write(report.model_dump_json(indent=2))
+                    tmp_result.flush()
+                    tmp_result.close()
+
+                    st.session_state["grading_results"] = results
+                    st.session_state["grading_total"] = (total_score, total_max)
+                    st.session_state["grading_temp_path"] = tmp_result.name
+                    st.session_state["grading_confirmed"] = False
+
+                # ── Results display ─────────────────────────────
+                if "grading_results" in st.session_state:
+                    st.divider()
+                    st.subheader("Results")
+
+                    score, max_score = st.session_state["grading_total"]
+                    pct = (score / max_score * 100) if max_score > 0 else 0
+
+                    mc1, mc2, mc3 = st.columns(3)
+                    mc1.metric("Total Score", f"{score}/{max_score}")
+                    mc2.metric("Percentage", f"{pct:.1f}%")
+                    mc3.metric("Questions Graded", len(st.session_state["grading_results"]))
+
+                    for result in st.session_state["grading_results"]:
+                        with st.expander(
+                            f"{result.question} — {result.total}/{result.max}",
+                            expanded=True,
+                        ):
+                            for m in result.marks:
+                                icon = "✅" if m.awarded else "❌"
+                                st.markdown(f"{icon} **{m.code}**: {m.reason}")
+                            if result.comment:
+                                st.info(f"💬 {result.comment}")
+
+                    # Two-phase persistence: Confirm & Log
+                    if not st.session_state.get("grading_confirmed", False):
+                        st.divider()
+                        st.caption("Review the results above. Click below to log the score to your records.")
+                        if st.button("✅ Confirm & Log Score", type="primary"):
+                            # Find the paper record and update its score
+                            try:
+                                records = store.load_all()
+                                # Try to match paper_id from the parsed config
+                                paper_id_match = None
+                                if ms_source == "From downloaded paper" and "ms_paper_select" in st.session_state:
+                                    paper_id_match = st.session_state.get("ms_paper_select")
+
+                                if paper_id_match:
+                                    target_rec = next((r for r in records if r.paper_id == paper_id_match), None)
+                                    if target_rec:
+                                        from core.models import PaperRecord
+                                        updated = target_rec.model_copy(update={
+                                            "score_raw": float(score),
+                                            "score_total": float(max_score),
+                                            "status": "Completed",
+                                        })
+                                        store.update(updated)
+                                        st.session_state["grading_confirmed"] = True
+                                        st.success(f"Score {score}/{max_score} logged for `{paper_id_match}`!")
+                                        # Clean up temp file
+                                        temp_path = st.session_state.get("grading_temp_path")
+                                        if temp_path:
+                                            Path(temp_path).unlink(missing_ok=True)
+                                    else:
+                                        st.warning("Could not find matching paper record to update.")
+                                else:
+                                    st.info(f"Score: {score}/{max_score} ({pct:.1f}%). Use 'Submit Score' to log to a specific paper.")
+                                    st.session_state["grading_confirmed"] = True
+                            except Exception as exc:
+                                st.error(f"Failed to log score: {exc}")
+                    else:
+                        st.success("Score has been logged.")
