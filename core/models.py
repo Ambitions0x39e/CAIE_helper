@@ -1,9 +1,27 @@
 from __future__ import annotations
 
 import datetime
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, computed_field, field_validator, model_validator
+
+
+class PaperType(str, Enum):
+    """Paper component type — determines parser, prompt, and UI workflow."""
+    MATH = "math"
+
+
+SUBJECT_PAPER_TYPES: dict[str, PaperType] = {
+    "9709": PaperType.MATH,
+    "9231": PaperType.MATH,
+}
+
+
+def detect_paper_type(paper_id: str) -> PaperType | None:
+    """Resolve a paper_id (e.g. '9231_w22_qp_41') to its PaperType, or None if unsupported."""
+    subject = paper_id.split("_")[0] if "_" in paper_id else paper_id[:4]
+    return SUBJECT_PAPER_TYPES.get(subject)
 
 
 class PaperRecord(BaseModel):
