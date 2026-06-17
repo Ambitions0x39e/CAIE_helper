@@ -73,6 +73,55 @@ class MailConfig(BaseSettings):
         )
 
 
+class GraderConfig(BaseSettings):
+    """API credentials for the AI grader (Qwen-VL via Bailian)."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+        env_prefix="GRADER_",
+    )
+
+    api_key: SecretStr
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: str = "qwen3-vl-flash"
+    dpi: int = Field(default=200, ge=72, le=600)
+    enable_thinking: bool = False
+
+    @classmethod
+    def try_load(cls) -> "GraderConfig | None":
+        try:
+            return cls()
+        except Exception:
+            return None
+
+    def save_to_env(self) -> None:
+        new_values: dict[str, str] = {
+            "GRADER_API_KEY": self.api_key.get_secret_value(),
+            "GRADER_BASE_URL": self.base_url,
+            "GRADER_MODEL": self.model,
+        }
+
+        existing_lines: list[str] = []
+        if _ENV_PATH.exists():
+            existing_lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+
+        managed_keys = set(new_values.keys())
+        kept_lines = [
+            line for line in existing_lines
+            if not any(line.startswith(k + "=") for k in managed_keys)
+            and line.strip() != ""
+        ]
+
+        new_lines = [f"{k}={v}" for k, v in new_values.items()]
+        _ENV_PATH.write_text(
+            "\n".join(kept_lines + new_lines) + "\n",
+            encoding="utf-8",
+        )
+
+
 class AppSettings(BaseSettings):
     """Application-level path configuration."""
 
