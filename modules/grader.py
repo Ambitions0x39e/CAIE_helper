@@ -127,6 +127,30 @@ def render_pages(
     return images
 
 
+def render_question_regions(
+    doc: fitz.Document,
+    clips: list,
+    dpi: int = 200,
+) -> list[bytes]:
+    """Render cropped question regions to PNG images.
+
+    Args:
+        doc: opened PyMuPDF document.
+        clips: list of PageClip objects (page_idx, y_top, y_bottom).
+        dpi: render resolution.
+
+    Returns:
+        List of PNG bytes, one per clip.
+    """
+    images = []
+    for clip in clips:
+        page = doc[clip.page_idx]
+        rect = fitz.Rect(0, clip.y_top, page.rect.width, clip.y_bottom)
+        pix = page.get_pixmap(dpi=dpi, clip=rect)
+        images.append(pix.tobytes("png"))
+    return images
+
+
 def grade_question(
     config: GraderConfig,
     images: list[bytes],
