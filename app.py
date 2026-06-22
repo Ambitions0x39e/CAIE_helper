@@ -18,7 +18,9 @@ from modules.grader import (
     grade_question,
     parse_grading_result,
     render_pages,
+    render_question_regions,
 )
+from modules.page_segmenter import segment_questions, validate_regions
 import fitz
 import json
 import tempfile
@@ -649,35 +651,67 @@ with tab_mark:
                 answer_doc = fitz.open(st.session_state["answer_pdf_path"])
                 total_pages = len(answer_doc)
                 hw_pages = detect_handwriting_pages(answer_doc)
-                answer_doc.close()
 
                 st.info(
                     f"PDF has **{total_pages}** pages. "
                     f"Handwriting detected on pages: **{hw_pages or 'none'}**"
                 )
 
-                # Page assignment per question
-                st.markdown("**Assign pages to questions:**")
-                page_assignments: dict[str, list[int]] = {}
+                # ── Auto-detect question regions ──────────────────
+                question_ids = list(pc.questions.keys())
+                regions = segment_questions(answer_doc, question_ids)
+                region_map: dict[str, list] = {r.question_id: r.clips for r in regions}
+                matched_ids, unmatched_ids = validate_regions(regions, question_ids)
+                answer_doc.close()
 
-                cols_per_row = 3
-                q_items = list(pc.questions.items())
-                for row_start in range(0, len(q_items), cols_per_row):
-                    cols = st.columns(cols_per_row)
-                    for col_idx, (qid, qcfg) in enumerate(q_items[row_start:row_start + cols_per_row]):
-                        with cols[col_idx]:
-                            pages_str = st.text_input(
-                                f"{qid} ({qcfg.max_marks}m)",
-                                placeholder="e.g. 2,3",
-                                key=f"pages_{qid}",
-                                help="Comma-separated page numbers (1-indexed)",
+                auto_ok = len(matched_ids) == len(question_ids)
+                manual_override = st.toggle(
+                    "Manual page assignment (override auto-detection)",
+                    value=not auto_ok,
+                    key="manual_override_toggle",
+                )
+
+                if not manual_override and regions:
+                    if auto_ok:
+                        st.success(f"Auto-detected regions for all {len(regions)} questions.")
+                    else:
+                        st.warning(
+                            f"Auto-detected {len(matched_ids)}/{len(question_ids)} questions. "
+                            f"Missing: {', '.join(unmatched_ids)}"
+                        )
+
+                    with st.expander("Detected regions", expanded=False):
+                        for r in regions:
+                            clips_desc = ", ".join(
+                                f"pg {c.page_idx + 1} y={c.y_top:.0f}–{c.y_bottom:.0f}"
+                                for c in r.clips
                             )
-                            if pages_str.strip():
-                                try:
-                                    pages = [int(p.strip()) for p in pages_str.split(",") if p.strip()]
-                                    page_assignments[qid] = pages
-                                except ValueError:
-                                    st.error(f"Invalid page numbers for {qid}")
+                            st.text(f"{r.question_id}: {clips_desc}")
+
+                # ── Manual fallback ───────────────────────────────
+                page_assignments: dict[str, list[int]] = {}
+                if manual_override or not regions:
+                    if not regions:
+                        st.info("No question regions detected (PDF may lack a text layer). Assign pages manually.")
+                    st.markdown("**Assign pages to questions:**")
+                    cols_per_row = 3
+                    q_items = list(pc.questions.items())
+                    for row_start in range(0, len(q_items), cols_per_row):
+                        cols = st.columns(cols_per_row)
+                        for col_idx, (qid, qcfg) in enumerate(q_items[row_start:row_start + cols_per_row]):
+                            with cols[col_idx]:
+                                pages_str = st.text_input(
+                                    f"{qid} ({qcfg.max_marks}m)",
+                                    placeholder="e.g. 2,3",
+                                    key=f"pages_{qid}",
+                                    help="Comma-separated page numbers (1-indexed)",
+                                )
+                                if pages_str.strip():
+                                    try:
+                                        pages = [int(p.strip()) for p in pages_str.split(",") if p.strip()]
+                                        page_assignments[qid] = pages
+                                    except ValueError:
+                                        st.error(f"Invalid page numbers for {qid}")
 
                 # ── Step 3: Grade ─────────────────────────────────
                 st.divider()
@@ -691,24 +725,31 @@ with tab_mark:
                     help="Let the model reason step-by-step before grading (slower but potentially more accurate)",
                 )
 
+                use_auto = not manual_override and bool(regions)
+                gradeable_ids = matched_ids if use_auto else list(page_assignments.keys())
+
                 questions_to_grade = st.multiselect(
                     "Questions to grade",
-                    options=list(pc.questions.keys()),
-                    default=list(page_assignments.keys()),
+                    options=question_ids,
+                    default=gradeable_ids,
                     key="grade_questions",
                 )
 
-                can_grade = (
-                    questions_to_grade
-                    and all(q in page_assignments for q in questions_to_grade)
-                )
-
-                if not can_grade and questions_to_grade:
-                    missing = [q for q in questions_to_grade if q not in page_assignments]
-                    st.warning(f"Assign pages to: {', '.join(missing)}")
+                if use_auto:
+                    can_grade = bool(questions_to_grade) and all(q in region_map for q in questions_to_grade)
+                    if not can_grade and questions_to_grade:
+                        missing = [q for q in questions_to_grade if q not in region_map]
+                        st.warning(f"No auto-detected region for: {', '.join(missing)}")
+                else:
+                    can_grade = (
+                        bool(questions_to_grade)
+                        and all(q in page_assignments for q in questions_to_grade)
+                    )
+                    if not can_grade and questions_to_grade:
+                        missing = [q for q in questions_to_grade if q not in page_assignments]
+                        st.warning(f"Assign pages to: {', '.join(missing)}")
 
                 if st.button("🚀 Start Grading", type="primary", disabled=not can_grade):
-                    # Apply thinking toggle to a copy of grader config
                     grade_cfg = GraderConfig(
                         api_key=grader_config.api_key.get_secret_value(),
                         base_url=grader_config.base_url,
@@ -729,8 +770,14 @@ with tab_mark:
                             text=f"Grading {qid}…",
                         )
                         qcfg = pc.questions[qid]
-                        pages = page_assignments[qid]
-                        images = render_pages(answer_doc, pages, dpi=grade_cfg.dpi)
+
+                        if use_auto:
+                            images = render_question_regions(
+                                answer_doc, region_map[qid], dpi=grade_cfg.dpi,
+                            )
+                        else:
+                            pages = page_assignments[qid]
+                            images = render_pages(answer_doc, pages, dpi=grade_cfg.dpi)
 
                         try:
                             raw = grade_question(
