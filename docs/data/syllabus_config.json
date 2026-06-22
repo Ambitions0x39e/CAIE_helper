@@ -1,0 +1,203 @@
+[
+  {
+    "syllabus_id": "0413",
+    "name": "Physical Education (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0450",
+    "name": "Business Studies (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0452",
+    "name": "Accounting (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0455",
+    "name": "Economics (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0460",
+    "name": "Geography (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0470",
+    "name": "History (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0478",
+    "name": "Computer Science (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0500",
+    "name": "English First Language (IGCSE)",
+    "paper_types": [
+      { "digit": "1", "name": "Reading" },
+      { "digit": "2", "name": "Directed Writing & Composition" }
+    ]
+  },
+  {
+    "syllabus_id": "0509",
+    "name": "Chinese First Language (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0510",
+    "name": "English Speaking Endorsement (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0511",
+    "name": "English Count-in Speaking (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0580",
+    "name": "Mathematics (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0606",
+    "name": "Mathematics Additional (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0610",
+    "name": "Biology (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0620",
+    "name": "Chemistry (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "0625",
+    "name": "Physics (IGCSE)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9093",
+    "name": "English Language AS and A Level (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9231",
+    "name": "Further Mathematics (AS-A2)",
+    "paper_types": [
+      { "digit": "1", "name": "Further Pure Mathematics 1" },
+      { "digit": "2", "name": "Further Pure Mathematics 2" },
+      { "digit": "3", "name": "Further Mechanics" },
+      { "digit": "4", "name": "Further Probability & Statistics" }
+    ]
+  },
+  {
+    "syllabus_id": "9389",
+    "name": "History (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9396",
+    "name": "Physical Education (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9489",
+    "name": "History (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9609",
+    "name": "Business (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9618",
+    "name": "Computer Science (AS-A2)",
+    "paper_types": [
+      { "digit": "1", "name": "AS Theory" },
+      { "digit": "2", "name": "AS Programming" }
+    ]
+  },
+  {
+    "syllabus_id": "9696",
+    "name": "Geography (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9698",
+    "name": "Psychology (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9700",
+    "name": "Biology (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9701",
+    "name": "Chemistry (AS-A2)",
+    "paper_types": [
+      { "digit": "1", "name": "AS Multiple Choice" },
+      { "digit": "2", "name": "AS Structured" },
+      { "digit": "3", "name": "AS Practical" }
+    ]
+  },
+  {
+    "syllabus_id": "9702",
+    "name": "Physics (AS-A2)",
+    "paper_types": [
+      { "digit": "1", "name": "AS Multiple Choice" },
+      { "digit": "2", "name": "AS Structured" },
+      { "digit": "3", "name": "AS Practical" }
+    ]
+  },
+  {
+    "syllabus_id": "9706",
+    "name": "Accounting (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9707",
+    "name": "Business Studies (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9708",
+    "name": "Economics (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9709",
+    "name": "Mathematics (AS-A2)",
+    "paper_types": [
+      { "digit": "1", "name": "Pure Mathematics 1" },
+      { "digit": "2", "name": "Pure Mathematics 2" },
+      { "digit": "3", "name": "Pure Mathematics 3" },
+      { "digit": "4", "name": "Mechanics" },
+      { "digit": "5", "name": "Probability & Statistics 1" },
+      { "digit": "6", "name": "Probability & Statistics 2" }
+    ]
+  },
+  {
+    "syllabus_id": "9713",
+    "name": "Applied ICT (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9715",
+    "name": "Chinese First Language (AS-A2)",
+    "paper_types": []
+  },
+  {
+    "syllabus_id": "9990",
+    "name": "Psychology (AS-A2)",
+    "paper_types": []
+  }
+]
