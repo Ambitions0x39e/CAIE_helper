@@ -14,7 +14,7 @@ from core.models import PaperRecord
 from core.settings import MailConfig
 from core.storage import CSVStore
 
-_MAX_ATTACHMENT_BYTES: Final[int] = 25 * 1024 * 1024  # 25 MB — GoodNotes safe limit
+_MAX_ATTACHMENT_BYTES: Final[int] = 2 * 1024 * 1024  # 2MB
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ class MailRequest(BaseModel):
 class MailResult(BaseModel):
     """Outcome of a mail attempt."""
 
-    model_config = {"strict": False}
+    model_config = ConfigDict(strict=False)
 
     success: bool
     paper_id: str
