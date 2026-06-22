@@ -17,3 +17,4 @@ pages/admin.py
 
 # In development
 in_dev/
+/docs/superpowers
