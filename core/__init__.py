@@ -1,4 +1,4 @@
-from core.config_store import ConfigStore, SyllabusConfig, PaperTypeConfig
+from core.config_store import ConfigStore, PaperTypeConfig, SyllabusConfig
 from core.models import PaperRecord
 from core.settings import AppSettings, MailConfig, app_settings
 from core.storage import CSVStore

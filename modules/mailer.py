@@ -8,9 +8,8 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Final
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
-from core.models import PaperRecord
 from core.settings import MailConfig
 from core.storage import CSVStore
 
@@ -167,7 +166,11 @@ class GoodNotesMailer:
     def _dispatch(self, message: MIMEMultipart) -> None:
         """Open an SSL connection and send the message."""
         context = ssl.create_default_context()
+        if self._config.sender_app_password is None:
+            raise _MailError("No app password configured.")
         password = self._config.sender_app_password.get_secret_value()
+        if self._config.smtp_server is None:
+            raise _MailError("No SMTP server configured.")
 
         try:
             with smtplib.SMTP_SSL(

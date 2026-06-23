@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
+import fitz
 import streamlit as st
 from pydantic import ValidationError
 
-from core.settings import AppSettings, GraderConfig, MailConfig, app_settings
+from core.models import PaperType, detect_paper_type
+from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import CSVStore
 from modules.downloader import DownloadRequest, DownloadSource, PaperDownloader
-from modules.mailer import GoodNotesMailer, MailRequest
-from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
-from modules.visualizer import PaperVisualizer
-from core.models import PaperType, SUBJECT_PAPER_TYPES, detect_paper_type
-from modules.ms_parser import PaperConfig, parse_mark_scheme
 from modules.grader import (
     GradingReport,
     QuestionResult,
@@ -18,14 +18,12 @@ from modules.grader import (
     grade_question,
     parse_grading_result,
     render_pages,
-    render_question_regions,
 )
+from modules.mailer import GoodNotesMailer, MailRequest
+from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
+from modules.ms_parser import PaperConfig, parse_mark_scheme
 from modules.page_segmenter import segment_questions, validate_regions
-import fitz
-import json
-import tempfile
-from pathlib import Path
-
+from modules.visualizer import PaperVisualizer
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,7 +67,7 @@ store = CSVStore()
 
 
 @st.dialog("Submit Score")
-def submit_score_dialog():
+def submit_score_dialog() -> None:
     """Floating score submission widget — triggered from the fixed top-right button."""
     try:
         all_records = store.load_all()
@@ -140,7 +138,7 @@ with st.sidebar:
     sender_password = st.text_input(
         "App Password",
         type="password",
-        value=_saved.sender_app_password.get_secret_value() if _saved else "",
+        value=_saved.sender_app_password.get_secret_value() if _saved and _saved.sender_app_password else "",
     )
     goodnotes_email = st.text_input(
         "GoodNotes Import Email",
@@ -205,6 +203,7 @@ with st.sidebar:
 
     if st.button("💾 Save grader credentials", disabled=grader_config is None):
         try:
+            assert grader_config is not None
             grader_config.save_to_env()
             st.success("Saved to .env")
         except OSError as exc:
@@ -266,9 +265,11 @@ with tab_download:
 
     st.markdown(
         "<style>"
-        "div[data-testid='stHorizontalBlock']:has([data-testid='stBaseButton-primary'])"
+        "div[data-testid='stHorizontalBlock']"
+        ":has([data-testid='stBaseButton-primary'])"
         "{gap:0!important}"
-        " div[data-testid='stHorizontalBlock']:has([data-testid='stBaseButton-primary'])>div"
+        " div[data-testid='stHorizontalBlock']"
+        ":has([data-testid='stBaseButton-primary'])>div"
         "{padding-left:0!important;padding-right:0!important}"
         "</style>",
         unsafe_allow_html=True,
@@ -436,8 +437,11 @@ with tab_manage:
                                 record.status == "Completed"
                                 and record.percentage is not None
                             ):
+                                pct = record.percentage
                                 st.markdown(
-                                    f"**{record.score_raw}/{record.score_total}** ({record.percentage:.1f}%)"
+                                    f"**{record.score_raw}/"
+                                    f"{record.score_total}**"
+                                    f" ({pct:.1f}%)"
                                 )
                             else:
                                 st.caption("Pending")
@@ -489,7 +493,9 @@ with tab_manage:
                                             )
                                             mail_res = mailer.send(mail_req)
                                         if mail_res.success:
-                                            st.success(f"✅ Sent to {mail_res.recipient}")
+                                            st.success(
+                                                f"✅ Sent to {mail_res.recipient}"
+                                            )
                                             if mail_res.error:
                                                 st.warning(mail_res.error)
                                         else:
@@ -547,7 +553,10 @@ with tab_analytics:
 
 with tab_mark:
     st.header("AI-Powered Grading")
-    st.caption("Parse a mark scheme, upload your answer paper, and let AI grade it question by question.")
+    st.caption(
+        "Parse a mark scheme, upload your answer paper, "
+        "and let AI grade it question by question."
+    )
 
     if grader_config is None:
         st.warning("Configure the Grader API credentials in the sidebar first.")
@@ -577,14 +586,21 @@ with tab_mark:
             ]
 
             if not supported_records:
-                st.info("No supported papers with mark schemes found. Download a math/further-math paper first, or upload directly.")
+                st.info(
+                    "No supported papers with mark schemes found. "
+                    "Download a math/further-math paper first, "
+                    "or upload directly."
+                )
             else:
                 ms_paper = st.selectbox(
                     "Select paper",
                     options=[r.paper_id for r in supported_records],
                     key="ms_paper_select",
                 )
-                target = next((r for r in supported_records if r.paper_id == ms_paper), None)
+                target = next(
+                    (r for r in supported_records if r.paper_id == ms_paper),
+                    None,
+                )
                 if target:
                     ms_pdf_path = target.ms_path
                     paper_type = detect_paper_type(target.paper_id)
@@ -605,14 +621,22 @@ with tab_mark:
             "Mark scheme content starts at page",
             min_value=1,
             value=6,
-            help="CIE mark schemes typically have headers on pages 1-5. Content starts on page 6.",
+            help=(
+                "CIE mark schemes typically have headers "
+                "on pages 1-5. Content starts on page 6."
+            ),
             key="ms_start_page",
         )
 
-        if ms_pdf_path and paper_type and st.button("🔍 Parse Mark Scheme", type="primary"):
+        can_parse = ms_pdf_path and paper_type
+        if can_parse and st.button("🔍 Parse Mark Scheme", type="primary"):
             with st.spinner("Parsing mark scheme…"):
                 try:
-                    paper_config = parse_mark_scheme(ms_pdf_path, paper_type=paper_type, start_page=start_page)
+                    paper_config = parse_mark_scheme(
+                        ms_pdf_path,
+                        paper_type=paper_type,
+                        start_page=start_page,
+                    )
                     st.session_state["paper_config"] = paper_config
                     st.session_state["paper_type"] = paper_type
                     st.success(
@@ -626,7 +650,8 @@ with tab_mark:
         # Show parsed config
         if "paper_config" in st.session_state:
             pc: PaperConfig = st.session_state["paper_config"]
-            with st.expander(f"Parsed: {pc.paper_id} ({len(pc.questions)} questions)", expanded=False):
+            n_q = len(pc.questions)
+            with st.expander(f"Parsed: {pc.paper_id} ({n_q} questions)", expanded=False):
                 for qid, qcfg in pc.questions.items():
                     st.markdown(f"**{qid}** — {qcfg.max_marks} marks")
                     st.code(qcfg.mark_scheme, language=None)
@@ -646,72 +671,93 @@ with tab_mark:
                 answer_tmp.write(uploaded_answer.read())
                 answer_tmp.flush()
                 st.session_state["answer_pdf_path"] = answer_tmp.name
+                st.session_state.pop("auto_pages_done", None)
 
             if "answer_pdf_path" in st.session_state:
                 answer_doc = fitz.open(st.session_state["answer_pdf_path"])
                 total_pages = len(answer_doc)
                 hw_pages = detect_handwriting_pages(answer_doc)
 
-                st.info(
-                    f"PDF has **{total_pages}** pages. "
-                    f"Handwriting detected on pages: **{hw_pages or 'none'}**"
-                )
+                # Auto-detect question→page mapping
+                auto_pages: dict[str, str] = {}
+                if "auto_pages_done" not in st.session_state:
+                    q_ids = list(pc.questions.keys())
+                    regions = segment_questions(answer_doc, q_ids)
+                    matched, unmatched = validate_regions(
+                        regions, q_ids
+                    )
+                    for region in regions:
+                        page_nums = sorted(
+                            {c.page_idx + 1 for c in region.clips}
+                        )
+                        auto_pages[region.question_id] = ",".join(
+                            str(p) for p in page_nums
+                        )
+                    st.session_state["auto_pages"] = auto_pages
+                    st.session_state["auto_pages_matched"] = matched
+                    st.session_state["auto_pages_unmatched"] = unmatched
+                    st.session_state["auto_pages_done"] = True
+                else:
+                    auto_pages = st.session_state.get("auto_pages", {})
 
-                # ── Auto-detect question regions ──────────────────
-                question_ids = list(pc.questions.keys())
-                regions = segment_questions(answer_doc, question_ids)
-                region_map: dict[str, list] = {r.question_id: r.clips for r in regions}
-                matched_ids, unmatched_ids = validate_regions(regions, question_ids)
                 answer_doc.close()
 
-                auto_ok = len(matched_ids) == len(question_ids)
-                manual_override = st.toggle(
-                    "Manual page assignment (override auto-detection)",
-                    value=not auto_ok,
-                    key="manual_override_toggle",
+                auto_matched = st.session_state.get(
+                    "auto_pages_matched", []
                 )
+                auto_unmatched = st.session_state.get(
+                    "auto_pages_unmatched", []
+                )
+                info_parts = [
+                    f"PDF has **{total_pages}** pages.",
+                    f"Handwriting on: **{hw_pages or 'none'}**.",
+                ]
+                if auto_matched:
+                    info_parts.append(
+                        f"Auto-detected **{len(auto_matched)}"
+                        f"/{len(auto_matched) + len(auto_unmatched)}** "
+                        "questions."
+                    )
+                st.info(" ".join(info_parts))
+                if auto_unmatched:
+                    st.warning(
+                        f"Could not auto-detect: {', '.join(auto_unmatched)}"
+                    )
 
-                if not manual_override and regions:
-                    if auto_ok:
-                        st.success(f"Auto-detected regions for all {len(regions)} questions.")
-                    else:
-                        st.warning(
-                            f"Auto-detected {len(matched_ids)}/{len(question_ids)} questions. "
-                            f"Missing: {', '.join(unmatched_ids)}"
-                        )
-
-                    with st.expander("Detected regions", expanded=False):
-                        for r in regions:
-                            clips_desc = ", ".join(
-                                f"pg {c.page_idx + 1} y={c.y_top:.0f}–{c.y_bottom:.0f}"
-                                for c in r.clips
-                            )
-                            st.text(f"{r.question_id}: {clips_desc}")
-
-                # ── Manual fallback ───────────────────────────────
+                # Page assignment per question
+                st.markdown("**Assign pages to questions:**")
                 page_assignments: dict[str, list[int]] = {}
-                if manual_override or not regions:
-                    if not regions:
-                        st.info("No question regions detected (PDF may lack a text layer). Assign pages manually.")
-                    st.markdown("**Assign pages to questions:**")
-                    cols_per_row = 3
-                    q_items = list(pc.questions.items())
-                    for row_start in range(0, len(q_items), cols_per_row):
-                        cols = st.columns(cols_per_row)
-                        for col_idx, (qid, qcfg) in enumerate(q_items[row_start:row_start + cols_per_row]):
-                            with cols[col_idx]:
-                                pages_str = st.text_input(
-                                    f"{qid} ({qcfg.max_marks}m)",
-                                    placeholder="e.g. 2,3",
-                                    key=f"pages_{qid}",
-                                    help="Comma-separated page numbers (1-indexed)",
-                                )
-                                if pages_str.strip():
-                                    try:
-                                        pages = [int(p.strip()) for p in pages_str.split(",") if p.strip()]
-                                        page_assignments[qid] = pages
-                                    except ValueError:
-                                        st.error(f"Invalid page numbers for {qid}")
+
+                cols_per_row = 3
+                q_items = list(pc.questions.items())
+                for row_start in range(0, len(q_items), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    chunk = q_items[row_start:row_start + cols_per_row]
+                    for col_idx, (qid, qcfg) in enumerate(chunk):
+                        with cols[col_idx]:
+                            default_val = auto_pages.get(qid, "")
+                            pages_str = st.text_input(
+                                f"{qid} ({qcfg.max_marks}m)",
+                                value=default_val,
+                                placeholder="e.g. 2,3",
+                                key=f"pages_{qid}",
+                                help=(
+                                    "Comma-separated page numbers "
+                                    "(1-indexed)"
+                                ),
+                            )
+                            if pages_str.strip():
+                                try:
+                                    pages = [
+                                        int(p.strip())
+                                        for p in pages_str.split(",")
+                                        if p.strip()
+                                    ]
+                                    page_assignments[qid] = pages
+                                except ValueError:
+                                    st.error(
+                                        f"Invalid page numbers for {qid}"
+                                    )
 
                 # ── Step 3: Grade ─────────────────────────────────
                 st.divider()
@@ -722,34 +768,35 @@ with tab_mark:
                     "Enable thinking mode",
                     value=grader_config.enable_thinking,
                     key="mark_thinking_toggle",
-                    help="Let the model reason step-by-step before grading (slower but potentially more accurate)",
+                    help=(
+                        "Let the model reason step-by-step "
+                        "before grading (slower but more accurate)"
+                    ),
                 )
-
-                use_auto = not manual_override and bool(regions)
-                gradeable_ids = matched_ids if use_auto else list(page_assignments.keys())
 
                 questions_to_grade = st.multiselect(
                     "Questions to grade",
-                    options=question_ids,
-                    default=gradeable_ids,
+                    options=list(pc.questions.keys()),
+                    default=list(page_assignments.keys()),
                     key="grade_questions",
                 )
 
-                if use_auto:
-                    can_grade = bool(questions_to_grade) and all(q in region_map for q in questions_to_grade)
-                    if not can_grade and questions_to_grade:
-                        missing = [q for q in questions_to_grade if q not in region_map]
-                        st.warning(f"No auto-detected region for: {', '.join(missing)}")
-                else:
-                    can_grade = (
-                        bool(questions_to_grade)
-                        and all(q in page_assignments for q in questions_to_grade)
-                    )
-                    if not can_grade and questions_to_grade:
-                        missing = [q for q in questions_to_grade if q not in page_assignments]
-                        st.warning(f"Assign pages to: {', '.join(missing)}")
+                can_grade = (
+                    questions_to_grade
+                    and all(q in page_assignments for q in questions_to_grade)
+                )
 
-                if st.button("🚀 Start Grading", type="primary", disabled=not can_grade):
+                if not can_grade and questions_to_grade:
+                    missing = [
+                        q for q in questions_to_grade
+                        if q not in page_assignments
+                    ]
+                    st.warning(f"Assign pages to: {', '.join(missing)}")
+
+                if st.button(
+                    "🚀 Start Grading", type="primary", disabled=not can_grade
+                ):
+                    # Apply thinking toggle to a copy of grader config
                     grade_cfg = GraderConfig(
                         api_key=grader_config.api_key.get_secret_value(),
                         base_url=grader_config.base_url,
@@ -770,14 +817,8 @@ with tab_mark:
                             text=f"Grading {qid}…",
                         )
                         qcfg = pc.questions[qid]
-
-                        if use_auto:
-                            images = render_question_regions(
-                                answer_doc, region_map[qid], dpi=grade_cfg.dpi,
-                            )
-                        else:
-                            pages = page_assignments[qid]
-                            images = render_pages(answer_doc, pages, dpi=grade_cfg.dpi)
+                        pages = page_assignments[qid]
+                        images = render_pages(answer_doc, pages, dpi=grade_cfg.dpi)
 
                         try:
                             raw = grade_question(
@@ -786,12 +827,14 @@ with tab_mark:
                                 question_id=qid,
                                 mark_scheme=qcfg.mark_scheme,
                                 max_marks=qcfg.max_marks,
-                                paper_type=st.session_state.get("paper_type", PaperType.MATH),
+                                paper_type=st.session_state.get(
+                                    "paper_type", PaperType.MATH
+                                ),
                             )
-                            result = parse_grading_result(raw)
-                            results.append(result)
-                            total_score += result.total
-                            total_max += result.max
+                            grade_result = parse_grading_result(raw)
+                            results.append(grade_result)
+                            total_score += grade_result.total
+                            total_max += grade_result.max
                         except Exception as exc:
                             st.error(f"Failed to grade {qid}: {exc}")
 
@@ -827,7 +870,8 @@ with tab_mark:
                     mc1, mc2, mc3 = st.columns(3)
                     mc1.metric("Total Score", f"{score}/{max_score}")
                     mc2.metric("Percentage", f"{pct:.1f}%")
-                    mc3.metric("Questions Graded", len(st.session_state["grading_results"]))
+                    n_graded = len(st.session_state["grading_results"])
+                    mc3.metric("Questions Graded", n_graded)
 
                     for result in st.session_state["grading_results"]:
                         with st.expander(
@@ -856,7 +900,6 @@ with tab_mark:
                                 if paper_id_match:
                                     target_rec = next((r for r in records if r.paper_id == paper_id_match), None)
                                     if target_rec:
-                                        from core.models import PaperRecord
                                         updated = target_rec.model_copy(update={
                                             "score_raw": float(score),
                                             "score_total": float(max_score),

@@ -50,7 +50,7 @@ def _decode_shifted_char(c: str) -> str:
     return c
 
 
-def _decode_shifted_run(m: re.Match) -> str:
+def _decode_shifted_run(m: re.Match[str]) -> str:
     run = m.group(0)
     decoded = "".join(_decode_shifted_char(c) for c in run)
     if sum(1 for c in decoded if c.isalpha()) >= 3:
@@ -67,7 +67,7 @@ def clean_text(text: str) -> str:
     text = GARBLED_CHARS.sub(" ", text)
     text = MULTI_SPACE.sub(" ", text)
     lines = [line.strip() for line in text.split("\n")]
-    lines = [l for l in lines if l]
+    lines = [ln for ln in lines if ln]
     return "\n".join(lines)
 
 
@@ -111,7 +111,7 @@ def _extract_paper_info(doc: fitz.Document) -> tuple[str, int]:
     return paper_id, total_marks
 
 
-def _is_max_marks_row(entry: dict) -> int | None:
+def _is_max_marks_row(entry: dict[str, str]) -> int | None:
     marks = entry["marks"]
     if not marks:
         return None
@@ -120,11 +120,13 @@ def _is_max_marks_row(entry: dict) -> int | None:
     return None
 
 
-def _parse_table_rows(table) -> list[dict]:
-    rows = table.extract()
-    entries = []
+def _parse_table_rows(table: object) -> list[dict[str, str]]:
+    rows = table.extract()  # type: ignore[attr-defined]
+    entries: list[dict[str, str]] = []
     for row in rows:
-        cell = lambda i: (row[i] if i < len(row) and row[i] else "").strip()
+        def cell(i: int, r: list[str | None] = row) -> str:  # noqa: B006
+            val = r[i] if i < len(r) and r[i] else ""
+            return (val or "").strip()
         question = cell(0)
         answer = cell(3)
         marks = cell(6)
@@ -142,15 +144,25 @@ def _parse_table_rows(table) -> list[dict]:
     return entries
 
 
-def _group_questions(all_entries: list[dict]) -> OrderedDict:
-    questions: OrderedDict = OrderedDict()
+class _QEntry:
+    __slots__ = ("mark_lines", "max_marks")
+
+    def __init__(self) -> None:
+        self.mark_lines: list[str] = []
+        self.max_marks: int = 0
+
+
+def _group_questions(
+    all_entries: list[dict[str, str]],
+) -> OrderedDict[str, _QEntry]:
+    questions: OrderedDict[str, _QEntry] = OrderedDict()
     current_qid = None
 
     for entry in all_entries:
         if entry["question"] and QUESTION_ID_RE.match(entry["question"]):
             current_qid = normalize_question_id(entry["question"])
             if current_qid not in questions:
-                questions[current_qid] = {"mark_lines": [], "max_marks": 0}
+                questions[current_qid] = _QEntry()
 
         if current_qid is None:
             continue
@@ -159,9 +171,9 @@ def _group_questions(all_entries: list[dict]) -> OrderedDict:
 
         max_m = _is_max_marks_row(entry)
         if max_m is not None:
-            q["max_marks"] = max_m
+            q.max_marks = max_m
             if entry.get("guidance", "").strip():
-                q["mark_lines"].append(f"Note: {clean_text(entry['guidance'])}")
+                q.mark_lines.append(f"Note: {clean_text(entry['guidance'])}")
             continue
 
         marks_str = entry["marks"].strip()
@@ -171,7 +183,7 @@ def _group_questions(all_entries: list[dict]) -> OrderedDict:
         if not marks_str and not answer_str:
             continue
 
-        line_parts = []
+        line_parts: list[str] = []
         if marks_str:
             line_parts.append(f"{marks_str}:")
         if answer_str:
@@ -180,7 +192,7 @@ def _group_questions(all_entries: list[dict]) -> OrderedDict:
             line_parts.append(f"[{guidance_str}]")
 
         if line_parts:
-            q["mark_lines"].append(" ".join(line_parts))
+            q.mark_lines.append(" ".join(line_parts))
 
     return questions
 
@@ -206,11 +218,11 @@ def _parse_math_ms(
     raw_questions = _group_questions(all_entries)
     doc.close()
 
-    questions = {}
+    questions: dict[str, QuestionConfig] = {}
     for qid, qdata in raw_questions.items():
-        mark_scheme = "\n".join(qdata["mark_lines"])
+        mark_scheme = "\n".join(qdata.mark_lines)
         questions[qid] = QuestionConfig(
-            max_marks=qdata["max_marks"],
+            max_marks=qdata.max_marks,
             mark_scheme=mark_scheme if mark_scheme else "# No mark scheme extracted",
         )
 

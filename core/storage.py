@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import datetime
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import pandas as pd
 from pydantic import ValidationError
@@ -113,7 +113,7 @@ class CSVStore:
             pd.DataFrame(columns=_COLUMNS).to_csv(self._path, index=False)
 
     @staticmethod
-    def _row_to_dict(row: pd.Series) -> dict[str, object]:  # type: ignore[type-arg]
+    def _row_to_dict(row: pd.Series[object]) -> dict[str, object]:
         """Convert a raw CSV row (all strings) into types Pydantic can coerce."""
 
         def _nullable_float(val: str) -> float | None:

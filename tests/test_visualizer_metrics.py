@@ -14,12 +14,14 @@ def _completed(paper_id: str, raw: float, total: float) -> PaperRecord:
         status="Completed",
         score_raw=raw,
         score_total=total,
-        timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+        timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
     )
 
 
-def test_render_trend_chart_merges_metrics_into_heading(monkeypatch):
-    """_render_trend_chart with show_metrics=True renders title + Attempts/Average/Best inline."""
+def test_render_trend_chart_merges_metrics_into_heading(  # type: ignore[no-untyped-def]
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    """Trend chart with show_metrics=True shows Attempts/Average/Best."""
     markdowns: list[str] = []
     monkeypatch.setattr(
         "streamlit.markdown",
@@ -28,7 +30,10 @@ def test_render_trend_chart_merges_metrics_into_heading(monkeypatch):
     monkeypatch.setattr("streamlit.caption", lambda text: None)
     monkeypatch.setattr("streamlit.line_chart", lambda *a, **kw: None)
 
-    records = [_completed("9702_s23_qp_11", 60, 100), _completed("9702_s24_qp_11", 80, 100)]
+    records = [
+        _completed("9702_s23_qp_11", 60, 100),
+        _completed("9702_s24_qp_11", 80, 100),
+    ]
     viz = PaperVisualizer(records=records)
 
     df = pd.DataFrame(

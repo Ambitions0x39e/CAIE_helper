@@ -10,7 +10,6 @@ from pydantic import BaseModel, field_validator, model_validator
 from core.models import PaperRecord
 from core.storage import CSVStore
 
-
 # ---------------------------------------------------------------------------
 # Input schemas
 # ---------------------------------------------------------------------------
@@ -151,7 +150,7 @@ class PaperManager:
                     "score_raw": update.score_raw,
                     "score_total": update.score_total,
                     "status": "Completed",
-                    "timestamp": datetime.datetime.now(tz=datetime.timezone.utc),
+                    "timestamp": datetime.datetime.now(tz=datetime.UTC),
                 }
             )
         except Exception as exc:  # noqa: BLE001
@@ -254,7 +253,7 @@ class PaperManager:
         try:
             if system == "Windows":
                 import os
-                os.startfile(str(pdf_path))  # type: ignore[attr-defined]
+                os.startfile(str(pdf_path))  # noqa: S606  # type: ignore[attr-defined,unused-ignore]
             elif system == "Darwin":
                 subprocess.run(["open", str(pdf_path)], check=True)
             else:

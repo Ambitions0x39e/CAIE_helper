@@ -42,7 +42,7 @@ class PaperRecord(BaseModel):
     # Computed
     # ------------------------------------------------------------------
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def percentage(self) -> float | None:
         if (

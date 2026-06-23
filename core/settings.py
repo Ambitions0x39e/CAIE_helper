@@ -32,7 +32,7 @@ class MailConfig(BaseSettings):
         return v
 
     @classmethod
-    def try_load(cls) -> "MailConfig | None":
+    def try_load(cls) -> MailConfig | None:
         """
         Attempt to load credentials from .env.
         Returns None silently if required fields are missing.
@@ -48,10 +48,12 @@ class MailConfig(BaseSettings):
         Only overwrites keys managed by MailConfig; preserves all other lines.
         """
         new_values: dict[str, str] = {
-            "SMTP_SERVER": self.smtp_server,
+            "SMTP_SERVER": self.smtp_server or "smtp.gmail.com",
             "SMTP_PORT": str(self.smtp_port),
             "SENDER_EMAIL": str(self.sender_email),
-            "SENDER_APP_PASSWORD": self.sender_app_password.get_secret_value(),
+            "SENDER_APP_PASSWORD": self.sender_app_password.get_secret_value()
+            if self.sender_app_password
+            else "",
             "GOODNOTES_EMAIL": str(self.goodnotes_email),
         }
 
@@ -91,7 +93,7 @@ class GraderConfig(BaseSettings):
     enable_thinking: bool = False
 
     @classmethod
-    def try_load(cls) -> "GraderConfig | None":
+    def try_load(cls) -> GraderConfig | None:
         try:
             return cls()
         except Exception:

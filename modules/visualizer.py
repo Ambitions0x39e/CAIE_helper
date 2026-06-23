@@ -6,14 +6,14 @@ from typing import Final
 import pandas as pd
 import streamlit as st
 
-from core.models import PaperRecord
 from core.config_store import ConfigStore
+from core.models import PaperRecord
 
 _MIN_PAPERS_FOR_TREND: Final[int] = 2
 
 
 def _extract_syllabus_id(paper_id: str) -> str:
-    """Extract the first 4 characters as the syllabus ID. e.g. '9702_s23_qp_11' → '9702'"""
+    """Extract 4-char syllabus ID, e.g. '9702_s23_qp_11' → '9702'."""
     return paper_id[:4]
 
 
@@ -120,7 +120,7 @@ class PaperVisualizer:
         self,
         syl_df: pd.DataFrame,
         syllabus_id: str,
-        syllabus_config: dict[str, dict[str, str]],
+        syllabus_config: dict[str, dict[str, str | dict[str, str]]],
     ) -> None:
         avg = syl_df["percentage"].mean()
         best = syl_df["percentage"].max()
@@ -138,7 +138,9 @@ class PaperVisualizer:
         if not paper_type_digits:
             self._render_trend_chart(syl_df, label="All Papers")
         else:
-            paper_types_config = syllabus_config.get(syllabus_id, {}).get("paper_types", {})
+            syl_entry = syllabus_config.get(syllabus_id, {})
+            pt_raw = syl_entry.get("paper_types", {})
+            paper_types_config: dict[str, str] = pt_raw if isinstance(pt_raw, dict) else {}
             tabs = st.tabs(
                 [
                     f"Paper {d} — {paper_types_config.get(d, 'Unknown')}"
