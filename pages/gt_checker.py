@@ -7,7 +7,7 @@ from pathlib import Path
 import streamlit as st
 from pydantic import ValidationError
 
-from core.gt_parser import GTDocument, GTParser, GradeThreshold
+from core.gt_parser import GradeThreshold, GTParser
 from core.settings import app_settings
 from core.storage import CSVStore
 from modules.downloader import DownloadRequest, DownloadSource, PaperDownloader
@@ -19,7 +19,10 @@ st.set_page_config(
 )
 
 st.title("🎯 Grade Threshold Checker")
-st.caption("Download a GT, pick your option, bulk-download papers, enter scores, see your grade.")
+st.caption(
+    "Download a GT, pick your option, bulk-download papers, "
+    "enter scores, see your grade."
+)
 
 app_settings.init_dirs()
 store = CSVStore()
@@ -57,13 +60,13 @@ def _grade_badge(grade: str) -> str:
 # ---------------------------------------------------------------------------
 
 if "gt_doc" not in st.session_state:
-    st.session_state["gt_doc"]: GTDocument | None = None
+    st.session_state["gt_doc"] = None
 if "selected_option" not in st.session_state:
-    st.session_state["selected_option"]: str | None = None
+    st.session_state["selected_option"] = None
 if "dl_results" not in st.session_state:
-    st.session_state["dl_results"]: dict[str, bool] = {}   # component → success
+    st.session_state["dl_results"] = {}   # component → success
 if "scores" not in st.session_state:
-    st.session_state["scores"]: dict[str, float] = {}      # component → raw score
+    st.session_state["scores"] = {}      # component → raw score
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +79,9 @@ col_file, col_manual = st.columns([1, 1])
 
 with col_file:
     st.markdown("**Option A — Upload PDF**")
-    uploaded = st.file_uploader("Upload GT PDF", type=["pdf"], label_visibility="collapsed")
+    uploaded = st.file_uploader(
+        "Upload GT PDF", type=["pdf"], label_visibility="collapsed"
+    )
 
 with col_manual:
     st.markdown("**Option B — Download from site**")
@@ -126,11 +131,14 @@ if uploaded is not None and st.session_state["gt_doc"] is None:
         st.session_state["selected_option"] = None
         st.session_state["dl_results"] = {}
         st.session_state["scores"] = {}
-        st.success(f"Parsed GT: syllabus `{gt_doc.syllabus_id}`, {len(gt_doc.options)} options found.")
+        st.success(
+            f"Parsed GT: syllabus `{gt_doc.syllabus_id}`, "
+            f"{len(gt_doc.options)} options found."
+        )
     except Exception as exc:  # noqa: BLE001
         st.error(f"Failed to parse GT PDF: {exc}")
 
-gt_doc: GTDocument | None = st.session_state.get("gt_doc")
+gt_doc = st.session_state.get("gt_doc")
 
 if gt_doc is None:
     st.info("Load a GT PDF above to continue.")
@@ -217,7 +225,7 @@ if st.button("⬇️ Bulk Download All Components", type="primary"):
 # Show download status
 if st.session_state["dl_results"]:
     cols = st.columns(len(option.components))
-    for col, component in zip(cols, option.components):
+    for col, component in zip(cols, option.components, strict=False):
         ok = st.session_state["dl_results"].get(component)
         if ok is True:
             col.success(f"`{component}` ✅")
@@ -241,8 +249,13 @@ st.markdown(
 # Threshold table
 import pandas as pd  # noqa: E402
 
-threshold_cols = ["Grade"] + [g for g in ["A*", "A", "B", "C", "D", "E"] if g in option.thresholds]
-threshold_rows = [["Min. mark"] + [str(option.thresholds[g]) for g in threshold_cols[1:]]]
+_all_grades = ["A*", "A", "B", "C", "D", "E"]
+threshold_cols = ["Grade"] + [
+    g for g in _all_grades if g in option.thresholds
+]
+threshold_rows = [
+    ["Min. mark"] + [str(option.thresholds[g]) for g in threshold_cols[1:]]
+]
 threshold_df = pd.DataFrame(threshold_rows, columns=threshold_cols)
 st.dataframe(threshold_df, width="stretch", hide_index=True)
 
@@ -269,7 +282,10 @@ for component in option.components:
         key=f"score_raw_{component}",
         label_visibility="collapsed",
     )
-    col_sep.markdown("<div style='padding-top:8px;text-align:center'>/</div>", unsafe_allow_html=True)
+    col_sep.markdown(
+        "<div style='padding-top:8px;text-align:center'>/</div>",
+        unsafe_allow_html=True,
+    )
     total = col_total.number_input(
         "Max mark",
         min_value=0.0,
@@ -297,7 +313,11 @@ st.divider()
 res_col1, res_col2 = st.columns([1, 2])
 
 with res_col1:
-    st.metric("Total Raw Score", f"{total_raw:.1f}", help=f"Max weighted: {option.max_weighted}")
+    st.metric(
+        "Total Raw Score",
+        f"{total_raw:.1f}",
+        help=f"Max weighted: {option.max_weighted}",
+    )
     st.markdown(f"### Grade: {_grade_badge(grade)}", unsafe_allow_html=False)
 
 with res_col2:
@@ -351,8 +371,9 @@ else:
     st.dataframe(preview_df, width="stretch", hide_index=True)
 
     if st.button("💾 Save to Tracker", type="primary"):
-        from modules.manager import PaperManager, ScoreUpdate
         from pydantic import ValidationError as PydanticValidationError
+
+        from modules.manager import PaperManager, ScoreUpdate
 
         manager = PaperManager(store=store)
         saved, skipped, failed = 0, 0, 0
@@ -371,7 +392,8 @@ else:
 
             if not exists:
                 st.warning(
-                    f"`{paper_id}` not found in tracker — download it first via Bulk Download."
+                    f"`{paper_id}` not found in tracker — "
+                    "download it first via Bulk Download."
                 )
                 skipped += 1
                 continue
@@ -387,11 +409,11 @@ else:
                 failed += 1
                 continue
 
-            result = manager.submit_score(update)
-            if result.success:
+            score_result = manager.submit_score(update)
+            if score_result.success:
                 saved += 1
             else:
-                st.error(f"`{paper_id}`: {result.error}")
+                st.error(f"`{paper_id}`: {score_result.error}")
                 failed += 1
 
         if saved:

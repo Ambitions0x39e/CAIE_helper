@@ -17,7 +17,6 @@ from modules.page_segmenter import (
     validate_regions,
 )
 
-
 # ── Helpers ────────────────────────────────────────────────────────
 
 def _make_doc(
@@ -79,7 +78,7 @@ def _sub_label(letter: str) -> str:
 # ── Tests: boundary detection ─────────────────────────────────────
 
 class TestExtractBoundaries:
-    def test_detect_main_question(self):
+    def test_detect_main_question(self) -> None:
         page_spans = _make_cie_page(main_q="Q1")
         doc = _make_doc([page_spans])
         boundaries = _extract_boundaries(doc, skip_pages=set())
@@ -89,7 +88,7 @@ class TestExtractBoundaries:
         assert mains[0].page_idx == 0
         doc.close()
 
-    def test_detect_sub_question(self):
+    def test_detect_sub_question(self) -> None:
         page_spans = _make_cie_page(
             main_q="Q1",
             subs=[(100.0, _sub_label("a")), (350.0, _sub_label("b"))],
@@ -104,7 +103,7 @@ class TestExtractBoundaries:
         assert subs[1].y == pytest.approx(350.0, abs=15)
         doc.close()
 
-    def test_context_line_ignored(self):
+    def test_context_line_ignored(self) -> None:
         """A len=1 span at x=72.4 without a \\xa8 companion is not a SUB."""
         page_spans = _make_cie_page(
             main_q="Q1",
@@ -120,7 +119,7 @@ class TestExtractBoundaries:
         assert len(subs) == 0
         doc.close()
 
-    def test_footer_excluded(self):
+    def test_footer_excluded(self) -> None:
         # insert_text y is baseline; bbox y0 = y - ascent (~11.6pt for size 10.8)
         # Place footer text high enough that bbox top > 740 threshold
         page_spans = [
@@ -134,7 +133,7 @@ class TestExtractBoundaries:
         assert boundaries[0].y == pytest.approx(53.0, abs=15)
         doc.close()
 
-    def test_skip_pages(self):
+    def test_skip_pages(self) -> None:
         page0 = _make_cie_page(main_q="Q0")
         page1 = _make_cie_page(main_q="Q1")
         doc = _make_doc([page0, page1])
@@ -144,13 +143,13 @@ class TestExtractBoundaries:
         assert boundaries[0].page_idx == 1
         doc.close()
 
-    def test_empty_document(self):
+    def test_empty_document(self) -> None:
         doc = fitz.open()
         boundaries = _extract_boundaries(doc, skip_pages=set())
         assert boundaries == []
         doc.close()
 
-    def test_no_text_layer(self):
+    def test_no_text_layer(self) -> None:
         """A page with only an image has no text spans."""
         doc = fitz.open()
         page = doc.new_page(width=612, height=792)
@@ -164,7 +163,7 @@ class TestExtractBoundaries:
 # ── Tests: matching ───────────────────────────────────────────────
 
 class TestMatchBoundaries:
-    def test_main_with_subs(self):
+    def test_main_with_subs(self) -> None:
         boundaries = [
             _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
             _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=90),
@@ -177,7 +176,7 @@ class TestMatchBoundaries:
         assert matches[0] == ("Q1a", 0, 50)  # uses stem Y
         assert matches[1] == ("Q1b", 0, 350)
 
-    def test_standalone_question(self):
+    def test_standalone_question(self) -> None:
         boundaries = [
             _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
             _Boundary(kind=_BoundaryKind.MAIN, page_idx=1, y=50),
@@ -189,7 +188,7 @@ class TestMatchBoundaries:
         assert matches[0] == ("Q1", 0, 50)
         assert matches[1] == ("Q2", 1, 50)
 
-    def test_mixed_standalone_and_subs(self):
+    def test_mixed_standalone_and_subs(self) -> None:
         boundaries = [
             _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
             _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=90),
@@ -204,7 +203,7 @@ class TestMatchBoundaries:
         assert matches[1][0] == "Q1b"
         assert matches[2][0] == "Q2"
 
-    def test_partial_match(self):
+    def test_partial_match(self) -> None:
         """More question_ids than boundaries → partial match."""
         boundaries = [
             _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
@@ -215,7 +214,7 @@ class TestMatchBoundaries:
         assert len(matches) == 1
         assert matches[0][0] == "Q1"
 
-    def test_empty_inputs(self):
+    def test_empty_inputs(self) -> None:
         assert _match_boundaries([], ["Q1"]) == []
         assert _match_boundaries(
             [_Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50)], []
@@ -225,7 +224,7 @@ class TestMatchBoundaries:
 # ── Tests: region building ────────────────────────────────────────
 
 class TestBuildRegions:
-    def test_single_page_two_questions(self):
+    def test_single_page_two_questions(self) -> None:
         matches = [("Q1a", 0, 50.0), ("Q1b", 0, 400.0)]
         doc = fitz.open()
         doc.new_page(width=612, height=792)
@@ -243,7 +242,7 @@ class TestBuildRegions:
         assert regions[1].clips[0].y_top == 400.0
         assert regions[1].clips[0].y_bottom == 740.0  # last → footer
 
-    def test_cross_page_region(self):
+    def test_cross_page_region(self) -> None:
         matches = [("Q1b", 0, 500.0), ("Q2", 2, 60.0)]
         doc = fitz.open()
         for _ in range(3):
@@ -259,7 +258,7 @@ class TestBuildRegions:
         assert q1b.clips[1] == PageClip(page_idx=1, y_top=45.0, y_bottom=740.0)
         assert q1b.clips[2] == PageClip(page_idx=2, y_top=45.0, y_bottom=60.0)
 
-    def test_empty_matches(self):
+    def test_empty_matches(self) -> None:
         doc = fitz.open()
         doc.new_page()
         regions = _build_regions([], doc, footer_y=740.0, top_margin=45.0)
@@ -270,19 +269,19 @@ class TestBuildRegions:
 # ── Tests: format detection ───────────────────────────────────────
 
 class TestDetectFormat:
-    def test_letter(self):
+    def test_letter(self) -> None:
         doc = fitz.open()
         doc.new_page(width=612, height=792)
         assert _detect_format(doc[0]) == "letter"
         doc.close()
 
-    def test_a4(self):
+    def test_a4(self) -> None:
         doc = fitz.open()
         doc.new_page(width=595, height=842)
         assert _detect_format(doc[0]) == "a4"
         doc.close()
 
-    def test_unknown_defaults_to_letter(self):
+    def test_unknown_defaults_to_letter(self) -> None:
         doc = fitz.open()
         doc.new_page(width=500, height=700)
         assert _detect_format(doc[0]) == "letter"
@@ -292,7 +291,7 @@ class TestDetectFormat:
 # ── Tests: validate_regions ───────────────────────────────────────
 
 class TestValidateRegions:
-    def test_all_matched(self):
+    def test_all_matched(self) -> None:
         regions = [
             QuestionRegion(question_id="Q1a", clips=[]),
             QuestionRegion(question_id="Q1b", clips=[]),
@@ -301,7 +300,7 @@ class TestValidateRegions:
         assert matched == ["Q1a", "Q1b"]
         assert unmatched == []
 
-    def test_partial_match(self):
+    def test_partial_match(self) -> None:
         regions = [QuestionRegion(question_id="Q1a", clips=[])]
         matched, unmatched = validate_regions(regions, ["Q1a", "Q1b", "Q2"])
         assert matched == ["Q1a"]
@@ -311,7 +310,7 @@ class TestValidateRegions:
 # ── Tests: full pipeline ──────────────────────────────────────────
 
 class TestSegmentQuestions:
-    def test_full_pipeline(self):
+    def test_full_pipeline(self) -> None:
         """Multi-page synthetic PDF with CIE-like layout."""
         page0 = _make_cie_page(
             main_q="Q1",
@@ -330,7 +329,7 @@ class TestSegmentQuestions:
         assert regions[1].question_id == "Q1b"
         assert regions[2].question_id == "Q2"
 
-    def test_default_skips_first_page(self):
+    def test_default_skips_first_page(self) -> None:
         page0 = _make_cie_page(main_q="XX")  # cover page
         page1 = _make_cie_page(main_q="Q1")
         doc = _make_doc([page0, page1])
@@ -341,7 +340,7 @@ class TestSegmentQuestions:
         assert len(regions) == 1
         assert regions[0].clips[0].page_idx == 1
 
-    def test_empty_doc_returns_empty(self):
+    def test_empty_doc_returns_empty(self) -> None:
         doc = fitz.open()
         regions = segment_questions(doc, ["Q1", "Q2"])
         doc.close()

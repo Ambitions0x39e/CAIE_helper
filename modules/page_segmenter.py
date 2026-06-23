@@ -17,7 +17,6 @@ from enum import Enum
 import fitz
 from pydantic import BaseModel
 
-
 # ── Models ────────────────────────────────────────────────────────
 
 class PageClip(BaseModel):
@@ -302,8 +301,8 @@ def _extract_boundaries(
 # ── Match boundaries to question IDs ──────────────────────────────
 
 def _has_sub_letter(qid: str) -> bool:
-    """Check if a question ID ends with a lowercase letter (e.g. Q1a)."""
-    return bool(re.search(r"[a-z]$", qid))
+    """Check if a question ID has a sub-part letter (e.g. 1a, 1(a))."""
+    return bool(re.search(r"[a-z]\)?$", qid))
 
 
 def _extract_main_num(qid: str) -> str:
@@ -403,17 +402,36 @@ def _match_boundaries(
 
 # ── Convert matches to regions ────────────────────────────────────
 
+def _find_last_content_page(doc: fitz.Document, after: int = 0) -> int:
+    """Find the last page with actual content (curves in drawings).
+
+    Pages after all questions (e.g. "Additional page") contain only
+    dotted lines (straight-line drawings, 0 curves).  Scan backwards
+    from the end of the document to find the last page that still has
+    bezier curve content.
+    """
+    for i in range(len(doc) - 1, after - 1, -1):
+        page = doc[i]
+        for d in page.get_drawings():
+            for item in d.get("items", []):
+                if item[0] == "c":
+                    return i
+    return after
+
+
 def _build_regions(
     matches: list[tuple[str, int, float]],
     doc: fitz.Document,
     footer_y: float,
     top_margin: float,
+    *,
+    last_content_page: int | None = None,
 ) -> list[QuestionRegion]:
     """Convert (qid, page, y) tuples into QuestionRegion with PageClips."""
     if not matches:
         return []
 
-    total_pages = len(doc)
+    max_page = last_content_page if last_content_page is not None else len(doc) - 1
     regions: list[QuestionRegion] = []
 
     for idx, (qid, start_page, start_y) in enumerate(matches):
@@ -421,8 +439,7 @@ def _build_regions(
         if idx + 1 < len(matches):
             end_page, end_y = matches[idx + 1][1], matches[idx + 1][2]
         else:
-            # Last question — extend to footer of last content page
-            end_page = total_pages - 1
+            end_page = max_page
             end_y = footer_y
 
         clips: list[PageClip] = []
@@ -489,8 +506,14 @@ def segment_questions(
     fmt = _detect_format(doc[0])
     params = _FORMAT_PARAMS[fmt]
 
+    last_boundary_page = max(b.page_idx for b in boundaries)
+    last_content = _find_last_content_page(doc, after=last_boundary_page)
+
     matches = _match_boundaries(boundaries, question_ids)
-    return _build_regions(matches, doc, params["footer_y"], params["top_margin"])
+    return _build_regions(
+        matches, doc, params["footer_y"], params["top_margin"],
+        last_content_page=last_content,
+    )
 
 
 def validate_regions(

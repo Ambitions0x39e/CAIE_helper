@@ -1,4 +1,9 @@
-from modules.downloader import DownloadRequest, DownloadResult, DownloadSource, PaperDownloader
+from modules.downloader import (
+    DownloadRequest,
+    DownloadResult,
+    DownloadSource,
+    PaperDownloader,
+)
 from modules.mailer import GoodNotesMailer, MailRequest, MailResult
 from modules.manager import (
     DeleteRequest,
@@ -7,6 +12,12 @@ from modules.manager import (
     PaperManager,
     ScoreUpdate,
     UpdateResult,
+)
+from modules.page_segmenter import (
+    PageClip,
+    QuestionRegion,
+    segment_questions,
+    validate_regions,
 )
 from modules.visualizer import PaperVisualizer
 
@@ -24,5 +35,9 @@ __all__ = [
     "PaperManager",
     "ScoreUpdate",
     "UpdateResult",
+    "PageClip",
+    "QuestionRegion",
+    "segment_questions",
+    "validate_regions",
     "PaperVisualizer",
 ]

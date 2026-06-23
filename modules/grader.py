@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import json
 import re
-from pathlib import Path
 
 import fitz
 from openai import OpenAI
@@ -83,23 +82,47 @@ class GradingReport(BaseModel):
     total_max: int
 
 
-def detect_handwriting_pages(doc: fitz.Document) -> list[int]:
-    """Detect pages with handwriting (blue ink from GoodNotes).
+def detect_handwriting_pages(
+    doc: fitz.Document,
+    *,
+    skip_first: int = 1,
+    curve_threshold: int = 50,
+) -> list[int]:
+    """Detect pages containing handwriting.
 
-    Returns 1-indexed page numbers.
+    Uses two heuristics (either triggers detection):
+    1. Blue-ink drawings (GoodNotes export) — >10 blue strokes.
+    2. Curve-heavy drawings (digitally filled CIE papers) — pages
+       with bezier curve items above *curve_threshold*. Blank answer
+       pages have 0 curves; printed-only question text uses the font
+       layer, not drawing curves.
+
+    Args:
+        doc: opened PyMuPDF document.
+        skip_first: number of leading pages to skip (cover page).
+        curve_threshold: minimum bezier curve count to flag a page.
+
+    Returns:
+        1-indexed page numbers with handwriting, sorted.
     """
-    pages_with_hw = []
-    for i in range(len(doc)):
+    pages_with_hw: list[int] = []
+    for i in range(skip_first, len(doc)):
         page = doc[i]
         drawings = page.get_drawings()
+
         blue_count = 0
+        curve_count = 0
         for d in drawings:
+            for item in d.get("items", []):
+                if item[0] == "c":
+                    curve_count += 1
             color = d.get("fill") or d.get("color") or (0, 0, 0)
             if len(color) == 3:
-                r, g, b = color
+                r, _g, b = color
                 if b > 0.4 and r < 0.1:
                     blue_count += 1
-        if blue_count > 10:
+
+        if blue_count > 10 or curve_count > curve_threshold:
             pages_with_hw.append(i + 1)
     return pages_with_hw
 
@@ -188,18 +211,19 @@ def grade_question(
     )
     content.append({"type": "text", "text": prompt})
 
-    kwargs = dict(
-        model=config.model,
-        messages=[{"role": "user", "content": content}],
-        temperature=0.1,
-        extra_body={
-            "enable_thinking": config.enable_thinking,
-            **({"thinking_budget": 81920} if config.enable_thinking else {}),
-        },
-    )
+    extra_body: dict[str, object] = {
+        "enable_thinking": config.enable_thinking,
+    }
+    if config.enable_thinking:
+        extra_body["thinking_budget"] = 81920
 
-    response = client.chat.completions.create(**kwargs)
-    return response.choices[0].message.content
+    response = client.chat.completions.create(
+        model=config.model,
+        messages=[{"role": "user", "content": content}],  # type: ignore[list-item]
+        temperature=0.1,
+        extra_body=extra_body,
+    )
+    return str(response.choices[0].message.content)
 
 
 def parse_grading_result(raw: str) -> QuestionResult:
@@ -214,7 +238,7 @@ def parse_grading_result(raw: str) -> QuestionResult:
     except json.JSONDecodeError as e:
         raise ValueError(
             f"Failed to parse API response as JSON: {e}\nRaw response:\n{raw}"
-        )
+        ) from e
 
     required = {"question", "marks", "total", "max"}
     missing = required - set(data.keys())
