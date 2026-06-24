@@ -592,18 +592,39 @@ with tab_mark:
                     "or upload directly."
                 )
             else:
-                ms_paper = st.selectbox(
-                    "Select paper",
-                    options=[r.paper_id for r in supported_records],
-                    key="ms_paper_select",
+                syllabus_codes = sorted(
+                    {r.paper_id.split("_")[0] for r in supported_records}
                 )
-                target = next(
-                    (r for r in supported_records if r.paper_id == ms_paper),
-                    None,
+                syl_col, paper_col = st.columns([1, 3])
+                selected_syllabus = syl_col.selectbox(
+                    "Syllabus code",
+                    options=syllabus_codes,
+                    key="ms_syllabus_select",
                 )
-                if target:
-                    ms_pdf_path = target.ms_path
-                    paper_type = detect_paper_type(target.paper_id)
+
+                filtered_records = sorted(
+                    [
+                        r for r in supported_records
+                        if r.paper_id.startswith(f"{selected_syllabus}_")
+                    ],
+                    key=lambda r: r.paper_id,
+                )
+
+                if not filtered_records:
+                    st.info("No papers found for this syllabus code.")
+                else:
+                    ms_paper = paper_col.selectbox(
+                        "Select paper",
+                        options=[r.paper_id for r in filtered_records],
+                        key="ms_paper_select",
+                    )
+                    target = next(
+                        (r for r in filtered_records if r.paper_id == ms_paper),
+                        None,
+                    )
+                    if target:
+                        ms_pdf_path = target.ms_path
+                        paper_type = detect_paper_type(target.paper_id)
         else:
             uploaded_ms = st.file_uploader(
                 "Upload Mark Scheme PDF",
@@ -639,6 +660,7 @@ with tab_mark:
                     )
                     st.session_state["paper_config"] = paper_config
                     st.session_state["paper_type"] = paper_type
+                    st.session_state.pop("deleted_questions", None)
                     st.success(
                         f"Parsed **{paper_config.paper_id}** — "
                         f"{len(paper_config.questions)} questions, "
@@ -728,24 +750,46 @@ with tab_mark:
                 st.markdown("**Assign pages to questions:**")
                 page_assignments: dict[str, list[int]] = {}
 
+                deleted_qs: set[str] = st.session_state.get(
+                    "deleted_questions", set()
+                )
+                q_items = [
+                    (qid, qcfg) for qid, qcfg in pc.questions.items()
+                    if qid not in deleted_qs
+                ]
+
                 cols_per_row = 3
-                q_items = list(pc.questions.items())
                 for row_start in range(0, len(q_items), cols_per_row):
                     cols = st.columns(cols_per_row)
                     chunk = q_items[row_start:row_start + cols_per_row]
                     for col_idx, (qid, qcfg) in enumerate(chunk):
                         with cols[col_idx]:
-                            default_val = auto_pages.get(qid, "")
-                            pages_str = st.text_input(
-                                f"{qid} ({qcfg.max_marks}m)",
-                                value=default_val,
-                                placeholder="e.g. 2,3",
-                                key=f"pages_{qid}",
-                                help=(
-                                    "Comma-separated page numbers "
-                                    "(1-indexed)"
-                                ),
+                            input_col, del_col = st.columns(
+                                [5, 1], vertical_alignment="bottom",
                             )
+                            with input_col:
+                                default_val = auto_pages.get(qid, "")
+                                pages_str = st.text_input(
+                                    f"{qid} ({qcfg.max_marks}m)",
+                                    value=default_val,
+                                    placeholder="e.g. 2,3",
+                                    key=f"pages_{qid}",
+                                    help=(
+                                        "Comma-separated page numbers "
+                                        "(1-indexed)"
+                                    ),
+                                )
+                            with del_col:
+                                if st.button(
+                                    "✕", key=f"del_q_{qid}",
+                                    help=f"Remove {qid}",
+                                ):
+                                    dels = st.session_state.get(
+                                        "deleted_questions", set()
+                                    )
+                                    dels.add(qid)
+                                    st.session_state["deleted_questions"] = dels
+                                    st.rerun()
                             if pages_str.strip():
                                 try:
                                     pages = [
@@ -854,8 +898,15 @@ with tab_mark:
                     tmp_result.flush()
                     tmp_result.close()
 
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("score_override_"):
+                            del st.session_state[key]
+
                     st.session_state["grading_results"] = results
                     st.session_state["grading_total"] = (total_score, total_max)
+                    st.session_state["score_overrides"] = {
+                        r.question: r.total for r in results
+                    }
                     st.session_state["grading_temp_path"] = tmp_result.name
                     st.session_state["grading_confirmed"] = False
 
@@ -864,25 +915,64 @@ with tab_mark:
                     st.divider()
                     st.subheader("Results")
 
-                    score, max_score = st.session_state["grading_total"]
+                    grading_results: list[QuestionResult] = (
+                        st.session_state["grading_results"]
+                    )
+
+                    if "score_overrides" not in st.session_state:
+                        st.session_state["score_overrides"] = {
+                            r.question: r.total for r in grading_results
+                        }
+                    _overrides = st.session_state["score_overrides"]
+
+                    score = sum(
+                        _overrides.get(r.question, r.total)
+                        for r in grading_results
+                    )
+                    max_score = sum(r.max for r in grading_results)
                     pct = (score / max_score * 100) if max_score > 0 else 0
 
                     mc1, mc2, mc3 = st.columns(3)
                     mc1.metric("Total Score", f"{score}/{max_score}")
                     mc2.metric("Percentage", f"{pct:.1f}%")
-                    n_graded = len(st.session_state["grading_results"])
-                    mc3.metric("Questions Graded", n_graded)
+                    mc3.metric("Questions Graded", len(grading_results))
 
-                    for result in st.session_state["grading_results"]:
-                        with st.expander(
-                            f"{result.question} — {result.total}/{result.max}",
-                            expanded=True,
-                        ):
-                            for m in result.marks:
-                                icon = "✅" if m.awarded else "❌"
-                                st.markdown(f"{icon} **{m.code}**: {m.reason}")
-                            if result.comment:
-                                st.info(f"💬 {result.comment}")
+                    def _on_score_change(question: str) -> None:
+                        st.session_state["score_overrides"][question] = (
+                            st.session_state[f"score_override_{question}"]
+                        )
+
+                    for result in grading_results:
+                        _ov = _overrides.get(result.question, result.total)
+                        exp_col, adj_col = st.columns(
+                            [5, 1], vertical_alignment="top",
+                        )
+                        with exp_col:
+                            with st.expander(
+                                f"{result.question}"
+                                f" — {_ov}/{result.max}",
+                                expanded=True,
+                            ):
+                                for m in result.marks:
+                                    icon = (
+                                        "✅" if m.awarded else "❌"
+                                    )
+                                    st.markdown(
+                                        f"{icon} **{m.code}**"
+                                        f": {m.reason}"
+                                    )
+                                if result.comment:
+                                    st.info(f"💬 {result.comment}")
+                        with adj_col:
+                            st.number_input(
+                                "Adjust",
+                                min_value=0,
+                                max_value=result.max,
+                                value=_ov,
+                                key=f"score_override_{result.question}",
+                                on_change=_on_score_change,
+                                args=(result.question,),
+                            )
 
                     # Two-phase persistence: Confirm & Log
                     if not st.session_state.get("grading_confirmed", False):
