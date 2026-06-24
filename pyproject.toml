@@ -16,7 +16,6 @@ dependencies = [
     "PyMuPDF>=1.24.0",
     "openai>=1.30.0",
     "pyyaml>=6.0",
-    "fitz>=0.0.1.dev2",
 ]
 
 [project.optional-dependencies]
@@ -59,4 +58,5 @@ testpaths = ["tests"]
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "ruff>=0.15.8",
 ]

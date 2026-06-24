@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -21,7 +22,12 @@ from modules.grader import (
 )
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
-from modules.ms_parser import PaperConfig, parse_mark_scheme
+from modules.ms_parser import (
+    PaperConfig,
+    detect_image_pages,
+    extract_ms_from_images,
+    parse_mark_scheme,
+)
 from modules.page_segmenter import segment_questions, validate_regions
 from modules.visualizer import PaperVisualizer
 
@@ -650,7 +656,9 @@ with tab_mark:
         )
 
         can_parse = ms_pdf_path and paper_type
-        if can_parse and st.button("🔍 Parse Mark Scheme", type="primary"):
+        if can_parse and st.button(
+            "🔍 Parse Mark Scheme", type="primary",
+        ):
             with st.spinner("Parsing mark scheme…"):
                 try:
                     paper_config = parse_mark_scheme(
@@ -661,21 +669,108 @@ with tab_mark:
                     st.session_state["paper_config"] = paper_config
                     st.session_state["paper_type"] = paper_type
                     st.session_state.pop("deleted_questions", None)
+
+                    img_pages = detect_image_pages(
+                        ms_pdf_path, start_page=start_page,
+                    )
+                    st.session_state["ms_image_pages"] = img_pages
+                    st.session_state["ms_pdf_path"] = ms_pdf_path
+
                     st.success(
                         f"Parsed **{paper_config.paper_id}** — "
                         f"{len(paper_config.questions)} questions, "
                         f"{paper_config.total_marks} total marks"
                     )
+                    if img_pages:
+                        st.warning(
+                            f"**{len(img_pages)}** page(s) are "
+                            f"image-only (p.{', '.join(str(p) for p in img_pages)})"
+                            " — questions on these pages could "
+                            "not be extracted from tables. "
+                            "Use the button below to extract "
+                            "them via AI."
+                        )
                 except Exception as exc:
-                    st.error(f"Failed to parse mark scheme: {exc}")
+                    st.error(
+                        f"Failed to parse mark scheme: {exc}"
+                    )
+
+        # ── Extract image-only pages via VL ──────────────
+        img_pages = st.session_state.get("ms_image_pages", [])
+        if (
+            img_pages
+            and "paper_config" in st.session_state
+            and grader_config is not None
+        ):
+            if st.button("🖼️ Extract from image pages"):
+                ms_path = st.session_state.get("ms_pdf_path", "")
+                with st.spinner(
+                    f"Sending {len(img_pages)} image page(s) "
+                    "to VL model…"
+                ):
+                    try:
+                        extra_qs = extract_ms_from_images(
+                            grader_config,
+                            ms_path,
+                            img_pages,
+                        )
+                        if extra_qs:
+                            pc_cur: PaperConfig = (
+                                st.session_state["paper_config"]
+                            )
+                            merged = dict(pc_cur.questions)
+                            merged.update(extra_qs)
+                            sorted_qs = dict(
+                                sorted(
+                                    merged.items(),
+                                    key=lambda kv: (
+                                        int(
+                                            re.search(
+                                                r"\d+", kv[0],
+                                            ).group()  # type: ignore[union-attr]
+                                        ),
+                                        kv[0],
+                                    ),
+                                )
+                            )
+                            new_pc = PaperConfig(
+                                paper_id=pc_cur.paper_id,
+                                total_marks=pc_cur.total_marks,
+                                questions=sorted_qs,
+                            )
+                            st.session_state["paper_config"] = (
+                                new_pc
+                            )
+                            st.session_state["ms_image_pages"] = (
+                                []
+                            )
+                            names = ", ".join(extra_qs.keys())
+                            st.success(
+                                f"Extracted **{len(extra_qs)}** "
+                                f"question(s): {names}"
+                            )
+                            st.rerun()
+                        else:
+                            st.warning(
+                                "VL model returned no questions."
+                            )
+                    except Exception as exc:
+                        st.error(
+                            f"Image extraction failed: {exc}"
+                        )
 
         # Show parsed config
         if "paper_config" in st.session_state:
             pc: PaperConfig = st.session_state["paper_config"]
             n_q = len(pc.questions)
-            with st.expander(f"Parsed: {pc.paper_id} ({n_q} questions)", expanded=False):
+            with st.expander(
+                f"Parsed: {pc.paper_id} ({n_q} questions)",
+                expanded=False,
+            ):
                 for qid, qcfg in pc.questions.items():
-                    st.markdown(f"**{qid}** — {qcfg.max_marks} marks")
+                    st.markdown(
+                        f"**{qid}** — {qcfg.max_marks} marks"
+                    )
                     st.code(qcfg.mark_scheme, language=None)
 
             # ── Step 2: Upload answer paper ─────────────────────

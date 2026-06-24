@@ -6,6 +6,8 @@ Ported from D:\\repos\\grader\\ms2yaml.py (PyMuPDF backend).
 """
 from __future__ import annotations
 
+import base64
+import json
 import re
 from collections import OrderedDict
 from pathlib import Path
@@ -231,6 +233,156 @@ def _parse_math_ms(
         total_marks=total_marks,
         questions=questions,
     )
+
+
+def detect_image_pages(
+    pdf_path: str | Path,
+    start_page: int = 6,
+) -> list[int]:
+    """Find mark scheme pages that are image-only (no extractable tables).
+
+    Returns 1-indexed page numbers of pages that contain an embedded
+    image but no table data and no meaningful text.
+    """
+    doc = fitz.open(str(pdf_path))
+    image_pages: list[int] = []
+    try:
+        for pg_idx in range(start_page - 1, len(doc)):
+            page = doc[pg_idx]
+            tables = page.find_tables()
+            text = page.get_text().strip()
+            images = page.get_images()
+            if not tables.tables and not text and images:
+                image_pages.append(pg_idx + 1)
+    finally:
+        doc.close()
+    return image_pages
+
+
+_IMAGE_MS_PROMPT = """\
+You are reading page(s) from a CIE (Cambridge International) \
+A-Level mark scheme PDF. These pages were embedded as images.
+
+Extract ALL questions and sub-parts visible in these images.
+
+CRITICAL — for each marking point you MUST transcribe the ACTUAL \
+mathematical expressions, formulas, and working shown in the image. \
+Do NOT write generic descriptions like "method ..." or \
+"criterion ...". Copy the real content.
+
+Output ONLY valid JSON — no markdown fences, no extra text:
+{
+  "questions": [
+    {
+      "id": "1(a)",
+      "max_marks": 3,
+      "mark_scheme": "B1: y = x^3 + 1 [Uses correct substitution.]\\nM1: (y-1)^3 + 1 - 1 = 0 ... expands\\nA1: y^3 - 6y^2 + 20y - 16 = 0"
+    }
+  ]
+}
+
+Rules:
+- "id": use the printed format — "1" or "6(a)" etc.
+- "max_marks": the total marks for that question/sub-part.
+- "mark_scheme": one line per marking point (\\n-separated). \
+Each line starts with the mark code (B1, M1, A1 …) then a colon, \
+then the ACTUAL mathematical content / condition / expression \
+as printed in the image. Include guidance notes in square brackets \
+if present.
+- Transcribe all algebra, equations, and working — do not summarise.
+- If a question spans multiple images, combine into one entry.
+- Do NOT invent marks — only report what is visible."""
+
+
+def extract_ms_from_images(
+    grader_config: object,
+    pdf_path: str | Path,
+    image_pages: list[int],
+    dpi: int = 200,
+) -> dict[str, QuestionConfig]:
+    """Use a VL model to extract mark scheme from image-only pages.
+
+    Args:
+        grader_config: A ``GraderConfig`` instance (typed as object
+            to avoid a hard import cycle — only ``api_key``,
+            ``base_url``, ``model`` are accessed).
+        pdf_path: Path to the mark scheme PDF.
+        image_pages: 1-indexed page numbers to process.
+        dpi: Render resolution for page images.
+
+    Returns:
+        Dict mapping normalised question IDs to ``QuestionConfig``.
+    """
+    if not image_pages:
+        return {}
+
+    from openai import OpenAI
+
+    doc = fitz.open(str(pdf_path))
+    try:
+        png_list: list[bytes] = []
+        for pg_num in image_pages:
+            page = doc[pg_num - 1]
+            pix = page.get_pixmap(dpi=dpi)
+            png_list.append(pix.tobytes("png"))
+    finally:
+        doc.close()
+
+    content: list[dict[str, object]] = []
+    for png in png_list:
+        b64 = base64.b64encode(png).decode("utf-8")
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{b64}",
+            },
+        })
+    content.append({"type": "text", "text": _IMAGE_MS_PROMPT})
+
+    api_key = grader_config.api_key  # type: ignore[attr-defined]
+    if hasattr(api_key, "get_secret_value"):
+        api_key = api_key.get_secret_value()
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url=grader_config.base_url,  # type: ignore[attr-defined]
+    )
+    response = client.chat.completions.create(
+        model=grader_config.model,  # type: ignore[attr-defined]
+        messages=[{"role": "user", "content": content}],  # type: ignore[list-item]
+        temperature=0.1,
+    )
+    raw = str(response.choices[0].message.content)
+    return _parse_image_ms_response(raw)
+
+
+def _parse_image_ms_response(
+    raw: str,
+) -> dict[str, QuestionConfig]:
+    """Parse the VL model JSON response into QuestionConfig entries."""
+    cleaned = raw.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = cleaned.strip()
+
+    data = json.loads(cleaned)
+    questions: dict[str, QuestionConfig] = {}
+
+    for entry in data.get("questions", []):
+        raw_id = str(entry.get("id", ""))
+        qid = normalize_question_id(raw_id)
+        max_marks = int(entry.get("max_marks", 0))
+        ms_text = str(entry.get("mark_scheme", ""))
+
+        if not ms_text:
+            ms_text = "# No mark scheme extracted"
+
+        questions[qid] = QuestionConfig(
+            max_marks=max_marks,
+            mark_scheme=ms_text,
+        )
+
+    return questions
 
 
 def parse_mark_scheme(
