@@ -2,6 +2,41 @@
 
 ---
 
+## 2026-06-24 — Mark tab 三项 UI 改进 + bug 排查
+
+**改动文件：** `app.py`
+
+### 功能说明
+
+对 Mark tab 的用户交互流程做了三项改进，并排查了 9231_s25_11 卷上两个 bug 的根因（修复尚未实施）。
+
+### 1. Syllabus code 筛选器
+
+- 选卷时先选 Syllabus code（如 `9231`、`9709`），再从该科目下的试卷列表中选择
+- 试卷列表按 paper_id 升序排列
+- Syllabus code 和 Select paper 两个 selectbox 并排显示（`st.columns([1, 3])`）
+
+### 2. 题目删除按钮
+
+- 每个题目的页码输入框右侧新增 `✕` 按钮，可手动移除异常题目
+- 删除状态存入 `st.session_state["deleted_questions"]`，重新 parse mark scheme 时自动重置
+- 删除的题目从页码分配和批改列表中过滤掉
+
+### 3. 分数修改功能
+
+- 每个批改结果展开框（expander）右侧新增 `Adjust` number_input，可手动覆盖 AI 给分
+- 修改后实时更新 expander 标题、顶部 metrics（Total Score / Percentage），以及 Confirm & Log 的最终分数
+- 使用 `on_change` callback 同步 `score_overrides` dict，确保 metrics 在下一次 rerun 时正确
+
+### Bug 排查结论（未修复）
+
+| Bug | 根因 | 位置 |
+|-----|------|------|
+| Q1、Q6 缺失 | mark scheme PDF 中这些题的页面是纯图片（嵌入 PNG），无 table 可提取 | `ms_parser.py:_parse_math_ms` |
+| Q2a/Q2c 页面范围多出 P6 | `_build_regions` 在跨页时生成了极小的尾部 clip（<20pt），实际只是 header/margin | `page_segmenter.py:_build_regions` |
+
+---
+
 ## 2026-06-21 — 试卷题目自动分割与题号解码
 
 **改动文件：** `modules/page_segmenter.py`, `tests/test_page_segmenter.py`

@@ -16,9 +16,7 @@ _CHUNK_SIZE: Final[int] = 8192
 
 # Source base URLs
 _URL_CIEFRANK: Final[str] = "https://cie.fraft.cn/obj/common/Fetch/redir"
-_URL_PAPACAMBRIDGE: Final[str] = (
-    "https://pastpapers.papacambridge.com/directories/CAIE/CAIE-pastpapers/upload"
-)
+_URL_PAPACAMBRIDGE: Final[str] = "https://pastpapers.papacambridge.com/directories/CAIE/CAIE-pastpapers/upload"
 
 DownloadSource = Literal["CIEFrank", "PapaCambridge"]
 _DEFAULT_SOURCE: Final[DownloadSource] = "CIEFrank"
@@ -29,6 +27,7 @@ def _build_url(source: DownloadSource, filename: str) -> str:
     if source == "CIEFrank":
         return f"{_URL_CIEFRANK}/{filename}.pdf"
     return f"{_URL_PAPACAMBRIDGE}/{filename}.pdf"
+    
 
 
 # ---------------------------------------------------------------------------
