@@ -265,26 +265,32 @@ A-Level mark scheme PDF. These pages were embedded as images.
 
 Extract ALL questions and sub-parts visible in these images.
 
-Output ONLY valid JSON — no markdown fences, no commentary:
+CRITICAL — for each marking point you MUST transcribe the ACTUAL \
+mathematical expressions, formulas, and working shown in the image. \
+Do NOT write generic descriptions like "method ..." or \
+"criterion ...". Copy the real content.
+
+Output ONLY valid JSON — no markdown fences, no extra text:
 {
   "questions": [
     {
-      "id": "1",
-      "max_marks": 5,
-      "mark_scheme": "B1: criterion ...\\nM1: method ...\\nA1: accuracy ..."
+      "id": "1(a)",
+      "max_marks": 3,
+      "mark_scheme": "B1: y = x^3 + 1 [Uses correct substitution.]\\nM1: (y-1)^3 + 1 - 1 = 0 ... expands\\nA1: y^3 - 6y^2 + 20y - 16 = 0"
     }
   ]
 }
 
 Rules:
-- "id" uses the printed format: "1" for a standalone question, \
-"6(a)" for sub-parts.
-- "max_marks" is the total marks for that question/sub-part \
-(the bold number usually at the bottom of its row).
-- "mark_scheme" lists every marking point on separate lines \
-(\\n-separated).  Keep the mark codes (B1, M1, A1, etc.) and \
-their criteria.  Include guidance/notes if present.
-- If a question spans multiple images, combine them into one entry.
+- "id": use the printed format — "1" or "6(a)" etc.
+- "max_marks": the total marks for that question/sub-part.
+- "mark_scheme": one line per marking point (\\n-separated). \
+Each line starts with the mark code (B1, M1, A1 …) then a colon, \
+then the ACTUAL mathematical content / condition / expression \
+as printed in the image. Include guidance notes in square brackets \
+if present.
+- Transcribe all algebra, equations, and working — do not summarise.
+- If a question spans multiple images, combine into one entry.
 - Do NOT invent marks — only report what is visible."""
 
 
