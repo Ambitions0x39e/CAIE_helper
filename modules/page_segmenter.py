@@ -419,6 +419,9 @@ def _find_last_content_page(doc: fitz.Document, after: int = 0) -> int:
     return after
 
 
+_MIN_CLIP_HEIGHT = 50.0
+
+
 def _build_regions(
     matches: list[tuple[str, int, float]],
     doc: fitz.Document,
@@ -464,12 +467,13 @@ def _build_regions(
                     y_top=top_margin,
                     y_bottom=footer_y,
                 ))
-            # Last page: top_margin → end_y
-            clips.append(PageClip(
-                page_idx=end_page,
-                y_top=top_margin,
-                y_bottom=end_y,
-            ))
+            # Last page: top_margin → end_y (skip if too small)
+            if end_y - top_margin >= _MIN_CLIP_HEIGHT:
+                clips.append(PageClip(
+                    page_idx=end_page,
+                    y_top=top_margin,
+                    y_bottom=end_y,
+                ))
 
         regions.append(QuestionRegion(question_id=qid, clips=clips))
 
