@@ -2,13 +2,51 @@
 
 ---
 
-## 2026-06-24 — Mark tab 三项 UI 改进 + bug 排查
+## 2026-06-25 — MS 解析全面迁移至 VL 模型（all_vl 分支）
 
-**改动文件：** `app.py`
+**改动文件：** `modules/ms_parser.py`, `modules/pdf_renderer.py`（新建）, `modules/grader.py`, `modules/__init__.py`, `app.py`, `tests/test_ms_parser.py`
 
 ### 功能说明
 
-对 Mark tab 的用户交互流程做了三项改进，并排查了 9231_s25_11 卷上两个 bug 的根因（修复尚未实施）。
+将 mark scheme 解析从 PyMuPDF table 提取全面迁移至 VL（Vision Language）模型。之前的流程需要两步（先 table 提取，再对图片页单独调 VL），现在统一为单步 VL 解析：所有 MS 页面渲染为图片 → 分 batch 发送至 Qwen-VL → 解析 JSON 返回结构化题目配置。
+
+### 1. 新建共享渲染模块 `modules/pdf_renderer.py`
+
+- 提取 `render_pdf_pages(doc, page_numbers, dpi)` 作为共享函数，MS parser 和 grader 都调用它
+- 新增 `render_pages_from_path(pdf_path, start_page, dpi)` 便捷函数，直接从文件路径渲染
+- `grader.py` 的 `render_pages()` 改为调用共享函数的 thin wrapper
+
+### 2. 重写 `modules/ms_parser.py`
+
+- **删除所有 table 解析代码**：`_parse_math_ms()`、`_parse_table_rows()`、`_group_questions()`、garbled font 解码（`decode_shifted_text`、`SHIFTED_CHAR_MAP` 等）、`detect_image_pages()`、`extract_ms_from_images()`
+- **新增 `_call_vl()`**：封装 VL API 调用（OpenAI-compatible client）
+- **新增 `_merge_questions()`**：合并跨 batch 边界的同一题目（append mark_scheme text + max(max_marks)）
+- **新增 `_parse_all_vl()`**：核心函数，渲染所有页面 → 按 batch_size=2 分批 → 逐批调 VL → 合并结果
+- **更新 `parse_mark_scheme()` 签名**：新增 `grader_config` 必填参数和 `on_progress` 回调
+- 保留 `_extract_paper_info()` 用 PyMuPDF 文本提取 paper_id 和 total_marks（封面页始终可读，无需浪费 VL token）
+- 增强 `_parse_image_ms_response()` 的 JSON 解析鲁棒性（fallback 到查找首尾 `{}` 括号）
+
+### 3. 简化 `app.py` Mark tab UI
+
+- 移除 `import re`（不再需要）、`detect_image_pages`、`extract_ms_from_images` 导入
+- "Parse Mark Scheme" 按钮改为单步 VL 解析，带 `st.progress()` 显示 batch 进度
+- 删除 "Extract from image pages" 按钮及其整个 UI block（~60 行）
+- 清理相关 session state：`ms_image_pages`、`ms_pdf_path`
+
+### 4. 测试更新
+
+- 删除 `test_clean_text_removes_garbled`（函数已删除）
+- 新增 5 个测试：`_merge_questions` 无重叠/有重叠、`_parse_image_ms_response` 正常/带 fence/空结果
+
+---
+
+## 2026-06-24 — Mark tab UI 改进 + 图片页 MS 提取 + bug 修复
+
+**改动文件：** `app.py`, `modules/ms_parser.py`, `modules/page_segmenter.py`, `pyproject.toml`, `dev/update_history.md`
+
+### 功能说明
+
+对 Mark tab 做了三项 UI 改进，修复了两个 mark scheme 解析 bug，并新增了基于 VL 模型的图片页 mark scheme 提取功能。
 
 ### 1. Syllabus code 筛选器
 
@@ -20,20 +58,32 @@
 
 - 每个题目的页码输入框右侧新增 `✕` 按钮，可手动移除异常题目
 - 删除状态存入 `st.session_state["deleted_questions"]`，重新 parse mark scheme 时自动重置
-- 删除的题目从页码分配和批改列表中过滤掉
 
 ### 3. 分数修改功能
 
-- 每个批改结果展开框（expander）右侧新增 `Adjust` number_input，可手动覆盖 AI 给分
-- 修改后实时更新 expander 标题、顶部 metrics（Total Score / Percentage），以及 Confirm & Log 的最终分数
-- 使用 `on_change` callback 同步 `score_overrides` dict，确保 metrics 在下一次 rerun 时正确
+- 批改结果 expander **右侧**（外部）新增 `Adjust` number_input，可手动覆盖 AI 给分
+- 布局使用 `st.columns([5, 1])` 将 expander 和 adjust 并排
+- 修改后实时更新 expander 标题、顶部 metrics、最终提交分数
 
-### Bug 排查结论（未修复）
+### 4. Bug 修复
 
-| Bug | 根因 | 位置 |
-|-----|------|------|
-| Q1、Q6 缺失 | mark scheme PDF 中这些题的页面是纯图片（嵌入 PNG），无 table 可提取 | `ms_parser.py:_parse_math_ms` |
-| Q2a/Q2c 页面范围多出 P6 | `_build_regions` 在跨页时生成了极小的尾部 clip（<20pt），实际只是 header/margin | `page_segmenter.py:_build_regions` |
+| Bug | 根因 | 修复方式 |
+|-----|------|----------|
+| Q1、Q6 缺失 | MS PDF 中这些页面是纯嵌入 PNG，`find_tables()` 无法提取 | 新增 VL 模型提取（见下） |
+| Q2a/Q2c 页面范围多出 P5/P6 | `_build_regions` 跨页时生成了极小的尾部 clip（<20pt，只是 header/margin） | `page_segmenter.py` 加 `_MIN_CLIP_HEIGHT = 50` 阈值，跳过过小 clip |
+
+### 5. VL 图片页 Mark Scheme 提取（核心新功能）
+
+- **`ms_parser.py:detect_image_pages()`**：自动检测 MS PDF 中无 table、无 text、有 image 的纯图片页
+- **`ms_parser.py:extract_ms_from_images()`**：将图片页渲染为 PNG（200 dpi），通过 OpenAI-compatible API 发送给 Qwen-VL，提取题号、分值、marking points，返回 `dict[str, QuestionConfig]`
+- **`ms_parser.py:_parse_image_ms_response()`**：解析 VL 响应 JSON，通过 `normalize_question_id()` 标准化题号
+- **Prompt 优化**：明确要求 VL 模型 transcribe 实际数学表达式（行列式展开、代入过程等），禁止输出 "method..."、"criterion..." 等泛泛描述
+- **UI 集成**：parse 后自动检测图片页并显示 warning，用户点击按钮即可通过 AI 提取并合并到题目列表
+
+### 6. 其他
+
+- `pyproject.toml`：移除了与 PyMuPDF 冲突的 `fitz>=0.0.1.dev2` 依赖
+- worktree `image-ms-detection` 分支已合并到 main
 
 ---
 

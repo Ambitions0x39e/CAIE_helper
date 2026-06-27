@@ -19,6 +19,7 @@ from modules.page_segmenter import (
     segment_questions,
     validate_regions,
 )
+from modules.pdf_renderer import render_pages_from_path, render_pdf_pages
 from modules.visualizer import PaperVisualizer
 
 __all__ = [
@@ -40,4 +41,6 @@ __all__ = [
     "segment_questions",
     "validate_regions",
     "PaperVisualizer",
+    "render_pdf_pages",
+    "render_pages_from_path",
 ]

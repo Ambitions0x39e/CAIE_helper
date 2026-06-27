@@ -183,7 +183,12 @@ class PaperDownloader:
         except Exception as exc:  # noqa: BLE001
             return DownloadResult(success=False, paper_id=paper_id, error=str(exc))
 
-        record = PaperRecord(paper_id=request.paper_id, status="Pending")
+        try:
+            ms_path = self._fetch_pdf(request.ms_url, request.ms_id)
+        except _DownloadError as exc:
+                return DownloadResult(success=False, paper_id=request.paper_id, error=str(exc))
+        
+        record = PaperRecord(paper_id=request.paper_id, status="Pending", ms_path=str(ms_path))
         try:
             self._store.append(record)
         except ValueError as exc:
@@ -191,7 +196,8 @@ class PaperDownloader:
                 success=False, paper_id=request.paper_id, error=str(exc)
             )
 
-        return DownloadResult(success=True, paper_id=request.paper_id)
+        return DownloadResult(success=True, paper_id=request.paper_id, ms_path=str(ms_path))
+
 
     # ------------------------------------------------------------------
     # Private helpers

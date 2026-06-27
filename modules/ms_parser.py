@@ -1,35 +1,27 @@
 # modules/ms_parser.py
-"""Parse CIE mark scheme PDFs into structured question configs.
+"""Parse CIE mark scheme PDFs into structured question configs via VL model.
 
-Dispatches to a paper-type-specific parser. Only MATH is implemented now.
-Ported from D:\\repos\\grader\\ms2yaml.py (PyMuPDF backend).
+Renders all mark-scheme pages to images, sends them in batches to a
+vision-language model, and parses the structured JSON response into
+``PaperConfig``.
 """
 from __future__ import annotations
 
 import base64
 import json
 import re
-from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 
 import fitz
+from openai import OpenAI
 from pydantic import BaseModel
 
 from core.models import PaperType
+from core.settings import GraderConfig
+from modules.pdf_renderer import render_pages_from_path
 
-GARBLED_CHARS = re.compile(r"[§·ª º¨¸«»¬¼©¹\x0e\x0b\x0c\x10]")
-MULTI_SPACE = re.compile(r"  +")
 QUESTION_ID_RE = re.compile(r"^(\d+)(?:\(([a-z])\))?$")
-
-SHIFTED_CHAR_MAP = {
-    "\x03": " ", "\x11": ".", "\x13": "0",
-    "\xb5": "'", "\xb6": "'",
-    "\\": "Y", "$": "A", "(": "E", "7": "T",
-}
-
-SHIFTED_RUN_RE = re.compile(
-    r"(?:[\x03\x11\x13\xb5\xb6$\\(7]|[A-Z]){4,}"
-)
 
 
 class QuestionConfig(BaseModel):
@@ -43,34 +35,7 @@ class PaperConfig(BaseModel):
     questions: dict[str, QuestionConfig]
 
 
-def _decode_shifted_char(c: str) -> str:
-    if c in SHIFTED_CHAR_MAP:
-        return SHIFTED_CHAR_MAP[c]
-    if c.isalpha():
-        base = ord("A") if c.isupper() else ord("a")
-        return chr((ord(c) - base - 3) % 26 + base)
-    return c
-
-
-def _decode_shifted_run(m: re.Match[str]) -> str:
-    run = m.group(0)
-    decoded = "".join(_decode_shifted_char(c) for c in run)
-    if sum(1 for c in decoded if c.isalpha()) >= 3:
-        return decoded
-    return run
-
-
-def decode_shifted_text(text: str) -> str:
-    return SHIFTED_RUN_RE.sub(_decode_shifted_run, text)
-
-
-def clean_text(text: str) -> str:
-    text = decode_shifted_text(text)
-    text = GARBLED_CHARS.sub(" ", text)
-    text = MULTI_SPACE.sub(" ", text)
-    lines = [line.strip() for line in text.split("\n")]
-    lines = [ln for ln in lines if ln]
-    return "\n".join(lines)
+# ── Helpers ──────────────────────────────────────────────────────
 
 
 def normalize_question_id(raw: str) -> str:
@@ -85,6 +50,7 @@ def normalize_question_id(raw: str) -> str:
 
 
 def _extract_paper_info(doc: fitz.Document) -> tuple[str, int]:
+    """Extract paper_id and total_marks from the cover page via text."""
     text = doc[0].get_text()
     paper_id = ""
     total_marks = 0
@@ -113,155 +79,14 @@ def _extract_paper_info(doc: fitz.Document) -> tuple[str, int]:
     return paper_id, total_marks
 
 
-def _is_max_marks_row(entry: dict[str, str]) -> int | None:
-    marks = entry["marks"]
-    if not marks:
-        return None
-    if marks.isdigit() and not entry["answer"]:
-        return int(marks)
-    return None
-
-
-def _parse_table_rows(table: object) -> list[dict[str, str]]:
-    rows = table.extract()  # type: ignore[attr-defined]
-    entries: list[dict[str, str]] = []
-    for row in rows:
-        def cell(i: int, r: list[str | None] = row) -> str:  # noqa: B006
-            val = r[i] if i < len(r) and r[i] else ""
-            return (val or "").strip()
-        question = cell(0)
-        answer = cell(3)
-        marks = cell(6)
-        guidance = cell(9)
-        if not question and not answer and not marks and not guidance:
-            continue
-        if marks in ("Marks",) and guidance in ("Guidance",):
-            continue
-        entries.append({
-            "question": question,
-            "answer": answer,
-            "marks": marks,
-            "guidance": guidance,
-        })
-    return entries
-
-
-class _QEntry:
-    __slots__ = ("mark_lines", "max_marks")
-
-    def __init__(self) -> None:
-        self.mark_lines: list[str] = []
-        self.max_marks: int = 0
-
-
-def _group_questions(
-    all_entries: list[dict[str, str]],
-) -> OrderedDict[str, _QEntry]:
-    questions: OrderedDict[str, _QEntry] = OrderedDict()
-    current_qid = None
-
-    for entry in all_entries:
-        if entry["question"] and QUESTION_ID_RE.match(entry["question"]):
-            current_qid = normalize_question_id(entry["question"])
-            if current_qid not in questions:
-                questions[current_qid] = _QEntry()
-
-        if current_qid is None:
-            continue
-
-        q = questions[current_qid]
-
-        max_m = _is_max_marks_row(entry)
-        if max_m is not None:
-            q.max_marks = max_m
-            if entry.get("guidance", "").strip():
-                q.mark_lines.append(f"Note: {clean_text(entry['guidance'])}")
-            continue
-
-        marks_str = entry["marks"].strip()
-        answer_str = clean_text(entry["answer"])
-        guidance_str = clean_text(entry["guidance"])
-
-        if not marks_str and not answer_str:
-            continue
-
-        line_parts: list[str] = []
-        if marks_str:
-            line_parts.append(f"{marks_str}:")
-        if answer_str:
-            line_parts.append(answer_str)
-        if guidance_str:
-            line_parts.append(f"[{guidance_str}]")
-
-        if line_parts:
-            q.mark_lines.append(" ".join(line_parts))
-
-    return questions
-
-
-def _parse_math_ms(
-    pdf_path: str | Path,
-    start_page: int = 6,
-) -> PaperConfig:
-    """Math-specific MS parser using PyMuPDF table extraction."""
-    doc = fitz.open(str(pdf_path))
-    paper_id, total_marks = _extract_paper_info(doc)
-
-    all_entries = []
-    for pg_idx in range(start_page - 1, len(doc)):
-        page = doc[pg_idx]
-        tables = page.find_tables()
-        if not tables.tables:
-            continue
-        for table in tables.tables:
-            entries = _parse_table_rows(table)
-            all_entries.extend(entries)
-
-    raw_questions = _group_questions(all_entries)
-    doc.close()
-
-    questions: dict[str, QuestionConfig] = {}
-    for qid, qdata in raw_questions.items():
-        mark_scheme = "\n".join(qdata.mark_lines)
-        questions[qid] = QuestionConfig(
-            max_marks=qdata.max_marks,
-            mark_scheme=mark_scheme if mark_scheme else "# No mark scheme extracted",
-        )
-
-    return PaperConfig(
-        paper_id=paper_id,
-        total_marks=total_marks,
-        questions=questions,
-    )
-
-
-def detect_image_pages(
-    pdf_path: str | Path,
-    start_page: int = 6,
-) -> list[int]:
-    """Find mark scheme pages that are image-only (no extractable tables).
-
-    Returns 1-indexed page numbers of pages that contain an embedded
-    image but no table data and no meaningful text.
-    """
-    doc = fitz.open(str(pdf_path))
-    image_pages: list[int] = []
-    try:
-        for pg_idx in range(start_page - 1, len(doc)):
-            page = doc[pg_idx]
-            tables = page.find_tables()
-            text = page.get_text().strip()
-            images = page.get_images()
-            if not tables.tables and not text and images:
-                image_pages.append(pg_idx + 1)
-    finally:
-        doc.close()
-    return image_pages
-
+# ── VL extraction ────────────────────────────────────────────────
 
 _IMAGE_MS_PROMPT = """\
 You are reading page(s) from a CIE (Cambridge International) \
-A-Level mark scheme PDF. These pages were embedded as images.
+A-Level mark scheme PDF.
+
+Some questions may have started on previous pages and continue here. \
+Extract what you see, including partial questions that began earlier.
 
 Extract ALL questions and sub-parts visible in these images.
 
@@ -276,7 +101,7 @@ Output ONLY valid JSON — no markdown fences, no extra text:
     {
       "id": "1(a)",
       "max_marks": 3,
-      "mark_scheme": "B1: y = x^3 + 1 [Uses correct substitution.]\\nM1: (y-1)^3 + 1 - 1 = 0 ... expands\\nA1: y^3 - 6y^2 + 20y - 16 = 0"
+      "mark_scheme": "B1: y = x^3 + 1\\nM1: expand\\nA1: y^3 - 6y^2 + 20y - 16 = 0"
     }
   ]
 }
@@ -294,66 +119,31 @@ if present.
 - Do NOT invent marks — only report what is visible."""
 
 
-def extract_ms_from_images(
-    grader_config: object,
-    pdf_path: str | Path,
-    image_pages: list[int],
-    dpi: int = 200,
-) -> dict[str, QuestionConfig]:
-    """Use a VL model to extract mark scheme from image-only pages.
-
-    Args:
-        grader_config: A ``GraderConfig`` instance (typed as object
-            to avoid a hard import cycle — only ``api_key``,
-            ``base_url``, ``model`` are accessed).
-        pdf_path: Path to the mark scheme PDF.
-        image_pages: 1-indexed page numbers to process.
-        dpi: Render resolution for page images.
-
-    Returns:
-        Dict mapping normalised question IDs to ``QuestionConfig``.
-    """
-    if not image_pages:
-        return {}
-
-    from openai import OpenAI
-
-    doc = fitz.open(str(pdf_path))
-    try:
-        png_list: list[bytes] = []
-        for pg_num in image_pages:
-            page = doc[pg_num - 1]
-            pix = page.get_pixmap(dpi=dpi)
-            png_list.append(pix.tobytes("png"))
-    finally:
-        doc.close()
-
+def _call_vl(
+    grader_config: GraderConfig,
+    png_list: list[bytes],
+    prompt: str,
+) -> str:
+    """Send page images + prompt to VL API and return raw response text."""
     content: list[dict[str, object]] = []
     for png in png_list:
         b64 = base64.b64encode(png).decode("utf-8")
         content.append({
             "type": "image_url",
-            "image_url": {
-                "url": f"data:image/png;base64,{b64}",
-            },
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
         })
-    content.append({"type": "text", "text": _IMAGE_MS_PROMPT})
-
-    api_key = grader_config.api_key  # type: ignore[attr-defined]
-    if hasattr(api_key, "get_secret_value"):
-        api_key = api_key.get_secret_value()
+    content.append({"type": "text", "text": prompt})
 
     client = OpenAI(
-        api_key=api_key,
-        base_url=grader_config.base_url,  # type: ignore[attr-defined]
+        api_key=grader_config.api_key.get_secret_value(),
+        base_url=grader_config.base_url,
     )
     response = client.chat.completions.create(
-        model=grader_config.model,  # type: ignore[attr-defined]
-        messages=[{"role": "user", "content": content}],  # type: ignore[list-item]
+        model=grader_config.model,
+        messages=[{"role": "user", "content": content}],  # type: ignore[list-item, misc]
         temperature=0.1,
     )
-    raw = str(response.choices[0].message.content)
-    return _parse_image_ms_response(raw)
+    return str(response.choices[0].message.content)
 
 
 def _parse_image_ms_response(
@@ -365,41 +155,149 @@ def _parse_image_ms_response(
     cleaned = re.sub(r"\s*```$", "", cleaned)
     cleaned = cleaned.strip()
 
-    data = json.loads(cleaned)
-    questions: dict[str, QuestionConfig] = {}
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            data = json.loads(cleaned[start : end + 1])
+        else:
+            raise
 
+    questions: dict[str, QuestionConfig] = {}
     for entry in data.get("questions", []):
         raw_id = str(entry.get("id", ""))
         qid = normalize_question_id(raw_id)
         max_marks = int(entry.get("max_marks", 0))
         ms_text = str(entry.get("mark_scheme", ""))
-
         if not ms_text:
             ms_text = "# No mark scheme extracted"
-
         questions[qid] = QuestionConfig(
             max_marks=max_marks,
             mark_scheme=ms_text,
         )
-
     return questions
+
+
+def _merge_questions(
+    base: dict[str, QuestionConfig],
+    new: dict[str, QuestionConfig],
+) -> dict[str, QuestionConfig]:
+    """Merge two question dicts, combining entries for duplicate IDs."""
+    merged = dict(base)
+    for qid, qcfg in new.items():
+        if qid in merged:
+            existing = merged[qid]
+            merged[qid] = QuestionConfig(
+                max_marks=max(existing.max_marks, qcfg.max_marks),
+                mark_scheme=existing.mark_scheme + "\n" + qcfg.mark_scheme,
+            )
+        else:
+            merged[qid] = qcfg
+    return merged
+
+
+def _parse_all_vl(
+    pdf_path: str | Path,
+    grader_config: GraderConfig,
+    start_page: int = 6,
+    batch_size: int = 2,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> dict[str, QuestionConfig]:
+    """Extract all questions from a mark scheme PDF using VL model.
+
+    Renders all pages from *start_page* onward, batches them, and
+    sends each batch to the VL model for structured extraction.
+
+    Args:
+        pdf_path: Path to the mark scheme PDF.
+        grader_config: API credentials for VL model.
+        start_page: First MS content page (1-indexed).
+        batch_size: Max pages per API call.
+        on_progress: Optional callback ``(current_batch, total_batches)``.
+
+    Returns:
+        Dict mapping normalised question IDs to ``QuestionConfig``.
+
+    Raises:
+        RuntimeError: If extraction fails or returns no questions.
+    """
+    all_pngs = render_pages_from_path(pdf_path, start_page, dpi=grader_config.dpi)
+    if not all_pngs:
+        raise RuntimeError(
+            f"No pages to render from page {start_page} onward"
+        )
+
+    batches = [
+        all_pngs[i : i + batch_size]
+        for i in range(0, len(all_pngs), batch_size)
+    ]
+
+    all_questions: dict[str, QuestionConfig] = {}
+    for batch_idx, batch in enumerate(batches):
+        if on_progress is not None:
+            on_progress(batch_idx + 1, len(batches))
+
+        raw = _call_vl(grader_config, batch, _IMAGE_MS_PROMPT)
+        batch_questions = _parse_image_ms_response(raw)
+        all_questions = _merge_questions(all_questions, batch_questions)
+
+    if not all_questions:
+        raise RuntimeError("VL model returned no questions from any batch")
+
+    sorted_questions = dict(
+        sorted(
+            all_questions.items(),
+            key=lambda kv: (
+                int(re.search(r"\d+", kv[0]).group()),  # type: ignore[union-attr]
+                kv[0],
+            ),
+        )
+    )
+    return sorted_questions
+
+
+# ── Public API ───────────────────────────────────────────────────
 
 
 def parse_mark_scheme(
     pdf_path: str | Path,
     paper_type: PaperType,
+    grader_config: GraderConfig,
     start_page: int = 6,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> PaperConfig:
-    """Dispatch to the correct parser based on paper type.
+    """Parse a mark scheme PDF into structured question configs via VL.
 
     Args:
         pdf_path: Path to the MS PDF file.
         paper_type: Determines which parsing strategy to use.
+        grader_config: API credentials for the VL model.
         start_page: First page with actual mark scheme content (1-indexed).
+        on_progress: Optional callback ``(current_batch, total_batches)``.
 
     Raises:
         NotImplementedError: If paper_type has no parser yet.
     """
-    if paper_type == PaperType.MATH:
-        return _parse_math_ms(pdf_path, start_page)
-    raise NotImplementedError(f"No mark scheme parser for {paper_type.value}")
+    if paper_type != PaperType.MATH:
+        raise NotImplementedError(f"No mark scheme parser for {paper_type.value}")
+
+    doc = fitz.open(str(pdf_path))
+    try:
+        paper_id, total_marks = _extract_paper_info(doc)
+    finally:
+        doc.close()
+
+    questions = _parse_all_vl(
+        pdf_path,
+        grader_config,
+        start_page=start_page,
+        on_progress=on_progress,
+    )
+
+    return PaperConfig(
+        paper_id=paper_id,
+        total_marks=total_marks,
+        questions=questions,
+    )
