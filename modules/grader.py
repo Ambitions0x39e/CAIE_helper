@@ -134,20 +134,11 @@ def render_pages(
 ) -> list[bytes]:
     """Render full pages to PNG images.
 
-    Args:
-        doc: opened PyMuPDF document.
-        page_numbers: 1-indexed page numbers to render.
-        dpi: render resolution.
-
-    Returns:
-        List of PNG bytes, one per page.
+    Thin wrapper around :func:`pdf_renderer.render_pdf_pages`.
     """
-    images = []
-    for page_num in page_numbers:
-        page = doc[page_num - 1]
-        pix = page.get_pixmap(dpi=dpi)
-        images.append(pix.tobytes("png"))
-    return images
+    from modules.pdf_renderer import render_pdf_pages
+
+    return render_pdf_pages(doc, page_numbers, dpi=dpi)
 
 
 def render_question_regions(
