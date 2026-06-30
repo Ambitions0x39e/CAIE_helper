@@ -10,11 +10,17 @@ from pydantic import BaseModel, computed_field, field_validator, model_validator
 class PaperType(str, Enum):
     """Paper component type — determines parser, prompt, and UI workflow."""
     MATH = "math"
+    MCQ = "mcq"
 
 
 SUBJECT_PAPER_TYPES: dict[str, PaperType] = {
     "9709": PaperType.MATH,
     "9231": PaperType.MATH,
+    # MCQ (Paper 1) subjects
+    "9702": PaperType.MCQ,  # Physics
+    "9701": PaperType.MCQ,  # Chemistry
+    "9700": PaperType.MCQ,  # Biology
+    "9696": PaperType.MCQ,  # Geography
 }
 
 
