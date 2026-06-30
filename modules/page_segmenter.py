@@ -138,7 +138,7 @@ def _build_char_mapping(
                     if not text:
                         continue
                     bbox = span["bbox"]
-                    if bbox[1] < 40 and abs(bbox[0] - center_x) < 100:
+                    if bbox[1] < 60 and abs(bbox[0] - center_x) < 100:
                         if _is_ascii_digit_str(text):
                             return None
                         page_num_spans.append((pg_idx, text))
@@ -270,21 +270,32 @@ def _extract_boundaries(
                     question_num=int(text),
                 ))
             elif span["len"] == 2:
+                # 2-char span: always a MAIN boundary (positional fallback works
+                # even when qnum cannot be decoded from the char map).
                 qnum = _decode_question_num(text, char_map)
                 boundaries.append(_Boundary(
                     kind=_BoundaryKind.MAIN, page_idx=pg_idx, y=y0,
                     question_num=qnum,
                 ))
-            elif span["len"] == 1 and bracket_pair is not None:
-                companions = spans_at_y.get(y0, [])
-                for c in companions:
-                    if abs(c["x0"] - sqx) < _X_TOLERANCE and c["len"] >= 3:
-                        raw = c["text"]
-                        if (ord(raw[0]), ord(raw[2])) == bracket_pair:
-                            boundaries.append(_Boundary(
-                                kind=_BoundaryKind.SUB, page_idx=pg_idx, y=y0,
-                            ))
-                            break
+            elif span["len"] == 1:
+                # 1-char span: single-digit garbled question number (Q1–Q9).
+                # Try MAIN first; fall back to SUB check if char map can't decode it.
+                qnum = _decode_question_num(text, char_map)
+                if qnum is not None:
+                    boundaries.append(_Boundary(
+                        kind=_BoundaryKind.MAIN, page_idx=pg_idx, y=y0,
+                        question_num=qnum,
+                    ))
+                elif bracket_pair is not None:
+                    companions = spans_at_y.get(y0, [])
+                    for c in companions:
+                        if abs(c["x0"] - sqx) < _X_TOLERANCE and c["len"] >= 3:
+                            raw = c["text"]
+                            if (ord(raw[0]), ord(raw[2])) == bracket_pair:
+                                boundaries.append(_Boundary(
+                                    kind=_BoundaryKind.SUB, page_idx=pg_idx, y=y0,
+                                ))
+                                break
 
         # --- Readable SUB detection: "(a)", "(b)" directly at x≈sub_q_x ---
         for span in sub_q_spans:
