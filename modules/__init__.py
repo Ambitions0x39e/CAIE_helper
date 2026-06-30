@@ -1,3 +1,4 @@
+from modules.mcq_parser import detect_student_answers, parse_mcq_mark_scheme, score_mcq_answers
 from modules.downloader import (
     DownloadRequest,
     DownloadResult,
@@ -23,6 +24,9 @@ from modules.pdf_renderer import render_pages_from_path, render_pdf_pages
 from modules.visualizer import PaperVisualizer
 
 __all__ = [
+    "detect_student_answers",
+    "parse_mcq_mark_scheme",
+    "score_mcq_answers",
     "DownloadRequest",
     "DownloadResult",
     "DownloadSource",

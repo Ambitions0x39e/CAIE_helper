@@ -264,24 +264,36 @@ def _parse_all_vl(
 def parse_mark_scheme(
     pdf_path: str | Path,
     paper_type: PaperType,
-    grader_config: GraderConfig,
+    grader_config: GraderConfig | None = None,
     start_page: int = 6,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> PaperConfig:
-    """Parse a mark scheme PDF into structured question configs via VL.
+    """Parse a mark scheme PDF into structured question configs.
+
+    Dispatches to the appropriate parser based on paper_type:
+    - MCQ: PyMuPDF block extraction (no API needed).
+    - MATH: VL model extraction (requires grader_config).
 
     Args:
         pdf_path: Path to the MS PDF file.
         paper_type: Determines which parsing strategy to use.
-        grader_config: API credentials for the VL model.
+        grader_config: API credentials for VL model (required for MATH).
         start_page: First page with actual mark scheme content (1-indexed).
         on_progress: Optional callback ``(current_batch, total_batches)``.
 
     Raises:
         NotImplementedError: If paper_type has no parser yet.
+        ValueError: If grader_config is None for a VL-based paper type.
     """
+    if paper_type == PaperType.MCQ:
+        from modules.mcq_parser import parse_mcq_mark_scheme
+        return parse_mcq_mark_scheme(pdf_path)
+
     if paper_type != PaperType.MATH:
         raise NotImplementedError(f"No mark scheme parser for {paper_type.value}")
+
+    if grader_config is None:
+        raise ValueError("grader_config is required for MATH mark scheme parsing")
 
     doc = fitz.open(str(pdf_path))
     try:
