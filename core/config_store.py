@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, field_validator
@@ -8,6 +9,7 @@ from pydantic import BaseModel, field_validator
 # Path relative to this file: repo_root/core/../data/syllabus_config.json
 _REPO_ROOT = Path(__file__).parent.parent
 _DEFAULT_CONFIG_PATH = _REPO_ROOT / "data" / "syllabus_config.json"
+_PAGE_CONFIG_PATH = _REPO_ROOT / "data" / "paper_page_config.json"
 
 
 # ---------------------------------------------------------------------------
@@ -145,3 +147,51 @@ class ConfigStore:
         if len(filtered) == len(entries):
             raise KeyError(f"syllabus_id '{syllabus_id}' not found in config")
         self.save_all(filtered)
+
+
+# ---------------------------------------------------------------------------
+# Paper page config  (data/paper_page_config.json)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PaperPageConfig:
+    """QP/MS page layout for one (subject, component_prefix) pair."""
+
+    qp_skip_pages: set[int] = field(default_factory=lambda: {0})
+    ms_start_page: int = 6
+
+
+def get_paper_page_config(subject_id: str, component: str) -> PaperPageConfig:
+    """Return the page layout for the given subject and component.
+
+    Args:
+        subject_id: 4-digit syllabus code (e.g. "9702").
+        component:  Component string from the paper_id, e.g. "11", "21".
+                    The first character is used as the prefix key.
+
+    Falls back to the "default" entry in paper_page_config.json when no
+    specific entry exists for this subject/component combination.
+    """
+    raw: dict[str, object] = {}
+    if _PAGE_CONFIG_PATH.exists():
+        try:
+            raw = json.loads(_PAGE_CONFIG_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    defaults: dict[str, object] = raw.get("default", {})  # type: ignore[assignment]
+    prefix = component[0] if component else ""
+    subject_entry: dict[str, object] = raw.get(subject_id, {})  # type: ignore[assignment]
+    component_entry: dict[str, object] = subject_entry.get(prefix, {})  # type: ignore[assignment]
+
+    def _get(key: str, fallback: object) -> object:
+        return component_entry.get(key, defaults.get(key, fallback))
+
+    qp_raw = _get("qp_skip_pages", [0])
+    ms_raw = _get("ms_start_page", 6)
+
+    return PaperPageConfig(
+        qp_skip_pages=set(int(p) for p in qp_raw),  # type: ignore[arg-type]
+        ms_start_page=int(ms_raw),  # type: ignore[arg-type]
+    )
