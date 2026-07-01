@@ -2,6 +2,74 @@
 
 ---
 
+## 2026-07-01 — Code review 发现的 10 个问题修复（TDD）
+
+**改动文件：** `app.py`, `core/config_store.py`, `core/settings.py`（净 diff 为空，见下）, `data/paper_page_config.json`, `modules/__init__.py`, `modules/mcq_parser.py`, `modules/page_segmenter.py`, `tests/test_page_segmenter.py`；新增 `tests/test_settings.py`, `tests/test_mcq_parser.py`, `tests/test_config_store.py`
+
+### 功能说明
+
+对 MCQ support 分支 + VL mark scheme 分支（本地已合并未 push）做了一次多角度 code review（8 个 finder agent 覆盖正确性、重复代码、简化、效率、设计深度、CLAUDE.md 规范等角度），产出 10 条确认发现，记录于 `dev/regular-review/2026-07-01-review.md`。随后按 TDD（先写失败测试、确认失败原因、再写最小修复代码）逐条修复，全部验证通过。
+
+### 1. 正确性 Bug
+
+- **`core/settings.py`**：`sender_email` 之前被加了 `example@gmail.com` 假默认值，绕过了 `MailConfig.try_load()` 判断"是否已配置邮箱"的机制。移除默认值恢复必填校验（此改动使该文件净 diff 归零，相当于撤销了一处此前存在于工作区的未提交回归）。
+- **`modules/mcq_parser.py` + `app.py`**：MCQ 页面跳过配置（`paper_page_config.json`）此前完全不生效——查找逻辑基于文件名正则匹配，但实际传入的是 `tempfile.NamedTemporaryFile` 生成的随机路径，永远匹配不上。新增 `detect_student_answers(..., source_filename=...)` 参数，`app.py` 上传时把原始文件名存入 `st.session_state["mcq_qp_filename"]` 并传入，同时删除了从未被调用方使用的 `skip_pages` 参数。
+- **`modules/page_segmenter.py`**：单字符边界（Q1–Q9）判定原先"先尝试 MAIN 解码、解码成功就直接判定为主题号"，但解码用的 char_map 是从页脚数字独立构建的，可能与 SUB 括号标记的字节巧合碰撞。改为先检查 SUB 括号配对，找不到再退回 MAIN 解码。
+- **`modules/page_segmenter.py`**：页码识别的纵向阈值 `bbox[1] < 60` 侵入了正文起始区（`top_margin=45`），可能污染 char_map。收紧到 `< 50`，用两个测试分别钉住"仍需兼容页头 y≈46 的试卷"和"y≈55 的正文不应被误判为页码"。
+- **`modules/mcq_parser.py` + `app.py`**：手动补录答案时 `if val in "ABCD"` 对空字符串成立（Python 子串语义），导致未填写的题目在渲染时就被标记为"已作答"。新增 `is_valid_manual_answer()` 用集合成员判断替代。
+
+### 2. 冗余逻辑清理
+
+- **`core/config_store.py`**：`PaperPageConfig` 原本是裸 `@dataclass`，JSON 解析失败时静默吞掉异常，与同文件里 `ConfigStore`（Pydantic + 抛错）的模式不一致。改为 `pydantic.BaseModel`，解析失败时抛 `ValueError`；`get_paper_page_config()` 新增 `config_path` 参数便于测试注入。
+- **`modules/mcq_parser.py`**：`_extract_paper_id()` 和原 `detect_student_answers()` 内部各自维护一份文件名解析正则。提取出共用的 `_parse_paper_filename()`，两处复用。
+- **`data/paper_page_config.json`**：9709/9231 等科目下多个 component 条目内容完全重复（约 24 处）。新增科目级 `_default` 字段作为该科目所有 component 的默认值，只在真正有差异时才单独列出（如各科目的 Paper 1 MCQ）。用参数化回归测试钉住了所有科目的实际解析结果，确认结构调整前后行为完全一致。
+- **`app.py`**：删除了 MCQ 分支下从未被使用的 `start_page = 1` 死赋值。
+
+### 验证结果
+
+- `pytest`：70 passed（新增约 28 个测试用例），2 个与本次改动无关的既存失败保持不变
+- `ruff check .`：43 个错误（改动前基线 44 个）
+- `mypy .`：40 个错误（改动前基线 51 个）
+- `ruff format --check .`：全仓库历史遗留的格式不合规，本次未处理（超出任务范围）
+
+---
+
+## 2026-06-29 — MCQ 试卷页面配置与 QP 检测修复（mcq-support 分支）
+
+**改动文件：** `data/paper_page_config.json`（新建）, `core/config_store.py`, `core/__init__.py`, `modules/mcq_parser.py`, `modules/page_segmenter.py`
+
+### 功能说明
+
+新增 `data/paper_page_config.json`，按 subject ID + component 前缀（component 首位数字）配置每类试卷的 QP 跳过页数和 MS 内容起始页，替代原来在代码里硬编码的 `skip_pages={0,1}`。同时修复了 MCQ QP 检测在特殊情况下（如用户上传的临时试卷）完全失效的问题。
+
+### 1. 新建 `data/paper_page_config.json`
+
+- 覆盖 9700/9701/9702/9696（理科 MCQ）、9709/9231（数学）共 6 个 subject
+- 每条按 component prefix 细分（如 9702 Paper 1x 和 Paper 2x 配置不同）：
+  - Paper 1 MCQ：`qp_skip_pages: [0, 1]`（封面 + 数据页），`ms_start_page: 2`
+  - Paper 2/3/4 结构题：`qp_skip_pages: [0]`，`ms_start_page: 6`
+  - 数学各 paper：`qp_skip_pages: [0, 1]`，`ms_start_page: 6`
+- 包含 `default` 回退条目（skip=[0], ms_start=6）
+
+### 2. `core/config_store.py` — 新增页面配置 loader
+
+- 新增 `PaperPageConfig` dataclass（`qp_skip_pages: set[int]`, `ms_start_page: int`）
+- 新增 `get_paper_page_config(subject_id, component)` 函数：按 subject + component 首位字符查找 JSON，找不到则回退 default
+- `core/__init__.py` 同步导出 `PaperPageConfig`、`get_paper_page_config`
+
+### 3. `modules/mcq_parser.py` — 接入配置 + 修复 QP 检测失效
+
+- `detect_student_answers()` 中 `skip_pages=None` 时，自动从 QP 文件名解析 subject/component，调用 `get_paper_page_config()` 获取实际 skip 集合，替代原硬编码 `{0, 1}`
+- 将 `_build_page_batches()` 简化为纯按页批次（直接返回每个非跳过页的 index），**移除 `segment_questions` 依赖**：MCQ 每题独立成小方框，VL 一次读整页即可识别多题，无需题目级切割
+- 修复了只有 3 页的临时卷子（封面+数据+1 题页）完全检测不到的问题
+
+### 4. `modules/page_segmenter.py` — 修复 CID 字体单字符边界检测
+
+- `_build_char_mapping()` 中页码检测 y 阈值从 `< 40` 放宽至 `< 60`，兼容页头在 y≈46 的试卷
+- `_extract_boundaries()` MAIN 边界检测从仅处理 `len==2` 改为 `len in (1, 2)`：单位数题号（Q1–Q9）的 CID 编码为单字节，之前被误判为 sub-question 或完全忽略
+
+---
+
 ## 2026-06-25 — MS 解析全面迁移至 VL 模型（all_vl 分支）
 
 **改动文件：** `modules/ms_parser.py`, `modules/pdf_renderer.py`（新建）, `modules/grader.py`, `modules/__init__.py`, `app.py`, `tests/test_ms_parser.py`

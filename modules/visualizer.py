@@ -31,10 +31,12 @@ def _extract_paper_type_digit(paper_id: str) -> str | None:
 class PaperVisualizer:
     """
     Renders analytics for completed PaperRecords inside a Streamlit page.
-    Grouped by syllabus ID (first 4 chars of paper_id), with per-paper-type trend graphs.
+    Grouped by syllabus ID (first 4 chars of paper_id), with per-type trend graphs.
     """
 
-    def __init__(self, records: list[PaperRecord], config_store: ConfigStore | None = None) -> None:
+    def __init__(
+        self, records: list[PaperRecord], config_store: ConfigStore | None = None
+    ) -> None:
         self._completed = [r for r in records if r.status == "Completed"]
         self._config = config_store or ConfigStore()
 
@@ -140,19 +142,23 @@ class PaperVisualizer:
         else:
             syl_entry = syllabus_config.get(syllabus_id, {})
             pt_raw = syl_entry.get("paper_types", {})
-            paper_types_config: dict[str, str] = pt_raw if isinstance(pt_raw, dict) else {}
+            paper_types_config: dict[str, str] = (
+                pt_raw if isinstance(pt_raw, dict) else {}
+            )
             tabs = st.tabs(
                 [
                     f"Paper {d} — {paper_types_config.get(d, 'Unknown')}"
                     for d in paper_type_digits
                 ]
             )
-            for tab, digit in zip(tabs, paper_type_digits):
+            for tab, digit in zip(tabs, paper_type_digits, strict=True):
                 with tab:
                     type_df = syl_df[syl_df["paper_type_digit"] == digit].copy()
                     type_df = type_df.reset_index(drop=True)
                     type_df["attempt"] = type_df.index + 1
-                    self._render_trend_chart(type_df, label=f"Paper {digit}", show_metrics=True)
+                    self._render_trend_chart(
+                        type_df, label=f"Paper {digit}", show_metrics=True
+                    )
                     self._render_score_table(type_df)
 
     # ------------------------------------------------------------------
@@ -186,10 +192,15 @@ class PaperVisualizer:
             chart_df["attempt"] = range(1, len(chart_df) + 1)
         chart_df = chart_df.set_index("attempt")[["percentage"]]
         chart_df.index.name = "Attempt #"
-        st.line_chart(chart_df, y="percentage", y_label="Score (%)", x_label="Attempt #")
+        st.line_chart(
+            chart_df, y="percentage", y_label="Score (%)", x_label="Attempt #"
+        )
 
     def _render_score_table(self, df: pd.DataFrame) -> None:
-        display = df[["paper_id", "score_raw", "score_total", "percentage", "timestamp"]].copy()
+        cols = ["paper_id", "score_raw", "score_total", "percentage", "timestamp"]
+        display = df[cols].copy()
         display.columns = ["Paper ID", "Raw", "Total", "%", "Completed At"]
-        display["Completed At"] = display["Completed At"].dt.strftime("%Y-%m-%d %H:%M UTC")
+        display["Completed At"] = display["Completed At"].dt.strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
         st.dataframe(display, width="stretch", hide_index=True)

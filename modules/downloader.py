@@ -47,7 +47,7 @@ class DownloadRequest(BaseModel):
     @classmethod
     def paper_id_format(cls, v: str) -> str:
         v = v.strip()
-        # Standard format: <subject>_<session>_<component>_<variant>  e.g. 9231_s25_qp_11
+        # Standard: <subject>_<session>_<component>_<variant>, e.g. 9231_s25_qp_11
         standard = re.fullmatch(r"[a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z]+_[a-zA-Z0-9]+", v)
         # GT format: <subject>_<session>_gt  e.g. 9231_s25_gt
         gt_format = re.fullmatch(r"[a-zA-Z0-9]+_[a-zA-Z0-9]+_gt", v)
@@ -174,7 +174,7 @@ class PaperDownloader:
 
     def record_only(self, paper_id: str) -> DownloadResult:
         """
-        Register a paper in the store without downloading its PDFs.
+        Register a paper in the store without downloading its QP, but download its MS.
         Useful for papers completed on physical copies.
         Reuses DownloadRequest's paper_id format validation.
         """
@@ -186,9 +186,13 @@ class PaperDownloader:
         try:
             ms_path = self._fetch_pdf(request.ms_url, request.ms_id)
         except _DownloadError as exc:
-                return DownloadResult(success=False, paper_id=request.paper_id, error=str(exc))
-        
-        record = PaperRecord(paper_id=request.paper_id, status="Pending", ms_path=str(ms_path))
+            return DownloadResult(
+                success=False, paper_id=request.paper_id, error=str(exc)
+            )
+
+        record = PaperRecord(
+            paper_id=request.paper_id, status="Pending", ms_path=str(ms_path)
+        )
         try:
             self._store.append(record)
         except ValueError as exc:
@@ -196,8 +200,9 @@ class PaperDownloader:
                 success=False, paper_id=request.paper_id, error=str(exc)
             )
 
-        return DownloadResult(success=True, paper_id=request.paper_id, ms_path=str(ms_path))
-
+        return DownloadResult(
+            success=True, paper_id=request.paper_id, ms_path=str(ms_path)
+        )
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -215,7 +220,7 @@ class PaperDownloader:
 
         if response.status_code == 404:
             raise _DownloadError(
-                f"404 Not Found — check that the paper ID and base URL are correct: {url!r}"
+                f"404 Not Found — check the paper ID and base URL are correct: {url!r}"
             )
 
         if not response.ok:
