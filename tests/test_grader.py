@@ -27,7 +27,10 @@ def test_parse_grading_result_valid() -> None:
 
 
 def test_parse_grading_result_strips_code_fences() -> None:
-    raw = '```json\n{"question":"Q2","marks":[],"total":0,"max":3,"comment":"empty"}\n```'
+    raw = (
+        '```json\n{"question":"Q2","marks":[],"total":0,"max":3,'
+        '"comment":"empty"}\n```'
+    )
     result = parse_grading_result(raw)
     assert result.question == "Q2"
 

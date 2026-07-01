@@ -1,0 +1,81 @@
+{
+  "_comment": [
+    "Component prefix = first digit of the component in paper_id.",
+    "e.g. '9702_s25_qp_11' -> subject '9702', prefix '1'.",
+    "     '9702_s25_qp_21' -> subject '9702', prefix '2'.",
+    "qp_skip_pages: 0-indexed page indices to exclude when running page_segmenter on the QP.",
+    "ms_start_page: 1-indexed page where mark scheme content begins (used by VL parser).",
+    "MCQ papers don't use ms_start_page (block extraction scans all pages).",
+    "Structured paper QPs that include a data/formula page need an extra skip.",
+    "_default (per subject): applies to any component with no entry of its own.",
+    "Only list a numbered component when it differs from the subject's _default."
+  ],
+  "default": {
+    "qp_skip_pages": [0],
+    "ms_start_page": 6
+  },
+  "9700": {
+    "_name": "Biology",
+    "_default": {
+      "qp_skip_pages": [0],
+      "ms_start_page": 6
+    },
+    "1": {
+      "_note": "Paper 1 MCQ — cover + data sheet",
+      "qp_skip_pages": [0, 1],
+      "ms_start_page": 2
+    }
+  },
+  "9701": {
+    "_name": "Chemistry",
+    "_default": {
+      "qp_skip_pages": [0],
+      "ms_start_page": 6
+    },
+    "1": {
+      "_note": "Paper 1 MCQ — cover + data sheet",
+      "qp_skip_pages": [0, 1],
+      "ms_start_page": 2
+    }
+  },
+  "9702": {
+    "_name": "Physics",
+    "_default": {
+      "qp_skip_pages": [0],
+      "ms_start_page": 6
+    },
+    "1": {
+      "_note": "Paper 1 MCQ — cover + data sheet (verified: 9702_s25_qp_11 has 2 header pages)",
+      "qp_skip_pages": [0, 1],
+      "ms_start_page": 2
+    }
+  },
+  "9696": {
+    "_name": "Geography",
+    "_default": {
+      "qp_skip_pages": [0],
+      "ms_start_page": 6
+    },
+    "1": {
+      "_note": "Paper 1 MCQ",
+      "qp_skip_pages": [0, 1],
+      "ms_start_page": 2
+    }
+  },
+  "9709": {
+    "_name": "Mathematics",
+    "_default": {
+      "_note": "Every paper — cover + formula list",
+      "qp_skip_pages": [0, 1],
+      "ms_start_page": 6
+    }
+  },
+  "9231": {
+    "_name": "Further Mathematics",
+    "_default": {
+      "_note": "Every paper — cover + formula list (verified: 9231_s25_ms_44 content from p2)",
+      "qp_skip_pages": [0, 1],
+      "ms_start_page": 2
+    }
+  }
+}

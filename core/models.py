@@ -1,25 +1,31 @@
 from __future__ import annotations
 
 import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, computed_field, field_validator, model_validator
 
 
-class PaperType(str, Enum):
+class PaperType(StrEnum):
     """Paper component type — determines parser, prompt, and UI workflow."""
     MATH = "math"
+    MCQ = "mcq"
 
 
 SUBJECT_PAPER_TYPES: dict[str, PaperType] = {
     "9709": PaperType.MATH,
     "9231": PaperType.MATH,
+    # MCQ (Paper 1) subjects
+    "9702": PaperType.MCQ,  # Physics
+    "9701": PaperType.MCQ,  # Chemistry
+    "9700": PaperType.MCQ,  # Biology
+    "9696": PaperType.MCQ,  # Geography
 }
 
 
 def detect_paper_type(paper_id: str) -> PaperType | None:
-    """Resolve a paper_id (e.g. '9231_w22_qp_41') to its PaperType, or None if unsupported."""
+    """Resolve a paper_id (e.g. '9231_w22_qp_41') to its PaperType, or None."""
     subject = paper_id.split("_")[0] if "_" in paper_id else paper_id[:4]
     return SUBJECT_PAPER_TYPES.get(subject)
 
@@ -88,11 +94,12 @@ class PaperRecord(BaseModel):
     @model_validator(mode="after")
     def completed_requires_scores(self) -> PaperRecord:
         """A Completed record must have both score fields populated."""
-        if self.status == "Completed":
-            if self.score_raw is None or self.score_total is None:
-                raise ValueError(
-                    "status='Completed' requires both score_raw and score_total"
-                )
+        if self.status == "Completed" and (
+            self.score_raw is None or self.score_total is None
+        ):
+            raise ValueError(
+                "status='Completed' requires both score_raw and score_total"
+            )
         return self
 
     @model_validator(mode="after")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 from typing import Final
@@ -173,7 +174,7 @@ class GTParser:
 
         Strategy: for each column index, take the first non-empty cell
         scanning downward across the header rows (rows 0..header_row_idx+2).
-        This correctly assembles ['Option', 'Maximum', ..., 'A*', 'A', 'B', 'C', 'D', 'E'].
+        This assembles ['Option', 'Maximum', ..., 'A*', 'A', 'B', 'C', 'D', 'E'].
         """
         # Scan at most 3 rows from the header row upward/downward
         scan_rows = table[max(0, header_row_idx - 1): header_row_idx + 3]
@@ -216,12 +217,15 @@ class GTParser:
         grade_indices: dict[str, int] = {}
         for i, cell in enumerate(flat_header):
             clean = cell.strip().upper()
-            if clean in {"A*", "A", "B", "C", "D", "E"}:
-                if clean not in grade_indices:
-                    grade_indices[clean] = i
+            if clean in {"A*", "A", "B", "C", "D", "E"} and clean not in grade_indices:
+                grade_indices[clean] = i
 
         comp_idx: int | None = next(
-            (i for i, c in enumerate(flat_lower) if "component" in c or "combination" in c),
+            (
+                i
+                for i, c in enumerate(flat_lower)
+                if "component" in c or "combination" in c
+            ),
             None,
         )
         max_idx: int | None = next(
@@ -247,18 +251,14 @@ class GTParser:
 
             max_weighted = 0
             if max_idx is not None and max_idx < len(row) and row[max_idx]:
-                try:
+                with contextlib.suppress(ValueError):
                     max_weighted = int(str(row[max_idx]).strip())
-                except ValueError:
-                    pass
 
             thresholds: dict[str, int] = {}
             for grade, idx in grade_indices.items():
                 if idx < len(row) and row[idx] and row[idx] not in {"-", ""}:
-                    try:
+                    with contextlib.suppress(ValueError):
                         thresholds[grade] = int(str(row[idx]).strip())
-                    except ValueError:
-                        pass
 
             if not thresholds or not components:
                 continue
