@@ -1,4 +1,3 @@
-from modules.mcq_parser import detect_student_answers, parse_mcq_mark_scheme, score_mcq_answers
 from modules.downloader import (
     DownloadRequest,
     DownloadResult,
@@ -14,6 +13,12 @@ from modules.manager import (
     ScoreUpdate,
     UpdateResult,
 )
+from modules.mcq_parser import (
+    detect_student_answers,
+    is_valid_manual_answer,
+    parse_mcq_mark_scheme,
+    score_mcq_answers,
+)
 from modules.page_segmenter import (
     PageClip,
     QuestionRegion,
@@ -25,6 +30,7 @@ from modules.visualizer import PaperVisualizer
 
 __all__ = [
     "detect_student_answers",
+    "is_valid_manual_answer",
     "parse_mcq_mark_scheme",
     "score_mcq_answers",
     "DownloadRequest",

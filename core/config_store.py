@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, field_validator
@@ -110,7 +109,7 @@ class ConfigStore:
     def load_syllabus_config(self) -> SyllabusConfigDict:
         """
         Return a flat dict for easy lookup by visualizer:
-        { "9702": { "name": "Physics", "paper_types": { "1": "MCQ", "2": "AS Structured" } } }
+        { "9702": { "name": "Physics", "paper_types": { "1": "MCQ" } } }
         """
         entries = self.load_all()
         return {
@@ -154,44 +153,56 @@ class ConfigStore:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class PaperPageConfig:
+class PaperPageConfig(BaseModel):
     """QP/MS page layout for one (subject, component_prefix) pair."""
 
-    qp_skip_pages: set[int] = field(default_factory=lambda: {0})
+    model_config = {"strict": True}
+
+    qp_skip_pages: set[int] = {0}
     ms_start_page: int = 6
 
 
-def get_paper_page_config(subject_id: str, component: str) -> PaperPageConfig:
+def get_paper_page_config(
+    subject_id: str, component: str, config_path: Path | None = None
+) -> PaperPageConfig:
     """Return the page layout for the given subject and component.
 
     Args:
         subject_id: 4-digit syllabus code (e.g. "9702").
         component:  Component string from the paper_id, e.g. "11", "21".
                     The first character is used as the prefix key.
+        config_path: Override for the JSON config path (used in tests).
 
     Falls back to the "default" entry in paper_page_config.json when no
     specific entry exists for this subject/component combination.
     """
+    path = config_path or _PAGE_CONFIG_PATH
     raw: dict[str, object] = {}
-    if _PAGE_CONFIG_PATH.exists():
+    if path.exists():
         try:
-            raw = json.loads(_PAGE_CONFIG_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path.name} is not valid JSON: {exc}") from exc
 
     defaults: dict[str, object] = raw.get("default", {})  # type: ignore[assignment]
     prefix = component[0] if component else ""
     subject_entry: dict[str, object] = raw.get(subject_id, {})  # type: ignore[assignment]
     component_entry: dict[str, object] = subject_entry.get(prefix, {})  # type: ignore[assignment]
+    subject_defaults: dict[str, object] = subject_entry.get("_default", {})  # type: ignore[assignment]
 
     def _get(key: str, fallback: object) -> object:
-        return component_entry.get(key, defaults.get(key, fallback))
+        if key in component_entry:
+            return component_entry[key]
+        if key in subject_defaults:
+            return subject_defaults[key]
+        return defaults.get(key, fallback)
 
     qp_raw = _get("qp_skip_pages", [0])
     ms_raw = _get("ms_start_page", 6)
 
-    return PaperPageConfig(
-        qp_skip_pages=set(int(p) for p in qp_raw),  # type: ignore[arg-type]
-        ms_start_page=int(ms_raw),  # type: ignore[arg-type]
+    return PaperPageConfig.model_validate(
+        {
+            "qp_skip_pages": set(int(p) for p in qp_raw),  # type: ignore[attr-defined]
+            "ms_start_page": int(ms_raw),  # type: ignore[call-overload]
+        }
     )

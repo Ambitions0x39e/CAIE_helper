@@ -12,7 +12,7 @@ from the parsed mark scheme, producing clip rectangles for cropped rendering.
 from __future__ import annotations
 
 import re
-from enum import Enum
+from enum import StrEnum
 
 import fitz
 from pydantic import BaseModel
@@ -34,7 +34,7 @@ class QuestionRegion(BaseModel):
 
 # ── Internal types ────────────────────────────────────────────────
 
-class _BoundaryKind(str, Enum):
+class _BoundaryKind(StrEnum):
     MAIN = "main"
     SUB = "sub"
 
@@ -138,7 +138,7 @@ def _build_char_mapping(
                     if not text:
                         continue
                     bbox = span["bbox"]
-                    if bbox[1] < 60 and abs(bbox[0] - center_x) < 100:
+                    if bbox[1] < 50 and abs(bbox[0] - center_x) < 100:
                         if _is_ascii_digit_str(text):
                             return None
                         page_num_spans.append((pg_idx, text))
@@ -152,7 +152,7 @@ def _build_char_mapping(
         expected = str(pg_idx + 1)
         if len(text) != len(expected):
             continue
-        for ch, digit in zip(text, expected):
+        for ch, digit in zip(text, expected, strict=True):
             b = ord(ch)
             if b in mapping and mapping[b] != digit:
                 continue
@@ -278,15 +278,14 @@ def _extract_boundaries(
                     question_num=qnum,
                 ))
             elif span["len"] == 1:
-                # 1-char span: single-digit garbled question number (Q1–Q9).
-                # Try MAIN first; fall back to SUB check if char map can't decode it.
-                qnum = _decode_question_num(text, char_map)
-                if qnum is not None:
-                    boundaries.append(_Boundary(
-                        kind=_BoundaryKind.MAIN, page_idx=pg_idx, y=y0,
-                        question_num=qnum,
-                    ))
-                elif bracket_pair is not None:
+                # 1-char span: either a SUB marker (paired with a bracket-pair
+                # companion at sub_q_x) or a single-digit garbled MAIN question
+                # number (Q1-Q9). Check SUB first — a companion match is a
+                # structural signal, whereas a char-map decode can coincidentally
+                # collide with an unrelated page-number byte and give a false
+                # positive MAIN classification.
+                matched_sub = False
+                if bracket_pair is not None:
                     companions = spans_at_y.get(y0, [])
                     for c in companions:
                         if abs(c["x0"] - sqx) < _X_TOLERANCE and c["len"] >= 3:
@@ -295,7 +294,15 @@ def _extract_boundaries(
                                 boundaries.append(_Boundary(
                                     kind=_BoundaryKind.SUB, page_idx=pg_idx, y=y0,
                                 ))
+                                matched_sub = True
                                 break
+                if not matched_sub:
+                    qnum = _decode_question_num(text, char_map)
+                    if qnum is not None:
+                        boundaries.append(_Boundary(
+                            kind=_BoundaryKind.MAIN, page_idx=pg_idx, y=y0,
+                            question_num=qnum,
+                        ))
 
         # --- Readable SUB detection: "(a)", "(b)" directly at x≈sub_q_x ---
         for span in sub_q_spans:
@@ -346,9 +353,8 @@ def _group_boundaries(
     for b in boundaries:
         if b.kind == _BoundaryKind.MAIN:
             groups.append((b, []))
-        elif b.kind == _BoundaryKind.SUB:
-            if groups:
-                groups[-1][1].append(b)
+        elif b.kind == _BoundaryKind.SUB and groups:
+            groups[-1][1].append(b)
     return groups
 
 

@@ -43,15 +43,28 @@ Omit any question where you cannot clearly determine the selection."""
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
+_FILENAME_RE = re.compile(r"(\d{4})_([a-z])(\d{2})_(?:ms|qp)_(\d+)", re.IGNORECASE)
+
+
+def _parse_paper_filename(stem: str) -> tuple[str, str, str, str] | None:
+    """Parse a CIE paper filename stem into (subject, season_letter, year, component).
+
+    Expected format: "<subject>_<season><year>_(ms|qp)_<component>", e.g.
+    "9702_s25_qp_11". Returns None if the stem doesn't match.
+    """
+    m = _FILENAME_RE.match(stem)
+    if not m:
+        return None
+    subject, season_letter, year, component = m.groups()
+    return subject, season_letter, year, component
+
+
 def _extract_paper_id(pdf_path: Path) -> str:
     """Derive a human-readable paper_id from the PDF filename stem."""
-    stem = pdf_path.stem  # e.g. "9702_s25_ms_11"
-    m = re.match(
-        r"(\d{4})_([a-z])(\d{2})_(?:ms|qp)_(\d+)", stem, re.IGNORECASE
-    )
-    if not m:
-        return stem
-    syllabus, season_letter, year, variant = m.groups()
+    parsed = _parse_paper_filename(pdf_path.stem)  # e.g. "9702_s25_ms_11"
+    if parsed is None:
+        return pdf_path.stem
+    syllabus, season_letter, year, variant = parsed
     session_map = {"s": "M/J", "w": "O/N", "m": "F/M"}
     session = session_map.get(season_letter.lower(), season_letter.upper())
     return f"{syllabus}/{variant}/{session}/{year}"
@@ -95,6 +108,19 @@ def _call_vl(
         }
     except (json.JSONDecodeError, AttributeError):
         return {}
+
+
+def _resolve_skip_pages(source_stem: str) -> set[int]:
+    """Resolve QP skip-pages from paper_page_config.json using a filename stem.
+
+    Falls back to the JSON's own "default" entry when the stem doesn't match
+    the expected "<subject>_<season><year>_qp_<component>" pattern.
+    """
+    from core.config_store import get_paper_page_config
+
+    parsed = _parse_paper_filename(source_stem)
+    subject_id, component = (parsed[0], parsed[3]) if parsed else ("", "")
+    return get_paper_page_config(subject_id, component).qp_skip_pages
 
 
 def _build_page_batches(
@@ -169,9 +195,9 @@ def detect_student_answers(
     qp_pdf_path: str | Path,
     answer_key: PaperConfig,
     grader_config: GraderConfig,
-    skip_pages: set[int] | None = None,
     dpi: int = 200,
     on_progress: Callable[[int, int], None] | None = None,
+    source_filename: str | Path | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """Detect the student's selected answers from an annotated MCQ QP PDF.
 
@@ -180,11 +206,15 @@ def detect_student_answers(
 
     Args:
         qp_pdf_path: Annotated question paper PDF (student's GoodNotes export).
+            This is often a temp-file path with a random name, so pass
+            ``source_filename`` when the original filename is known.
         answer_key: PaperConfig from ``parse_mcq_mark_scheme``.
         grader_config: VL API credentials.
-        skip_pages: 0-indexed pages to skip (defaults to {0, 1}: cover + data).
         dpi: Render resolution.
         on_progress: Callback ``(current_batch, total_batches)``.
+        source_filename: Original filename (e.g. "9702_s25_qp_11.pdf") used to
+            look up per-subject skip-pages in paper_page_config.json. Falls
+            back to ``qp_pdf_path``'s own name when not given.
 
     Returns:
         ``(detected, undetected)`` where ``detected`` maps question IDs to the
@@ -194,18 +224,8 @@ def detect_student_answers(
     from modules.pdf_renderer import render_pdf_pages
 
     path = Path(qp_pdf_path)
-    if skip_pages is None:
-        # Derive skip set from paper_page_config.json using the QP filename.
-        # Filename format: "<subject>_<season><year>_qp_<component>.pdf"
-        m = re.match(r"(\d{4})_[a-z]\d{2}_qp_(\d+)", path.stem, re.IGNORECASE)
-        if m:
-            from core.config_store import get_paper_page_config
-            cfg = get_paper_page_config(m.group(1), m.group(2))
-            skip = cfg.qp_skip_pages
-        else:
-            skip = {0, 1}
-    else:
-        skip = skip_pages
+    stem = Path(source_filename).stem if source_filename is not None else path.stem
+    skip = _resolve_skip_pages(stem)
     q_ids = list(answer_key.questions.keys())
     doc = fitz.open(str(path))
     try:
@@ -233,6 +253,17 @@ def detect_student_answers(
 
     undetected = [qid for qid in q_ids if qid not in detected]
     return detected, undetected
+
+
+# ── Public: manual override validation ─────────────────────────────────────
+
+def is_valid_manual_answer(value: str) -> bool:
+    """True if ``value`` is a single valid MCQ answer letter (A-D).
+
+    Uses set membership rather than ``value in "ABCD"``, whose substring
+    semantics would incorrectly accept an empty string.
+    """
+    return value in _ANSWER_LETTERS
 
 
 # ── Public: scoring ────────────────────────────────────────────────────────
