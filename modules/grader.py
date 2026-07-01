@@ -37,9 +37,11 @@ _MATH_GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷�
    - B mark: 独立分，不依赖其他步骤
    - M mark: 方法分，看学生是否使用了正确的方法/公式
    - A mark: 准确分，通常依赖前面的 M mark。如果 M0 则对应的 A mark 也必须为 0
-3. 注意 "follow through" (ft) 规则: 如果标注了 ft，即使前面的值算错了，只要后续方法正确就给 A 分
+3. 注意 "follow through" (ft) 规则: 如果标注了 ft，即使前面的值算错了，
+   只要后续方法正确就给 A 分
 4. 仔细辨认手写内容，注意区分容易混淆的字符 (如 3/5, 1/7, 6/0)
-5. 如果学生的方法与 Mark Scheme 不同但数学上等价且正确，应视为可接受的替代方法 (alternative method)
+5. 如果学生的方法与 Mark Scheme 不同但数学上等价且正确，
+   应视为可接受的替代方法 (alternative method)
 
 ## 输出要求:
 只输出严格的 JSON，不要任何其他文字:

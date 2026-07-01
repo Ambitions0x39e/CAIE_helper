@@ -13,7 +13,8 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from core.settings import MailConfig
 from core.storage import CSVStore
 
-_MAX_ATTACHMENT_BYTES: Final[int] = 2 * 1024 * 1024  # 2MB
+_MAX_ATTACHMENT_BYTES: Final[int] = 10 * 1024 * 1024  # 10MB
+# Some papers involve huge scans, so we cap the attachment size to avoid SMTP issues.
 
 
 # ---------------------------------------------------------------------------
@@ -189,9 +190,9 @@ class GoodNotesMailer:
                 "SMTP authentication failed. Check your App Password and sender email."
             ) from exc
         except smtplib.SMTPConnectError as exc:
+            server = f"{self._config.smtp_server}:{self._config.smtp_port}"
             raise _MailError(
-                f"Could not connect to {self._config.smtp_server}:{self._config.smtp_port}. "
-                "Check SMTP server and port."
+                f"Could not connect to {server}. Check SMTP server and port."
             ) from exc
         except smtplib.SMTPException as exc:
             raise _MailError(f"SMTP error while sending: {exc}") from exc

@@ -9,6 +9,7 @@ from modules.page_segmenter import (
     QuestionRegion,
     _Boundary,
     _BoundaryKind,
+    _build_char_mapping,
     _build_regions,
     _detect_format,
     _extract_boundaries,
@@ -78,6 +79,34 @@ def _sub_label(letter: str) -> str:
 # ── Tests: boundary detection ─────────────────────────────────────
 
 class TestExtractBoundaries:
+    def test_len1_char_map_collision_prefers_sub_over_main(self) -> None:
+        """A 1-char left-margin marker whose byte happens to decode to a
+        digit via the page-number char map must still be classified as SUB
+        when it has a genuine bracket-pair companion at sub_q_x — a
+        char-map collision is not proof the span is a MAIN question number.
+        """
+        # Page-number spans (near top-center) teach the char map:
+        # '}' -> '1' (from page idx 0), '~' -> '2' (from page idx 1).
+        page0 = [(306.0, 30.0, "}")]
+        page1 = [
+            (306.0, 30.0, "~"),
+            (72.4, 200.0, "}"),  # SUB marker — byte collides with page 0's '1'
+            (93.7, 200.0, _sub_label("a")),
+        ]
+        page2 = [
+            (306.0, 30.0, "!"),
+            (72.4, 400.0, "}"),  # second SUB occurrence (for bracket-pair count>=2)
+            (93.7, 400.0, _sub_label("b")),
+        ]
+        doc = _make_doc([page0, page1, page2])
+        boundaries = _extract_boundaries(doc, skip_pages=set())
+
+        mains = [b for b in boundaries if b.kind == _BoundaryKind.MAIN]
+        subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
+        assert len(mains) == 0
+        assert len(subs) == 2
+        doc.close()
+
     def test_detect_main_question(self) -> None:
         page_spans = _make_cie_page(main_q="Q1")
         doc = _make_doc([page_spans])
@@ -158,6 +187,39 @@ class TestExtractBoundaries:
         boundaries = _extract_boundaries(doc, skip_pages=set())
         assert boundaries == []
         doc.close()
+
+
+class TestBuildCharMapping:
+    def test_catches_page_number_with_tall_header(self) -> None:
+        """The original motivating case: a page-number span whose bbox top
+        sits at y~=46 (a taller-than-usual header) must still be captured."""
+        # baseline 57.6 -> bbox top ~= 46.0 for fontsize 10.8 (measured).
+        page0 = [(306.0, 57.6, "A")]
+        page1 = [(306.0, 30.0, "B")]
+        page2 = [(306.0, 30.0, "C")]
+        doc = _make_doc([page0, page1, page2])
+        mapping = _build_char_mapping(doc)
+        doc.close()
+
+        assert mapping is not None
+        assert mapping[ord("A")] == "1"
+
+    def test_ignores_near_center_text_below_the_header_band(self) -> None:
+        """A near-center span whose bbox top sits at y~=55 (clearly past the
+        header band, before the widened threshold existed this would already
+        be page-content) must NOT be treated as a page-number candidate, even
+        if its length coincidentally matches the expected digit count."""
+        # baseline 66.6 -> bbox top ~= 55.0 for fontsize 10.8 (measured).
+        page0 = [(306.0, 30.0, "A")]
+        page1 = [(306.0, 30.0, "B")]
+        page2 = [(306.0, 66.6, "X")]  # attack: would decode as this page's "3"
+        page3 = [(306.0, 30.0, "C")]
+        doc = _make_doc([page0, page1, page2, page3])
+        mapping = _build_char_mapping(doc)
+        doc.close()
+
+        assert mapping is not None
+        assert ord("X") not in mapping
 
 
 # ── Tests: matching ───────────────────────────────────────────────

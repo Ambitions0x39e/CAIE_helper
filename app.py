@@ -21,7 +21,11 @@ from modules.grader import (
 )
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
-from modules.mcq_parser import detect_student_answers, score_mcq_answers
+from modules.mcq_parser import (
+    detect_student_answers,
+    is_valid_manual_answer,
+    score_mcq_answers,
+)
 from modules.ms_parser import (
     PaperConfig,
     parse_mark_scheme,
@@ -139,10 +143,15 @@ with st.sidebar:
         "Sender Email",
         value=str(_saved.sender_email) if _saved else "",
     )
+    _saved_app_password = (
+        _saved.sender_app_password.get_secret_value()
+        if _saved and _saved.sender_app_password
+        else ""
+    )
     sender_password = st.text_input(
         "App Password",
         type="password",
-        value=_saved.sender_app_password.get_secret_value() if _saved and _saved.sender_app_password else "",
+        value=_saved_app_password,
     )
     goodnotes_email = st.text_input(
         "GoodNotes Import Email",
@@ -632,9 +641,9 @@ with tab_mark:
             key="ms_upload",
         )
         if uploaded_ms is not None:
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-            tmp.write(uploaded_ms.read())
-            tmp.flush()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded_ms.read())
+                tmp.flush()
             ms_pdf_path = tmp.name
             paper_type_choice = st.selectbox(
                 "Paper type",
@@ -665,8 +674,6 @@ with tab_mark:
             ),
             key="ms_start_page",
         )
-    else:
-        start_page = 1  # not used for MCQ
 
     can_parse = ms_pdf_path and paper_type and (
         is_mcq or grader_config is not None
@@ -763,10 +770,11 @@ with tab_mark:
                 key="mcq_qp_upload",
             )
             if uploaded_qp is not None:
-                qp_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                qp_tmp.write(uploaded_qp.read())
-                qp_tmp.flush()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as qp_tmp:
+                    qp_tmp.write(uploaded_qp.read())
+                    qp_tmp.flush()
                 st.session_state["mcq_qp_path"] = qp_tmp.name
+                st.session_state["mcq_qp_filename"] = uploaded_qp.name
                 st.session_state.pop("mcq_detected", None)
                 st.session_state.pop("mcq_undetected", None)
 
@@ -792,6 +800,7 @@ with tab_mark:
                             pc,
                             grader_config,
                             on_progress=_mcq_progress,
+                            source_filename=st.session_state.get("mcq_qp_filename"),
                         )
                         prog.progress(1.0, text="Done!")
                         st.session_state["mcq_detected"] = detected
@@ -823,7 +832,7 @@ with tab_mark:
                                 max_chars=1,
                                 key=f"mcq_manual_{qid}",
                             ).strip().upper()
-                            if val in "ABCD":
+                            if is_valid_manual_answer(val):
                                 detected[qid] = val
 
             # ── Grade ─────────────────────────────────────────────
@@ -872,7 +881,11 @@ with tab_mark:
                             try:
                                 records = store.load_all()
                                 rec = next(
-                                    (r for r in records if r.paper_id == paper_id_match),
+                                    (
+                                        r
+                                        for r in records
+                                        if r.paper_id == paper_id_match
+                                    ),
                                     None,
                                 )
                                 if rec:
@@ -909,9 +922,11 @@ with tab_mark:
             )
 
             if uploaded_answer is not None:
-                answer_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                answer_tmp.write(uploaded_answer.read())
-                answer_tmp.flush()
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=".pdf"
+                ) as answer_tmp:
+                    answer_tmp.write(uploaded_answer.read())
+                    answer_tmp.flush()
                 st.session_state["answer_pdf_path"] = answer_tmp.name
                 st.session_state.pop("auto_pages_done", None)
 
@@ -1116,12 +1131,11 @@ with tab_mark:
                             total_score=total_score,
                             total_max=total_max,
                         )
-                        tmp_result = tempfile.NamedTemporaryFile(
+                        with tempfile.NamedTemporaryFile(
                             delete=False, suffix=".json", mode="w", encoding="utf-8",
-                        )
-                        tmp_result.write(report.model_dump_json(indent=2))
-                        tmp_result.flush()
-                        tmp_result.close()
+                        ) as tmp_result:
+                            tmp_result.write(report.model_dump_json(indent=2))
+                            tmp_result.flush()
 
                         for key in list(st.session_state.keys()):
                             if key.startswith("score_override_"):
@@ -1172,20 +1186,19 @@ with tab_mark:
                             exp_col, adj_col = st.columns(
                                 [5, 1], vertical_alignment="top",
                             )
-                            with exp_col:
-                                with st.expander(
-                                    f"{result.question}"
-                                    f" — {_ov}/{result.max}",
-                                    expanded=True,
-                                ):
-                                    for m in result.marks:
-                                        icon = "✅" if m.awarded else "❌"
-                                        st.markdown(
-                                            f"{icon} **{m.code}**"
-                                            f": {m.reason}"
-                                        )
-                                    if result.comment:
-                                        st.info(f"💬 {result.comment}")
+                            with exp_col, st.expander(
+                                f"{result.question}"
+                                f" — {_ov}/{result.max}",
+                                expanded=True,
+                            ):
+                                for m in result.marks:
+                                    icon = "✅" if m.awarded else "❌"
+                                    st.markdown(
+                                        f"{icon} **{m.code}**"
+                                        f": {m.reason}"
+                                    )
+                                if result.comment:
+                                    st.info(f"💬 {result.comment}")
                             with adj_col:
                                 st.number_input(
                                     "Adjust",
@@ -1218,7 +1231,11 @@ with tab_mark:
 
                                     if paper_id_match:
                                         target_rec = next(
-                                            (r for r in records if r.paper_id == paper_id_match),
+                                            (
+                                                r
+                                                for r in records
+                                                if r.paper_id == paper_id_match
+                                            ),
                                             None,
                                         )
                                         if target_rec:
@@ -1240,12 +1257,14 @@ with tab_mark:
                                                 Path(temp_path).unlink(missing_ok=True)
                                         else:
                                             st.warning(
-                                                "Could not find matching paper record to update."
+                                                "Could not find matching paper "
+                                                "record to update."
                                             )
                                     else:
                                         st.info(
-                                            f"Score: {score}/{max_score} ({pct:.1f}%). "
-                                            "Use 'Submit Score' to log to a specific paper."
+                                            f"Score: {score}/{max_score} "
+                                            f"({pct:.1f}%). Use 'Submit Score' to "
+                                            "log to a specific paper."
                                         )
                                         st.session_state["grading_confirmed"] = True
                                 except Exception as exc:
