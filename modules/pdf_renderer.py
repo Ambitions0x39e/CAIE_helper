@@ -6,20 +6,31 @@ and the grader (answer page rendering for AI grading).
 """
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
-import fitz
+import pdfplumber
+from pdfplumber.page import Page
+from pdfplumber.pdf import PDF
+
+
+def _page_to_png(page: Page, dpi: int = 200) -> bytes:
+    """Render a single pdfplumber page to PNG bytes."""
+    img = page.to_image(resolution=dpi)
+    buf = io.BytesIO()
+    img.original.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def render_pdf_pages(
-    doc: fitz.Document,
+    pdf: PDF,
     page_numbers: list[int],
     dpi: int = 200,
 ) -> list[bytes]:
     """Render specified PDF pages to PNG images.
 
     Args:
-        doc: Opened PyMuPDF document.
+        pdf: Opened pdfplumber PDF.
         page_numbers: 1-indexed page numbers to render.
         dpi: Render resolution.
 
@@ -28,9 +39,8 @@ def render_pdf_pages(
     """
     images: list[bytes] = []
     for page_num in page_numbers:
-        page = doc[page_num - 1]
-        pix = page.get_pixmap(dpi=dpi)
-        images.append(pix.tobytes("png"))
+        page = pdf.pages[page_num - 1]
+        images.append(_page_to_png(page, dpi=dpi))
     return images
 
 
@@ -49,9 +59,6 @@ def render_pages_from_path(
     Returns:
         List of PNG bytes, one per page.
     """
-    doc = fitz.open(str(pdf_path))
-    try:
-        page_numbers = list(range(start_page, len(doc) + 1))
-        return render_pdf_pages(doc, page_numbers, dpi=dpi)
-    finally:
-        doc.close()
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        page_numbers = list(range(start_page, len(pdf.pages) + 1))
+        return render_pdf_pages(pdf, page_numbers, dpi=dpi)

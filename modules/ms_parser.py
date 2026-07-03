@@ -13,8 +13,9 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-import fitz
+import pdfplumber
 from openai import OpenAI
+from pdfplumber.pdf import PDF
 from pydantic import BaseModel
 
 from core.models import PaperType
@@ -49,9 +50,9 @@ def normalize_question_id(raw: str) -> str:
     return f"Q{raw}"
 
 
-def _extract_paper_info(doc: fitz.Document) -> tuple[str, int]:
+def _extract_paper_info(pdf: PDF) -> tuple[str, int]:
     """Extract paper_id and total_marks from the cover page via text."""
-    text = doc[0].get_text()
+    text = pdf.pages[0].extract_text() or ""
     paper_id = ""
     total_marks = 0
 
@@ -261,6 +262,31 @@ def _parse_all_vl(
 # ── Public API ───────────────────────────────────────────────────
 
 
+def _cache_path_for(pdf_path: Path) -> Path:
+    """Return the JSON cache path for a mark scheme PDF."""
+    from core.settings import app_settings
+
+    return app_settings.ms_cache_dir / f"{pdf_path.stem}.json"
+
+
+def _load_cached(pdf_path: Path) -> PaperConfig | None:
+    """Load a previously cached PaperConfig, or None on miss."""
+    cp = _cache_path_for(pdf_path)
+    if not cp.exists():
+        return None
+    try:
+        return PaperConfig.model_validate_json(cp.read_text("utf-8"))
+    except Exception:
+        return None
+
+
+def _save_cache(pdf_path: Path, config: PaperConfig) -> None:
+    """Persist a PaperConfig to the cache directory."""
+    cp = _cache_path_for(pdf_path)
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(config.model_dump_json(indent=2), "utf-8")
+
+
 def parse_mark_scheme(
     pdf_path: str | Path,
     paper_type: PaperType,
@@ -270,9 +296,8 @@ def parse_mark_scheme(
 ) -> PaperConfig:
     """Parse a mark scheme PDF into structured question configs.
 
-    Dispatches to the appropriate parser based on paper_type:
-    - MCQ: PyMuPDF block extraction (no API needed).
-    - MATH: VL model extraction (requires grader_config).
+    Returns a cached result when available, otherwise dispatches to
+    the appropriate parser and caches the result for future calls.
 
     Args:
         pdf_path: Path to the MS PDF file.
@@ -285,21 +310,30 @@ def parse_mark_scheme(
         NotImplementedError: If paper_type has no parser yet.
         ValueError: If grader_config is None for a VL-based paper type.
     """
+    path = Path(pdf_path)
+
+    cached = _load_cached(path)
+    if cached is not None:
+        return cached
+
     if paper_type == PaperType.MCQ:
         from modules.mcq_parser import parse_mcq_mark_scheme
-        return parse_mcq_mark_scheme(pdf_path)
+        config = parse_mcq_mark_scheme(pdf_path)
+        _save_cache(path, config)
+        return config
 
     if paper_type != PaperType.MATH:
-        raise NotImplementedError(f"No mark scheme parser for {paper_type.value}")
+        raise NotImplementedError(
+            f"No mark scheme parser for {paper_type.value}"
+        )
 
     if grader_config is None:
-        raise ValueError("grader_config is required for MATH mark scheme parsing")
+        raise ValueError(
+            "grader_config is required for MATH mark scheme parsing"
+        )
 
-    doc = fitz.open(str(pdf_path))
-    try:
-        paper_id, total_marks = _extract_paper_info(doc)
-    finally:
-        doc.close()
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        paper_id, total_marks = _extract_paper_info(pdf)
 
     questions = _parse_all_vl(
         pdf_path,
@@ -308,8 +342,10 @@ def parse_mark_scheme(
         on_progress=on_progress,
     )
 
-    return PaperConfig(
+    config = PaperConfig(
         paper_id=paper_id,
         total_marks=total_marks,
         questions=questions,
     )
+    _save_cache(path, config)
+    return config
