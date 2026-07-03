@@ -2,6 +2,48 @@
 
 ---
 
+## 2026-07-02 — fitz→pdfplumber 迁移 + Mark tab 性能修复 + 评分 prompt 优化
+
+**改动文件：** `app.py`, `core/settings.py`, `modules/grader.py`, `modules/mcq_parser.py`, `modules/ms_parser.py`, `modules/page_segmenter.py`, `modules/pdf_renderer.py`, `pyproject.toml`, `tests/test_page_segmenter.py`, `uv.lock`
+
+### 功能说明
+
+为 iOS 移植做准备，将所有 PyMuPDF (`fitz`) 调用替换为 pdfplumber 等价写法。迁移过程中发现并修复了两个 pdfplumber 特有的行为差异导致的回归 bug，新增 mark scheme 缓存功能，修复 Mark tab 严重卡顿问题，并优化 AI 评分 prompt 解决输出冗长和自我矛盾问题。
+
+### 1. fitz→pdfplumber 全量迁移
+
+- **`modules/page_segmenter.py`**：最复杂的迁移。pdfplumber 渲染 CID 字体为 `(cid:N)` 字符串，所有 `len(text)` / `ord(text[0])` 判断全部失效。新增 `_parse_codepoints()` helper 做 CID-aware 解析，`_build_char_mapping`、`_decode_question_num`、`_extract_boundaries`、`_detect_bracket_pair` 全部改为使用 codepoint list
+- **`modules/grader.py`**：手写检测从 `page.get_drawings()` 迁移到 `page.curves` + `page.lines`。发现 pdfplumber 的 `page.curves` 不含 PDF annotation layer 的 ink strokes（Apple Pencil/stylus 批注），新增 `page.annots` InkList 检测作为第一优先级 heuristic
+- **`modules/pdf_renderer.py`**：`page.get_pixmap()` → `page.to_image().original` (PIL) + BytesIO 导出 PNG。修复 `_page_to_png` 参数类型从 `PDF` 到 `Page`
+- **`modules/mcq_parser.py`**、**`modules/ms_parser.py`**：import 修改为 `from pdfplumber.pdf import PDF`（pdfplumber 的 `PDF` 未在 `__all__` 导出，直接 import 会触发 mypy `name-defined` 错误）
+- **`app.py`**：`fitz.open` → `pdfplumber.open`，`len(doc)` → `len(pdf.pages)`
+- **`pyproject.toml`**：移除 `pymupdf` 依赖，新增 `fpdf2`（dev dependency，测试用），pdfplumber 加入 mypy ignore list
+- **`tests/test_page_segmenter.py`**：合成 PDF 从 `fitz.open()` + `insert_text()` 改为 `fpdf2` 生成；修复 `test_cross_page_region` 的 `end_y` 阈值（60→200，低于 `_MIN_CLIP_HEIGHT=50` 导致测试失败）
+
+### 2. Mark scheme 缓存
+
+- **`modules/ms_parser.py`**：新增 `_cache_path_for()` / `_load_cached()` / `_save_cache()` 三个函数，parse 过的 mark scheme 以 `PaperConfig.model_dump_json()` 缓存到 `~/.cie_helper/.cache/ms/<stem>.json`，下次 parse 直接读缓存
+- **`core/settings.py`**：`AppSettings` 新增 `ms_cache_dir` property + `init_dirs` 创建缓存目录
+
+### 3. Mark tab 性能修复
+
+- **`app.py`**：`pdfplumber.open()` + `detect_handwriting_pages()` + `segment_questions()` 原先在每次 Streamlit rerun 时都会重新执行（用户每按一个键都触发），导致严重卡顿。将三者合并到 `auto_pages_done` guard 内，结果缓存到 `st.session_state`，后续 rerun 直接读缓存。上传新 PDF 时清除缓存
+
+### 4. AI 评分 prompt 优化
+
+- **`modules/grader.py`**：`_MATH_GRADING_PROMPT` 新增"关键约束"部分：
+  - `reason` 字段限制为一句话（≤40 字），禁止写推理过程，附正确/错误示范
+  - `total` 必须等于 `awarded=true` 的数量之和，禁止 reason 说"应给分"但 `awarded=false` 的矛盾
+  - 要求"先做决定再填 JSON，不要在 reason 中犹豫或自我质疑"
+
+### 验证结果
+
+- `ruff check .`：通过
+- `pytest`：71/71 passed（1 个既存失败因 `.env` API key 不属于本次改动）
+- mypy：pdfplumber 相关 migration-specific 错误已解决
+
+---
+
 ## 2026-07-01 — Code review 发现的 10 个问题修复（TDD）
 
 **改动文件：** `app.py`, `core/config_store.py`, `core/settings.py`（净 diff 为空，见下）, `data/paper_page_config.json`, `modules/__init__.py`, `modules/mcq_parser.py`, `modules/page_segmenter.py`, `tests/test_page_segmenter.py`；新增 `tests/test_settings.py`, `tests/test_mcq_parser.py`, `tests/test_config_store.py`
