@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
+from typing import Any
 
-import fitz
+from pdfplumber.page import Page
+from pdfplumber.pdf import PDF
 from pydantic import BaseModel
 
 # ── Models ────────────────────────────────────────────────────────
@@ -65,9 +67,25 @@ _FORMAT_PARAMS: dict[str, dict[str, float]] = {
 
 _X_TOLERANCE = 3.0
 
+_CID_RE = re.compile(r"\(cid:(\d+)\)")
 
-def _detect_format(page: fitz.Page) -> str:
-    w = page.rect.width
+
+def _parse_codepoints(text: str) -> list[int]:
+    """Extract integer code points from word text.
+
+    pdfplumber renders garbled CID fonts as ``(cid:N)`` strings.
+    fitz returned raw bytes whose ``ord()`` gave the code point directly.
+    This helper unifies both representations into a list of ints so all
+    downstream length / value checks work identically.
+    """
+    cids = _CID_RE.findall(text)
+    if cids:
+        return [int(c) for c in cids]
+    return [ord(c) for c in text]
+
+
+def _detect_format(page: Page) -> str:
+    w = page.width
     if abs(w - 595) < 10:
         return "a4"
     return "letter"
@@ -76,7 +94,7 @@ def _detect_format(page: fitz.Page) -> str:
 # ── Bracket-pair auto-detection ──────────────────────────────────
 
 def _detect_bracket_pair(
-    per_page: list[tuple[int, list[dict], dict[float, list[dict]]]],
+    per_page: list[tuple[int, list[dict[str, Any]], dict[float, list[dict[str, Any]]]]],
     sqx: float,
 ) -> tuple[int, int] | None:
     """Auto-detect which (byte0, byte2) pair represents garbled '(' and ')'.
@@ -96,8 +114,8 @@ def _detect_bracket_pair(
             y0 = span["y0"]
             for c in spans_at_y.get(y0, []):
                 if abs(c["x0"] - sqx) < _X_TOLERANCE and c["len"] >= 3:
-                    raw = c["text"]
-                    pair_counts[(ord(raw[0]), ord(raw[2]))] += 1
+                    cps = c.get("cps") or _parse_codepoints(c["text"])
+                    pair_counts[(cps[0], cps[2])] += 1
 
     if not pair_counts:
         return None
@@ -111,7 +129,7 @@ def _detect_bracket_pair(
 # ── Character mapping (garbled font decoding) ────────────────────
 
 def _build_char_mapping(
-    doc: fitz.Document,
+    pdf: PDF,
 ) -> dict[int, str] | None:
     """Build byte→digit mapping from page number spans.
 
@@ -122,41 +140,35 @@ def _build_char_mapping(
 
     Returns None if the PDF uses readable text (no mapping needed).
     """
-    pw = doc[0].rect.width
+    pw = pdf.pages[0].width
     center_x = pw / 2
 
-    page_num_spans: list[tuple[int, str]] = []
-    for pg_idx in range(len(doc)):
-        page = doc[pg_idx]
-        td = page.get_text("dict")
-        for block in td.get("blocks", []):
-            if block.get("type") != 0:
+    page_num_spans: list[tuple[int, list[int]]] = []
+    for pg_idx in range(len(pdf.pages)):
+        page = pdf.pages[pg_idx]
+        for w in page.extract_words() or []:
+            text = w["text"].strip()
+            if not text:
                 continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span["text"].strip()
-                    if not text:
-                        continue
-                    bbox = span["bbox"]
-                    if bbox[1] < 50 and abs(bbox[0] - center_x) < 100:
-                        if _is_ascii_digit_str(text):
-                            return None
-                        page_num_spans.append((pg_idx, text))
+            if w["top"] < 50 and abs(w["x0"] - center_x) < 100:
+                if _is_ascii_digit_str(text):
+                    return None
+                cps = _parse_codepoints(text)
+                page_num_spans.append((pg_idx, cps))
 
     if not page_num_spans:
         return None
 
     page_num_spans.sort()
     mapping: dict[int, str] = {}
-    for pg_idx, text in page_num_spans:
+    for pg_idx, cps in page_num_spans:
         expected = str(pg_idx + 1)
-        if len(text) != len(expected):
+        if len(cps) != len(expected):
             continue
-        for ch, digit in zip(text, expected, strict=True):
-            b = ord(ch)
-            if b in mapping and mapping[b] != digit:
+        for cp, digit in zip(cps, expected, strict=True):
+            if cp in mapping and mapping[cp] != digit:
                 continue
-            mapping[b] = digit
+            mapping[cp] = digit
 
     return mapping if len(mapping) >= 3 else None
 
@@ -177,15 +189,13 @@ def _decode_question_num(
         cleaned = text.strip()
         return int(cleaned) if _is_ascii_digit_str(cleaned) else None
 
-    first = ord(text[0])
-    if first not in mapping:
+    cps = _parse_codepoints(text)
+    if not cps or cps[0] not in mapping:
         return None
-    result = mapping[first]
+    result = mapping[cps[0]]
 
-    if len(text) >= 2:
-        second = ord(text[1])
-        if second in mapping:
-            result += mapping[second]
+    if len(cps) >= 2 and cps[1] in mapping:
+        result += mapping[cps[1]]
 
     return int(result) if result.isdigit() else None
 
@@ -193,60 +203,63 @@ def _decode_question_num(
 # ── Boundary detection ────────────────────────────────────────────
 
 def _extract_boundaries(
-    doc: fitz.Document,
+    pdf: PDF,
     *,
     skip_pages: set[int] | None = None,
 ) -> list[_Boundary]:
     """Scan every page and return ordered question-start boundaries."""
-    if not len(doc):
+    if not len(pdf.pages):
         return []
 
-    fmt = _detect_format(doc[0])
+    fmt = _detect_format(pdf.pages[0])
     params = _FORMAT_PARAMS[fmt]
     lx = params["left_margin_x"]
     sqx = params["sub_q_x"]
     footer_y = params["footer_y"]
     skip = skip_pages or set()
 
-    char_map = _build_char_mapping(doc)
+    char_map = _build_char_mapping(pdf)
 
-    # First pass: collect span data from all pages
-    per_page: list[tuple[int, list[dict], dict[float, list[dict]]]] = []
+    _WordDict = dict[str, Any]
 
-    for pg_idx in range(len(doc)):
+    # First pass: collect word data from all pages
+    per_page: list[
+        tuple[int, list[_WordDict], list[_WordDict], dict[float, list[_WordDict]]]
+    ] = []
+
+    for pg_idx in range(len(pdf.pages)):
         if pg_idx in skip:
             continue
 
-        page = doc[pg_idx]
-        d = page.get_text("dict")
+        page = pdf.pages[pg_idx]
 
-        spans_at_y: dict[float, list[dict]] = {}
-        left_spans: list[dict] = []
-        sub_q_spans: list[dict] = []
+        spans_at_y: dict[float, list[dict[str, Any]]] = {}
+        left_spans: list[dict[str, Any]] = []
+        sub_q_spans: list[dict[str, Any]] = []
 
-        for block in d.get("blocks", []):
-            if block.get("type") != 0:
+        for w in page.extract_words() or []:
+            text = w["text"].strip()
+            if not text:
                 continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span["text"].strip()
-                    if not text:
-                        continue
-                    bbox = span["bbox"]
-                    x0 = bbox[0]
-                    y0 = round(bbox[1], 1)
+            x0 = w["x0"]
+            y0 = round(w["top"], 1)
+            cps = _parse_codepoints(text)
+            cp_len = len(cps)
 
-                    entry = {"x0": x0, "y0": y0, "text": text, "len": len(text)}
+            entry = {
+                "x0": x0, "y0": y0, "text": text,
+                "len": cp_len, "cps": cps,
+            }
 
-                    if y0 not in spans_at_y:
-                        spans_at_y[y0] = []
-                    spans_at_y[y0].append(entry)
+            if y0 not in spans_at_y:
+                spans_at_y[y0] = []
+            spans_at_y[y0].append(entry)
 
-                    if y0 < footer_y:
-                        if abs(x0 - lx) < _X_TOLERANCE and len(text) <= 2:
-                            left_spans.append(entry)
-                        if abs(x0 - sqx) < _X_TOLERANCE and len(text) >= 3:
-                            sub_q_spans.append(entry)
+            if y0 < footer_y:
+                if abs(x0 - lx) < _X_TOLERANCE and cp_len <= 2:
+                    left_spans.append(entry)
+                if abs(x0 - sqx) < _X_TOLERANCE and cp_len >= 3:
+                    sub_q_spans.append(entry)
 
         per_page.append((pg_idx, left_spans, sub_q_spans, spans_at_y))
 
@@ -289,8 +302,8 @@ def _extract_boundaries(
                     companions = spans_at_y.get(y0, [])
                     for c in companions:
                         if abs(c["x0"] - sqx) < _X_TOLERANCE and c["len"] >= 3:
-                            raw = c["text"]
-                            if (ord(raw[0]), ord(raw[2])) == bracket_pair:
+                            c_cps = c.get("cps") or _parse_codepoints(c["text"])
+                            if (c_cps[0], c_cps[2]) == bracket_pair:
                                 boundaries.append(_Boundary(
                                     kind=_BoundaryKind.SUB, page_idx=pg_idx, y=y0,
                                 ))
@@ -306,8 +319,13 @@ def _extract_boundaries(
 
         # --- Readable SUB detection: "(a)", "(b)" directly at x≈sub_q_x ---
         for span in sub_q_spans:
-            raw = span["text"]
-            if raw[0] == "(" and raw[2] == ")" and raw[1].isalpha():
+            cps = span.get("cps") or _parse_codepoints(span["text"])
+            if (
+                len(cps) >= 3
+                and cps[0] == ord("(")
+                and cps[2] == ord(")")
+                and chr(cps[1]).isalpha()
+            ):
                 boundaries.append(_Boundary(
                     kind=_BoundaryKind.SUB, page_idx=pg_idx, y=span["y0"],
                 ))
@@ -381,13 +399,12 @@ def _match_boundaries(
 
     has_nums = any(main_b.question_num is not None for main_b, _ in b_groups)
 
+    b_by_num: dict[int, tuple[_Boundary, list[_Boundary]]] | None = None
     if has_nums:
-        b_by_num: dict[int, tuple[_Boundary, list[_Boundary]]] = {}
+        b_by_num = {}
         for main_b, sub_bs in b_groups:
             if main_b.question_num is not None:
                 b_by_num[main_b.question_num] = (main_b, sub_bs)
-    else:
-        b_by_num = None
 
     matches: list[tuple[str, int, float]] = []
 
@@ -419,7 +436,7 @@ def _match_boundaries(
 
 # ── Convert matches to regions ────────────────────────────────────
 
-def _find_last_content_page(doc: fitz.Document, after: int = 0) -> int:
+def _find_last_content_page(pdf: PDF, after: int = 0) -> int:
     """Find the last page with actual content (curves in drawings).
 
     Pages after all questions (e.g. "Additional page") contain only
@@ -427,12 +444,9 @@ def _find_last_content_page(doc: fitz.Document, after: int = 0) -> int:
     from the end of the document to find the last page that still has
     bezier curve content.
     """
-    for i in range(len(doc) - 1, after - 1, -1):
-        page = doc[i]
-        for d in page.get_drawings():
-            for item in d.get("items", []):
-                if item[0] == "c":
-                    return i
+    for i in range(len(pdf.pages) - 1, after - 1, -1):
+        if pdf.pages[i].curves:
+            return i
     return after
 
 
@@ -441,7 +455,7 @@ _MIN_CLIP_HEIGHT = 50.0
 
 def _build_regions(
     matches: list[tuple[str, int, float]],
-    doc: fitz.Document,
+    page_count: int,
     footer_y: float,
     top_margin: float,
     *,
@@ -451,7 +465,7 @@ def _build_regions(
     if not matches:
         return []
 
-    max_page = last_content_page if last_content_page is not None else len(doc) - 1
+    max_page = last_content_page if last_content_page is not None else page_count - 1
     regions: list[QuestionRegion] = []
 
     for idx, (qid, start_page, start_y) in enumerate(matches):
@@ -500,7 +514,7 @@ def _build_regions(
 # ── Public API ────────────────────────────────────────────────────
 
 def segment_questions(
-    doc: fitz.Document,
+    pdf: PDF,
     question_ids: list[str],
     *,
     skip_pages: set[int] | None = None,
@@ -508,7 +522,7 @@ def segment_questions(
     """Detect question boundaries and return cropping regions.
 
     Args:
-        doc: Opened PyMuPDF document (question paper or GoodNotes export).
+        pdf: Opened pdfplumber PDF (question paper or GoodNotes export).
         question_ids: Ordered list from PaperConfig.questions.keys().
         skip_pages: 0-indexed pages to skip (e.g. cover page).
                     Defaults to {0} (skip first page).
@@ -520,19 +534,19 @@ def segment_questions(
     if skip_pages is None:
         skip_pages = {0}
 
-    boundaries = _extract_boundaries(doc, skip_pages=skip_pages)
+    boundaries = _extract_boundaries(pdf, skip_pages=skip_pages)
     if not boundaries:
         return []
 
-    fmt = _detect_format(doc[0])
+    fmt = _detect_format(pdf.pages[0])
     params = _FORMAT_PARAMS[fmt]
 
     last_boundary_page = max(b.page_idx for b in boundaries)
-    last_content = _find_last_content_page(doc, after=last_boundary_page)
+    last_content = _find_last_content_page(pdf, after=last_boundary_page)
 
     matches = _match_boundaries(boundaries, question_ids)
     return _build_regions(
-        matches, doc, params["footer_y"], params["top_margin"],
+        matches, len(pdf.pages), params["footer_y"], params["top_margin"],
         last_content_page=last_content,
     )
 

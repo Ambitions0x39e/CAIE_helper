@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import fitz
+import pdfplumber
 import streamlit as st
 from pydantic import ValidationError
 
@@ -929,35 +929,46 @@ with tab_mark:
                     answer_tmp.flush()
                 st.session_state["answer_pdf_path"] = answer_tmp.name
                 st.session_state.pop("auto_pages_done", None)
+                st.session_state.pop("answer_total_pages", None)
+                st.session_state.pop("answer_hw_pages", None)
 
             if "answer_pdf_path" in st.session_state:
-                answer_doc = fitz.open(st.session_state["answer_pdf_path"])
-                total_pages = len(answer_doc)
-                hw_pages = detect_handwriting_pages(answer_doc)
-
-                # Auto-detect question→page mapping
-                auto_pages: dict[str, str] = {}
                 if "auto_pages_done" not in st.session_state:
-                    q_ids = list(pc.questions.keys())
-                    regions = segment_questions(answer_doc, q_ids)
-                    matched, unmatched = validate_regions(
-                        regions, q_ids
-                    )
-                    for region in regions:
-                        page_nums = sorted(
-                            {c.page_idx + 1 for c in region.clips}
+                    with pdfplumber.open(
+                        st.session_state["answer_pdf_path"]
+                    ) as answer_pdf:
+                        st.session_state["answer_total_pages"] = len(
+                            answer_pdf.pages
                         )
-                        auto_pages[region.question_id] = ",".join(
-                            str(p) for p in page_nums
+                        st.session_state["answer_hw_pages"] = (
+                            detect_handwriting_pages(answer_pdf)
                         )
-                    st.session_state["auto_pages"] = auto_pages
-                    st.session_state["auto_pages_matched"] = matched
-                    st.session_state["auto_pages_unmatched"] = unmatched
-                    st.session_state["auto_pages_done"] = True
-                else:
-                    auto_pages = st.session_state.get("auto_pages", {})
 
-                answer_doc.close()
+                        q_ids = list(pc.questions.keys())
+                        regions = segment_questions(answer_pdf, q_ids)
+                        matched, unmatched = validate_regions(
+                            regions, q_ids
+                        )
+                        auto_pages: dict[str, str] = {}
+                        for region in regions:
+                            page_nums = sorted(
+                                {c.page_idx + 1 for c in region.clips}
+                            )
+                            auto_pages[region.question_id] = ",".join(
+                                str(p) for p in page_nums
+                            )
+                        st.session_state["auto_pages"] = auto_pages
+                        st.session_state["auto_pages_matched"] = matched
+                        st.session_state["auto_pages_unmatched"] = unmatched
+                        st.session_state["auto_pages_done"] = True
+
+                total_pages: int = st.session_state.get(
+                    "answer_total_pages", 0
+                )
+                hw_pages: list[int] = st.session_state.get(
+                    "answer_hw_pages", []
+                )
+                auto_pages = st.session_state.get("auto_pages", {})
 
                 auto_matched = st.session_state.get(
                     "auto_pages_matched", []
@@ -1089,41 +1100,43 @@ with tab_mark:
                             enable_thinking=enable_thinking,
                         )
 
-                        answer_doc = fitz.open(st.session_state["answer_pdf_path"])
                         results: list[QuestionResult] = []
                         total_score = 0
                         total_max = 0
 
-                        progress = st.progress(0, text="Grading…")
-                        for i, qid in enumerate(questions_to_grade):
-                            progress.progress(
-                                (i) / len(questions_to_grade),
-                                text=f"Grading {qid}…",
-                            )
-                            qcfg = pc.questions[qid]
-                            pages = page_assignments[qid]
-                            images = render_pages(answer_doc, pages, dpi=grade_cfg.dpi)
-
-                            try:
-                                raw = grade_question(
-                                    config=grade_cfg,
-                                    images=images,
-                                    question_id=qid,
-                                    mark_scheme=qcfg.mark_scheme,
-                                    max_marks=qcfg.max_marks,
-                                    paper_type=st.session_state.get(
-                                        "paper_type", PaperType.MATH
-                                    ),
+                        pdf_path = st.session_state["answer_pdf_path"]
+                        with pdfplumber.open(pdf_path) as answer_pdf:
+                            progress = st.progress(0, text="Grading…")
+                            for i, qid in enumerate(questions_to_grade):
+                                progress.progress(
+                                    (i) / len(questions_to_grade),
+                                    text=f"Grading {qid}…",
                                 )
-                                grade_result = parse_grading_result(raw)
-                                results.append(grade_result)
-                                total_score += grade_result.total
-                                total_max += grade_result.max
-                            except Exception as exc:
-                                st.error(f"Failed to grade {qid}: {exc}")
+                                qcfg = pc.questions[qid]
+                                pages = page_assignments[qid]
+                                images = render_pages(
+                                    answer_pdf, pages, dpi=grade_cfg.dpi
+                                )
 
-                        progress.progress(1.0, text="Done!")
-                        answer_doc.close()
+                                try:
+                                    raw = grade_question(
+                                        config=grade_cfg,
+                                        images=images,
+                                        question_id=qid,
+                                        mark_scheme=qcfg.mark_scheme,
+                                        max_marks=qcfg.max_marks,
+                                        paper_type=st.session_state.get(
+                                            "paper_type", PaperType.MATH
+                                        ),
+                                    )
+                                    grade_result = parse_grading_result(raw)
+                                    results.append(grade_result)
+                                    total_score += grade_result.total
+                                    total_max += grade_result.max
+                                except Exception as exc:
+                                    st.error(f"Failed to grade {qid}: {exc}")
+
+                            progress.progress(1.0, text="Done!")
 
                         # Save results to temp JSON for two-phase persistence
                         report = GradingReport(
