@@ -190,9 +190,9 @@ class GoodNotesMailer:
                 "SMTP authentication failed. Check your App Password and sender email."
             ) from exc
         except smtplib.SMTPConnectError as exc:
-            server = f"{self._config.smtp_server}:{self._config.smtp_port}"
+            addr = f"{self._config.smtp_server}:{self._config.smtp_port}"
             raise _MailError(
-                f"Could not connect to {server}. Check SMTP server and port."
+                f"Could not connect to {addr}. Check SMTP server and port."
             ) from exc
         except smtplib.SMTPException as exc:
             raise _MailError(f"SMTP error while sending: {exc}") from exc
