@@ -7,7 +7,7 @@ import pdfplumber
 import streamlit as st
 from pydantic import ValidationError
 
-from core.models import PaperType, detect_paper_type
+from core.models import PaperRecord, PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import CSVStore
 from modules.downloader import DownloadRequest, DownloadSource, PaperDownloader
@@ -18,6 +18,7 @@ from modules.grader import (
     grade_question,
     parse_grading_result,
     render_pages,
+    render_question_regions,
 )
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
@@ -30,7 +31,7 @@ from modules.ms_parser import (
     PaperConfig,
     parse_mark_scheme,
 )
-from modules.page_segmenter import segment_questions, validate_regions
+from modules.page_segmenter import PageClip, segment_questions, validate_regions
 from modules.visualizer import PaperVisualizer
 
 # ---------------------------------------------------------------------------
@@ -164,9 +165,9 @@ with st.sidebar:
             mail_config = MailConfig(
                 smtp_server=smtp_server,
                 smtp_port=int(smtp_port),
-                sender_email=sender_email,        # type: ignore[arg-type]
+                sender_email=sender_email,
                 sender_app_password=sender_password,
-                goodnotes_email=goodnotes_email,  # type: ignore[arg-type]
+                goodnotes_email=goodnotes_email,
             )
             st.success("✅ SMTP config valid")
         except ValidationError as exc:
@@ -293,11 +294,11 @@ with tab_download:
         if not paper_id:
             st.warning("Please enter a Paper ID.")
         else:
+            request: DownloadRequest | None = None
             try:
                 request = DownloadRequest(paper_id=paper_id, source=source)
             except ValidationError as exc:
                 st.error(fmt_validation_error(exc))
-                request = None
 
             if request is not None:
                 with st.spinner("Downloading QP and MS…"):
@@ -341,6 +342,7 @@ with tab_download:
                 disabled=send_disabled,
                 help="Configure SMTP in the sidebar first." if send_disabled else None,
             ):
+                mail_request: MailRequest | None = None
                 try:
                     mail_request = MailRequest(
                         paper_id=st.session_state["last_downloaded_id"],
@@ -348,9 +350,8 @@ with tab_download:
                     )
                 except ValidationError as exc:
                     st.error(fmt_validation_error(exc))
-                    mail_request = None
 
-                if mail_request is not None:
+                if mail_request is not None and mail_config is not None:
                     with st.spinner("Sending to GoodNotes…"):
                         mailer = GoodNotesMailer(config=mail_config, store=store)
                         mail_result = mailer.send(mail_request)
@@ -372,11 +373,11 @@ with tab_download:
 with tab_manage:
     st.header("Manage Papers")
 
+    all_records: list[PaperRecord] | None = None
     try:
         all_records = store.load_all()
     except ValueError as exc:
         st.error(f"Failed to load data.csv:\n{exc}")
-        all_records = None
 
     if all_records is not None and not all_records:
         st.info("No papers downloaded yet. Use the Download tab to get started.")
@@ -490,6 +491,7 @@ with tab_manage:
                                     disabled=_gn_disabled,
                                     help=_gn_help,
                                 ):
+                                    mail_req: MailRequest | None = None
                                     try:
                                         mail_req = MailRequest(
                                             paper_id=record.paper_id,
@@ -497,11 +499,13 @@ with tab_manage:
                                         )
                                     except ValidationError as exc:
                                         st.error(fmt_validation_error(exc))
-                                        mail_req = None
-                                    if mail_req is not None:
+                                    if (
+                                        mail_req is not None
+                                        and mail_config is not None
+                                    ):
                                         with st.spinner("Sending…"):
                                             mailer = GoodNotesMailer(
-                                                config=mail_config,  # type: ignore[arg-type]
+                                                config=mail_config,
                                                 store=store,
                                             )
                                             mail_res = mailer.send(mail_req)
@@ -550,14 +554,14 @@ with tab_manage:
 # ---------------------------------------------------------------------------
 
 with tab_analytics:
+    analytics_records: list[PaperRecord] | None = None
     try:
-        all_records = store.load_all()
+        analytics_records = store.load_all()
     except ValueError as exc:
         st.error(f"Failed to load data.csv:\n{exc}")
-        all_records = None
 
-    if all_records is not None:
-        visualizer = PaperVisualizer(records=all_records)
+    if analytics_records is not None:
+        visualizer = PaperVisualizer(records=analytics_records)
         visualizer.render()
 
 # ---------------------------------------------------------------------------
@@ -582,27 +586,35 @@ with tab_mark:
     )
 
     ms_pdf_path: str | None = None
-    paper_type: PaperType | None = None
+
+    paper_type_label = st.radio(
+        "Paper type",
+        options=["MCQ", "Structured / Math"],
+        horizontal=True,
+        key="mark_paper_type",
+    )
+    paper_type: PaperType = (
+        PaperType.MCQ
+        if paper_type_label == "MCQ"
+        else PaperType.MATH
+    )
 
     if ms_source == "From downloaded paper":
         try:
-            all_records = store.load_all()
+            ms_records = store.load_all()
         except ValueError:
-            all_records = []
+            ms_records = []
 
-        supported_records = [
-            r for r in all_records
-            if r.ms_path and detect_paper_type(r.paper_id) is not None
-        ]
+        ms_records = [r for r in ms_records if r.ms_path]
 
-        if not supported_records:
+        if not ms_records:
             st.info(
-                "No supported papers with mark schemes found. "
+                "No papers with mark schemes found. "
                 "Download a paper first, or upload directly."
             )
         else:
             syllabus_codes = sorted(
-                {r.paper_id.split("_")[0] for r in supported_records}
+                {r.paper_id.split("_")[0] for r in ms_records}
             )
             syl_col, paper_col = st.columns([1, 3])
             selected_syllabus = syl_col.selectbox(
@@ -613,7 +625,7 @@ with tab_mark:
 
             filtered_records = sorted(
                 [
-                    r for r in supported_records
+                    r for r in ms_records
                     if r.paper_id.startswith(f"{selected_syllabus}_")
                 ],
                 key=lambda r: r.paper_id,
@@ -633,7 +645,6 @@ with tab_mark:
                 )
                 if target:
                     ms_pdf_path = target.ms_path
-                    paper_type = detect_paper_type(target.paper_id)
     else:
         uploaded_ms = st.file_uploader(
             "Upload Mark Scheme PDF",
@@ -645,16 +656,6 @@ with tab_mark:
                 tmp.write(uploaded_ms.read())
                 tmp.flush()
             ms_pdf_path = tmp.name
-            paper_type_choice = st.selectbox(
-                "Paper type",
-                options=["MCQ (Paper 1)", "Math / Further Math"],
-                key="upload_paper_type",
-            )
-            paper_type = (
-                PaperType.MCQ
-                if paper_type_choice.startswith("MCQ")
-                else PaperType.MATH
-            )
 
     is_mcq = paper_type == PaperType.MCQ
 
@@ -680,6 +681,8 @@ with tab_mark:
     )
 
     if can_parse and st.button("🔍 Parse Mark Scheme", type="primary"):
+        assert ms_pdf_path is not None
+        assert paper_type is not None
         if is_mcq:
             try:
                 paper_config = parse_mark_scheme(
@@ -794,6 +797,7 @@ with tab_mark:
                     def _mcq_progress(cur: int, tot: int) -> None:
                         prog.progress(cur / tot, text=f"Page {cur}/{tot}…")
 
+                    assert grader_config is not None
                     try:
                         detected, undetected = detect_student_answers(
                             st.session_state["mcq_qp_path"],
@@ -814,16 +818,22 @@ with tab_mark:
                         st.error(f"Detection failed: {exc}")
 
             # ── Manual overrides for undetected questions ─────────
-            detected: dict[str, str] = dict(
+            all_detected: dict[str, str] = dict(
                 st.session_state.get("mcq_detected", {})
             )
-            undetected: list[str] = st.session_state.get("mcq_undetected", [])
+            all_undetected: list[str] = st.session_state.get(
+                "mcq_undetected", []
+            )
 
-            if undetected:
+            if all_undetected:
                 st.markdown("**Fill in undetected questions manually:**")
                 cols_per_row = 8
-                for row_start in range(0, len(undetected), cols_per_row):
-                    chunk = undetected[row_start:row_start + cols_per_row]
+                for row_start in range(
+                    0, len(all_undetected), cols_per_row
+                ):
+                    chunk = all_undetected[
+                        row_start : row_start + cols_per_row
+                    ]
                     cols = st.columns(len(chunk))
                     for col_idx, qid in enumerate(chunk):
                         with cols[col_idx]:
@@ -833,19 +843,23 @@ with tab_mark:
                                 key=f"mcq_manual_{qid}",
                             ).strip().upper()
                             if is_valid_manual_answer(val):
-                                detected[qid] = val
+                                all_detected[qid] = val
 
             # ── Grade ─────────────────────────────────────────────
-            has_results = bool(detected) and "mcq_qp_path" in st.session_state
+            has_results = (
+                bool(all_detected) and "mcq_qp_path" in st.session_state
+            )
             if has_results:
                 st.divider()
-                score, total, per_q = score_mcq_answers(pc, detected)
+                score, total, per_q = score_mcq_answers(
+                    pc, all_detected
+                )
                 pct = score / total * 100 if total > 0 else 0
 
                 mc1, mc2, mc3 = st.columns(3)
                 mc1.metric("Score", f"{score}/{total}")
                 mc2.metric("Percentage", f"{pct:.1f}%")
-                mc3.metric("Detected", len(detected))
+                mc3.metric("Detected", len(all_detected))
 
                 st.markdown("**Question-by-question:**")
                 cols_per_row = 8
@@ -854,11 +868,11 @@ with tab_mark:
                     cols = st.columns(len(chunk))
                     for col_idx, qid in enumerate(chunk):
                         correct_ans = pc.questions[qid].mark_scheme
-                        student_ans = detected.get(qid, "–")
+                        student_ans = all_detected.get(qid, "–")
                         is_correct = per_q.get(qid, False)
                         icon = (
                             "✅" if is_correct
-                            else ("❌" if qid in detected else "·")
+                            else ("❌" if qid in all_detected else "·")
                         )
                         cols[col_idx].markdown(
                             f"**{qid[1:]}**\n\n{icon} {student_ans}"
@@ -931,6 +945,7 @@ with tab_mark:
                 st.session_state.pop("auto_pages_done", None)
                 st.session_state.pop("answer_total_pages", None)
                 st.session_state.pop("answer_hw_pages", None)
+                st.session_state.pop("auto_clips", None)
 
             if "answer_pdf_path" in st.session_state:
                 if "auto_pages_done" not in st.session_state:
@@ -950,6 +965,7 @@ with tab_mark:
                             regions, q_ids
                         )
                         auto_pages: dict[str, str] = {}
+                        auto_clips: dict[str, list[PageClip]] = {}
                         for region in regions:
                             page_nums = sorted(
                                 {c.page_idx + 1 for c in region.clips}
@@ -957,7 +973,9 @@ with tab_mark:
                             auto_pages[region.question_id] = ",".join(
                                 str(p) for p in page_nums
                             )
+                            auto_clips[region.question_id] = region.clips
                         st.session_state["auto_pages"] = auto_pages
+                        st.session_state["auto_clips"] = auto_clips
                         st.session_state["auto_pages_matched"] = matched
                         st.session_state["auto_pages_unmatched"] = unmatched
                         st.session_state["auto_pages_done"] = True
@@ -1007,8 +1025,8 @@ with tab_mark:
                 cols_per_row = 3
                 for row_start in range(0, len(q_items), cols_per_row):
                     cols = st.columns(cols_per_row)
-                    chunk = q_items[row_start:row_start + cols_per_row]
-                    for col_idx, (qid, qcfg) in enumerate(chunk):
+                    q_chunk = q_items[row_start:row_start + cols_per_row]
+                    for col_idx, (qid, qcfg) in enumerate(q_chunk):
                         with cols[col_idx]:
                             input_col, del_col = st.columns(
                                 [5, 1], vertical_alignment="bottom",
@@ -1114,9 +1132,20 @@ with tab_mark:
                                 )
                                 qcfg = pc.questions[qid]
                                 pages = page_assignments[qid]
-                                images = render_pages(
-                                    answer_pdf, pages, dpi=grade_cfg.dpi
+                                auto_clips = st.session_state.get(
+                                    "auto_clips", {}
                                 )
+                                clips_for_q = auto_clips.get(qid)
+                                if clips_for_q:
+                                    images = render_question_regions(
+                                        answer_pdf,
+                                        clips_for_q,
+                                        dpi=grade_cfg.dpi,
+                                    )
+                                else:
+                                    images = render_pages(
+                                        answer_pdf, pages, dpi=grade_cfg.dpi
+                                    )
 
                                 try:
                                     raw = grade_question(
@@ -1151,7 +1180,9 @@ with tab_mark:
                             tmp_result.flush()
 
                         for key in list(st.session_state.keys()):
-                            if key.startswith("score_override_"):
+                            if isinstance(key, str) and key.startswith(
+                                "score_override_"
+                            ):
                                 del st.session_state[key]
 
                         st.session_state["grading_results"] = results
@@ -1194,33 +1225,33 @@ with tab_mark:
                                 st.session_state[f"score_override_{question}"]
                             )
 
-                        for result in grading_results:
-                            _ov = _overrides.get(result.question, result.total)
+                        for qr in grading_results:
+                            _ov = _overrides.get(qr.question, qr.total)
                             exp_col, adj_col = st.columns(
                                 [5, 1], vertical_alignment="top",
                             )
                             with exp_col, st.expander(
-                                f"{result.question}"
-                                f" — {_ov}/{result.max}",
+                                f"{qr.question}"
+                                f" — {_ov}/{qr.max}",
                                 expanded=True,
                             ):
-                                for m in result.marks:
+                                for m in qr.marks:
                                     icon = "✅" if m.awarded else "❌"
                                     st.markdown(
                                         f"{icon} **{m.code}**"
                                         f": {m.reason}"
                                     )
-                                if result.comment:
-                                    st.info(f"💬 {result.comment}")
+                                if qr.comment:
+                                    st.info(f"💬 {qr.comment}")
                             with adj_col:
                                 st.number_input(
                                     "Adjust",
                                     min_value=0,
-                                    max_value=result.max,
+                                    max_value=qr.max,
                                     value=_ov,
-                                    key=f"score_override_{result.question}",
+                                    key=f"score_override_{qr.question}",
                                     on_change=_on_score_change,
-                                    args=(result.question,),
+                                    args=(qr.question,),
                                 )
 
                         # Two-phase persistence: Confirm & Log

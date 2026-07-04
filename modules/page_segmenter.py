@@ -337,8 +337,17 @@ def _extract_boundaries(
 # ── Match boundaries to question IDs ──────────────────────────────
 
 def _has_sub_letter(qid: str) -> bool:
-    """Check if a question ID has a sub-part letter (e.g. 1a, 1(a))."""
-    return bool(re.search(r"[a-z]\)?$", qid))
+    """Check if a question ID has a sub-part letter (e.g. 1a, 1(a), 6(a)(ii))."""
+    return bool(re.search(r"[a-z]|[ivx]+\)", qid))
+
+
+def _extract_sub_letter(qid: str) -> str | None:
+    """Extract the first sub-part letter from a question ID.
+
+    "1a" → "a", "Q6(a)(ii)" → "a", "1(b)" → "b", "1" → None
+    """
+    m = re.search(r"(\d)\(?([a-z])\)?", qid)
+    return m.group(2) if m else None
 
 
 def _extract_main_num(qid: str) -> str:
@@ -424,12 +433,23 @@ def _match_boundaries(
         if not sub_bs or not _has_sub_letter(qids[0]):
             matches.append((qids[0], main_b.page_idx, main_b.y))
         else:
-            for s_idx, qid in enumerate(qids):
-                if s_idx == 0:
+            unique_letters: list[str] = []
+            for qid in qids:
+                letter = _extract_sub_letter(qid)
+                if letter and letter not in unique_letters:
+                    unique_letters.append(letter)
+
+            letter_boundary: dict[str, tuple[int, float]] = {}
+            for letter, sb in zip(unique_letters, sub_bs, strict=False):
+                letter_boundary[letter] = (sb.page_idx, sb.y)
+
+            for qid in qids:
+                letter = _extract_sub_letter(qid)
+                if letter and letter in letter_boundary:
+                    pg, y = letter_boundary[letter]
+                    matches.append((qid, pg, y))
+                else:
                     matches.append((qid, main_b.page_idx, main_b.y))
-                elif s_idx < len(sub_bs):
-                    sb = sub_bs[s_idx]
-                    matches.append((qid, sb.page_idx, sb.y))
 
     return matches
 

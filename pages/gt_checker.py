@@ -7,7 +7,7 @@ from pathlib import Path
 import streamlit as st
 from pydantic import ValidationError
 
-from core.gt_parser import GradeThreshold, GTParser
+from core.gt_parser import GradeThreshold, GTDocument, GTParser
 from core.settings import app_settings
 from core.storage import CSVStore
 from modules.downloader import DownloadRequest, DownloadSource, PaperDownloader
@@ -107,8 +107,8 @@ with col_manual:
                     session = _session_from_filename(gt_filename)
                     parser = GTParser()
                     try:
-                        gt_doc = parser.parse(Path(result.qp_path), session=session)
-                        st.session_state["gt_doc"] = gt_doc
+                        parsed_gt = parser.parse(Path(result.qp_path), session=session)
+                        st.session_state["gt_doc"] = parsed_gt
                         st.session_state["selected_option"] = None
                         st.session_state["dl_results"] = {}
                         st.session_state["scores"] = {}
@@ -126,19 +126,19 @@ if uploaded is not None and st.session_state["gt_doc"] is None:
     session = _session_from_filename(uploaded.name)
     parser = GTParser()
     try:
-        gt_doc = parser.parse(tmp_path, session=session)
-        st.session_state["gt_doc"] = gt_doc
+        parsed_gt = parser.parse(tmp_path, session=session)
+        st.session_state["gt_doc"] = parsed_gt
         st.session_state["selected_option"] = None
         st.session_state["dl_results"] = {}
         st.session_state["scores"] = {}
         st.success(
-            f"Parsed GT: syllabus `{gt_doc.syllabus_id}`, "
-            f"{len(gt_doc.options)} options found."
+            f"Parsed GT: syllabus `{parsed_gt.syllabus_id}`, "
+            f"{len(parsed_gt.options)} options found."
         )
     except Exception as exc:  # noqa: BLE001
         st.error(f"Failed to parse GT PDF: {exc}")
 
-gt_doc = st.session_state.get("gt_doc")
+gt_doc: GTDocument | None = st.session_state.get("gt_doc")
 
 if gt_doc is None:
     st.info("Load a GT PDF above to continue.")
