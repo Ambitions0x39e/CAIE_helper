@@ -5,6 +5,8 @@ CIE PDFs use custom font encoding (text is garbled), but span coordinates are
 precise.  Question numbers appear at fixed X positions:
   - Main question numbers (1, 2, …) at x ≈ 72.4 with len == 2
   - Sub-question labels (a), (b), … at x ≈ 93.7 starting with byte 0xa8
+  - Roman-numeral sub-sub-parts (i), (ii), … at x ≈ 112 (readable text only —
+    garbled-font decoding isn't implemented for this tier)
 
 This module detects those positions and maps them to the ordered question IDs
 from the parsed mark scheme, producing clip rectangles for cropped rendering.
@@ -13,8 +15,10 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
+from typing import Any
 
-import fitz
+from pdfplumber.page import Page
+from pdfplumber.pdf import PDF
 from pydantic import BaseModel
 
 # ── Models ────────────────────────────────────────────────────────
@@ -37,6 +41,7 @@ class QuestionRegion(BaseModel):
 class _BoundaryKind(StrEnum):
     MAIN = "main"
     SUB = "sub"
+    SUBSUB = "subsub"
 
 
 class _Boundary(BaseModel):
@@ -52,22 +57,47 @@ _FORMAT_PARAMS: dict[str, dict[str, float]] = {
     "letter": {
         "left_margin_x": 72.4,
         "sub_q_x": 93.7,
+        "subsub_q_x": 112.0,
         "footer_y": 740.0,
         "top_margin": 45.0,
     },
     "a4": {
         "left_margin_x": 70.0,
         "sub_q_x": 91.0,
+        "subsub_q_x": 109.3,
         "footer_y": 790.0,
         "top_margin": 45.0,
     },
 }
 
 _X_TOLERANCE = 3.0
+# Roman-numeral sub-sub-part markers ("(ii)", "(iii)", …) are indented
+# further than letter markers but their exact x0 varies more (~±6pt)
+# due to kerning/rounding noise — use a wider tolerance for this tier.
+_SUBSUB_X_TOLERANCE = 6.0
+_ROMAN_NUMERALS = {
+    "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
+}
+
+_CID_RE = re.compile(r"\(cid:(\d+)\)")
 
 
-def _detect_format(page: fitz.Page) -> str:
-    w = page.rect.width
+def _parse_codepoints(text: str) -> list[int]:
+    """Extract integer code points from word text.
+
+    pdfplumber renders garbled CID fonts as ``(cid:N)`` strings.
+    fitz returned raw bytes whose ``ord()`` gave the code point directly.
+    This helper unifies both representations into a list of ints so all
+    downstream length / value checks work identically.
+    """
+    cids = _CID_RE.findall(text)
+    if cids:
+        return [int(c) for c in cids]
+    return [ord(c) for c in text]
+
+
+def _detect_format(page: Page) -> str:
+    w = page.width
     if abs(w - 595) < 10:
         return "a4"
     return "letter"
@@ -76,7 +106,7 @@ def _detect_format(page: fitz.Page) -> str:
 # ── Bracket-pair auto-detection ──────────────────────────────────
 
 def _detect_bracket_pair(
-    per_page: list[tuple[int, list[dict], dict[float, list[dict]]]],
+    per_page: list[tuple[int, list[dict[str, Any]], dict[float, list[dict[str, Any]]]]],
     sqx: float,
 ) -> tuple[int, int] | None:
     """Auto-detect which (byte0, byte2) pair represents garbled '(' and ')'.
@@ -96,8 +126,8 @@ def _detect_bracket_pair(
             y0 = span["y0"]
             for c in spans_at_y.get(y0, []):
                 if abs(c["x0"] - sqx) < _X_TOLERANCE and c["len"] >= 3:
-                    raw = c["text"]
-                    pair_counts[(ord(raw[0]), ord(raw[2]))] += 1
+                    cps = c.get("cps") or _parse_codepoints(c["text"])
+                    pair_counts[(cps[0], cps[2])] += 1
 
     if not pair_counts:
         return None
@@ -111,7 +141,7 @@ def _detect_bracket_pair(
 # ── Character mapping (garbled font decoding) ────────────────────
 
 def _build_char_mapping(
-    doc: fitz.Document,
+    pdf: PDF,
 ) -> dict[int, str] | None:
     """Build byte→digit mapping from page number spans.
 
@@ -122,41 +152,35 @@ def _build_char_mapping(
 
     Returns None if the PDF uses readable text (no mapping needed).
     """
-    pw = doc[0].rect.width
+    pw = pdf.pages[0].width
     center_x = pw / 2
 
-    page_num_spans: list[tuple[int, str]] = []
-    for pg_idx in range(len(doc)):
-        page = doc[pg_idx]
-        td = page.get_text("dict")
-        for block in td.get("blocks", []):
-            if block.get("type") != 0:
+    page_num_spans: list[tuple[int, list[int]]] = []
+    for pg_idx in range(len(pdf.pages)):
+        page = pdf.pages[pg_idx]
+        for w in page.extract_words() or []:
+            text = w["text"].strip()
+            if not text:
                 continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span["text"].strip()
-                    if not text:
-                        continue
-                    bbox = span["bbox"]
-                    if bbox[1] < 50 and abs(bbox[0] - center_x) < 100:
-                        if _is_ascii_digit_str(text):
-                            return None
-                        page_num_spans.append((pg_idx, text))
+            if w["top"] < 50 and abs(w["x0"] - center_x) < 100:
+                if _is_ascii_digit_str(text):
+                    return None
+                cps = _parse_codepoints(text)
+                page_num_spans.append((pg_idx, cps))
 
     if not page_num_spans:
         return None
 
     page_num_spans.sort()
     mapping: dict[int, str] = {}
-    for pg_idx, text in page_num_spans:
+    for pg_idx, cps in page_num_spans:
         expected = str(pg_idx + 1)
-        if len(text) != len(expected):
+        if len(cps) != len(expected):
             continue
-        for ch, digit in zip(text, expected, strict=True):
-            b = ord(ch)
-            if b in mapping and mapping[b] != digit:
+        for cp, digit in zip(cps, expected, strict=True):
+            if cp in mapping and mapping[cp] != digit:
                 continue
-            mapping[b] = digit
+            mapping[cp] = digit
 
     return mapping if len(mapping) >= 3 else None
 
@@ -177,15 +201,13 @@ def _decode_question_num(
         cleaned = text.strip()
         return int(cleaned) if _is_ascii_digit_str(cleaned) else None
 
-    first = ord(text[0])
-    if first not in mapping:
+    cps = _parse_codepoints(text)
+    if not cps or cps[0] not in mapping:
         return None
-    result = mapping[first]
+    result = mapping[cps[0]]
 
-    if len(text) >= 2:
-        second = ord(text[1])
-        if second in mapping:
-            result += mapping[second]
+    if len(cps) >= 2 and cps[1] in mapping:
+        result += mapping[cps[1]]
 
     return int(result) if result.isdigit() else None
 
@@ -193,73 +215,85 @@ def _decode_question_num(
 # ── Boundary detection ────────────────────────────────────────────
 
 def _extract_boundaries(
-    doc: fitz.Document,
+    pdf: PDF,
     *,
     skip_pages: set[int] | None = None,
 ) -> list[_Boundary]:
     """Scan every page and return ordered question-start boundaries."""
-    if not len(doc):
+    if not len(pdf.pages):
         return []
 
-    fmt = _detect_format(doc[0])
+    fmt = _detect_format(pdf.pages[0])
     params = _FORMAT_PARAMS[fmt]
     lx = params["left_margin_x"]
     sqx = params["sub_q_x"]
+    ssqx = params["subsub_q_x"]
     footer_y = params["footer_y"]
     skip = skip_pages or set()
 
-    char_map = _build_char_mapping(doc)
+    char_map = _build_char_mapping(pdf)
 
-    # First pass: collect span data from all pages
-    per_page: list[tuple[int, list[dict], dict[float, list[dict]]]] = []
+    _WordDict = dict[str, Any]
 
-    for pg_idx in range(len(doc)):
+    # First pass: collect word data from all pages
+    per_page: list[
+        tuple[
+            int, list[_WordDict], list[_WordDict], list[_WordDict],
+            dict[float, list[_WordDict]],
+        ]
+    ] = []
+
+    for pg_idx in range(len(pdf.pages)):
         if pg_idx in skip:
             continue
 
-        page = doc[pg_idx]
-        d = page.get_text("dict")
+        page = pdf.pages[pg_idx]
 
-        spans_at_y: dict[float, list[dict]] = {}
-        left_spans: list[dict] = []
-        sub_q_spans: list[dict] = []
+        spans_at_y: dict[float, list[dict[str, Any]]] = {}
+        left_spans: list[dict[str, Any]] = []
+        sub_q_spans: list[dict[str, Any]] = []
+        subsub_q_spans: list[dict[str, Any]] = []
 
-        for block in d.get("blocks", []):
-            if block.get("type") != 0:
+        for w in page.extract_words() or []:
+            text = w["text"].strip()
+            if not text:
                 continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span["text"].strip()
-                    if not text:
-                        continue
-                    bbox = span["bbox"]
-                    x0 = bbox[0]
-                    y0 = round(bbox[1], 1)
+            x0 = w["x0"]
+            y0 = round(w["top"], 1)
+            cps = _parse_codepoints(text)
+            cp_len = len(cps)
 
-                    entry = {"x0": x0, "y0": y0, "text": text, "len": len(text)}
+            entry = {
+                "x0": x0, "y0": y0, "text": text,
+                "len": cp_len, "cps": cps,
+            }
 
-                    if y0 not in spans_at_y:
-                        spans_at_y[y0] = []
-                    spans_at_y[y0].append(entry)
+            if y0 not in spans_at_y:
+                spans_at_y[y0] = []
+            spans_at_y[y0].append(entry)
 
-                    if y0 < footer_y:
-                        if abs(x0 - lx) < _X_TOLERANCE and len(text) <= 2:
-                            left_spans.append(entry)
-                        if abs(x0 - sqx) < _X_TOLERANCE and len(text) >= 3:
-                            sub_q_spans.append(entry)
+            if y0 < footer_y:
+                if abs(x0 - lx) < _X_TOLERANCE and cp_len <= 2:
+                    left_spans.append(entry)
+                if abs(x0 - sqx) < _X_TOLERANCE and cp_len >= 3:
+                    sub_q_spans.append(entry)
+                if abs(x0 - ssqx) < _SUBSUB_X_TOLERANCE and 3 <= cp_len <= 6:
+                    subsub_q_spans.append(entry)
 
-        per_page.append((pg_idx, left_spans, sub_q_spans, spans_at_y))
+        per_page.append(
+            (pg_idx, left_spans, sub_q_spans, subsub_q_spans, spans_at_y)
+        )
 
     # Auto-detect the bracket encoding for this paper (garbled format)
     garbled_page_data = [
-        (pg_idx, ls, sy) for pg_idx, ls, _, sy in per_page
+        (pg_idx, ls, sy) for pg_idx, ls, _, _, sy in per_page
     ]
     bracket_pair = _detect_bracket_pair(garbled_page_data, sqx)
 
     # Second pass: classify boundaries
     boundaries: list[_Boundary] = []
 
-    for pg_idx, left_spans, sub_q_spans, spans_at_y in per_page:
+    for pg_idx, left_spans, sub_q_spans, subsub_q_spans, spans_at_y in per_page:
         # --- MAIN detection ---
         for span in left_spans:
             y0 = span["y0"]
@@ -289,8 +323,8 @@ def _extract_boundaries(
                     companions = spans_at_y.get(y0, [])
                     for c in companions:
                         if abs(c["x0"] - sqx) < _X_TOLERANCE and c["len"] >= 3:
-                            raw = c["text"]
-                            if (ord(raw[0]), ord(raw[2])) == bracket_pair:
+                            c_cps = c.get("cps") or _parse_codepoints(c["text"])
+                            if (c_cps[0], c_cps[2]) == bracket_pair:
                                 boundaries.append(_Boundary(
                                     kind=_BoundaryKind.SUB, page_idx=pg_idx, y=y0,
                                 ))
@@ -306,10 +340,30 @@ def _extract_boundaries(
 
         # --- Readable SUB detection: "(a)", "(b)" directly at x≈sub_q_x ---
         for span in sub_q_spans:
-            raw = span["text"]
-            if raw[0] == "(" and raw[2] == ")" and raw[1].isalpha():
+            cps = span.get("cps") or _parse_codepoints(span["text"])
+            if (
+                len(cps) >= 3
+                and cps[0] == ord("(")
+                and cps[2] == ord(")")
+                and chr(cps[1]).isalpha()
+            ):
                 boundaries.append(_Boundary(
                     kind=_BoundaryKind.SUB, page_idx=pg_idx, y=span["y0"],
+                ))
+
+        # --- Readable SUBSUB detection: "(i)", "(ii)", … at x≈subsub_q_x ---
+        # Garbled-font papers aren't supported here (no bracket-pair-style
+        # decoding exists for this tier yet) — only readable text is matched.
+        for span in subsub_q_spans:
+            text = span["text"]
+            if (
+                len(text) >= 3
+                and text[0] == "("
+                and text[-1] == ")"
+                and text[1:-1] in _ROMAN_NUMERALS
+            ):
+                boundaries.append(_Boundary(
+                    kind=_BoundaryKind.SUBSUB, page_idx=pg_idx, y=span["y0"],
                 ))
 
     boundaries.sort(key=lambda b: (b.page_idx, b.y))
@@ -319,8 +373,29 @@ def _extract_boundaries(
 # ── Match boundaries to question IDs ──────────────────────────────
 
 def _has_sub_letter(qid: str) -> bool:
-    """Check if a question ID has a sub-part letter (e.g. 1a, 1(a))."""
-    return bool(re.search(r"[a-z]\)?$", qid))
+    """Check if a question ID has a sub-part letter (e.g. 1a, 1(a), 6(a)(ii))."""
+    return bool(re.search(r"[a-z]|[ivx]+\)", qid))
+
+
+def _extract_sub_letter(qid: str) -> str | None:
+    """Extract the first sub-part letter from a question ID.
+
+    "1a" → "a", "Q6(a)(ii)" → "a", "1(b)" → "b", "1" → None
+    """
+    m = re.search(r"(\d)\(?([a-z])\)?", qid)
+    return m.group(2) if m else None
+
+
+_ROMAN_SUFFIX_RE = re.compile(r"\(([ivx]+)\)\s*$")
+
+
+def _extract_sub_roman(qid: str) -> str | None:
+    """Extract the trailing roman-numeral sub-sub-part from a question ID.
+
+    "Q6(a)(ii)" → "ii", "1a" → None, "1(b)" → None
+    """
+    m = _ROMAN_SUFFIX_RE.search(qid)
+    return m.group(1) if m and m.group(1) in _ROMAN_NUMERALS else None
 
 
 def _extract_main_num(qid: str) -> str:
@@ -345,16 +420,25 @@ def _group_qids(question_ids: list[str]) -> list[list[str]]:
     return groups
 
 
+_SubGroup = tuple[_Boundary, list[_Boundary]]
+
+
 def _group_boundaries(
     boundaries: list[_Boundary],
-) -> list[tuple[_Boundary, list[_Boundary]]]:
-    """Group boundaries into (MAIN, [SUBs]) tuples."""
-    groups: list[tuple[_Boundary, list[_Boundary]]] = []
+) -> list[tuple[_Boundary, list[_SubGroup]]]:
+    """Group boundaries into (MAIN, [(SUB, [SUBSUBs]), ...]) tuples."""
+    groups: list[tuple[_Boundary, list[_SubGroup]]] = []
     for b in boundaries:
         if b.kind == _BoundaryKind.MAIN:
             groups.append((b, []))
         elif b.kind == _BoundaryKind.SUB and groups:
-            groups[-1][1].append(b)
+            groups[-1][1].append((b, []))
+        elif (
+            b.kind == _BoundaryKind.SUBSUB
+            and groups
+            and groups[-1][1]
+        ):
+            groups[-1][1][-1][1].append(b)
     return groups
 
 
@@ -381,13 +465,12 @@ def _match_boundaries(
 
     has_nums = any(main_b.question_num is not None for main_b, _ in b_groups)
 
+    b_by_num: dict[int, tuple[_Boundary, list[_SubGroup]]] | None = None
     if has_nums:
-        b_by_num: dict[int, tuple[_Boundary, list[_Boundary]]] = {}
-        for main_b, sub_bs in b_groups:
+        b_by_num = {}
+        for main_b, sub_groups in b_groups:
             if main_b.question_num is not None:
-                b_by_num[main_b.question_num] = (main_b, sub_bs)
-    else:
-        b_by_num = None
+                b_by_num[main_b.question_num] = (main_b, sub_groups)
 
     matches: list[tuple[str, int, float]] = []
 
@@ -402,24 +485,69 @@ def _match_boundaries(
         if group is None:
             continue
 
-        main_b, sub_bs = group
+        main_b, sub_groups = group
 
-        if not sub_bs or not _has_sub_letter(qids[0]):
+        if not sub_groups or not _has_sub_letter(qids[0]):
             matches.append((qids[0], main_b.page_idx, main_b.y))
-        else:
-            for s_idx, qid in enumerate(qids):
-                if s_idx == 0:
-                    matches.append((qid, main_b.page_idx, main_b.y))
-                elif s_idx < len(sub_bs):
-                    sb = sub_bs[s_idx]
-                    matches.append((qid, sb.page_idx, sb.y))
+            continue
+
+        unique_letters: list[str] = []
+        for qid in qids:
+            letter = _extract_sub_letter(qid)
+            if letter and letter not in unique_letters:
+                unique_letters.append(letter)
+
+        letter_group: dict[str, _SubGroup] = {
+            letter: sg
+            for letter, sg in zip(unique_letters, sub_groups, strict=False)
+        }
+
+        # Precompute each letter's ordered roman-suffixed qids so nested
+        # sub-sub-parts ("(a)(i)", "(a)(ii)", …) can be positionally
+        # matched to their detected SUBSUB boundaries.
+        romans_by_letter: dict[str, list[str]] = {}
+        for qid in qids:
+            letter = _extract_sub_letter(qid)
+            if letter and _extract_sub_roman(qid):
+                romans_by_letter.setdefault(letter, []).append(qid)
+
+        for qid in qids:
+            letter = _extract_sub_letter(qid)
+            if not letter or letter not in letter_group:
+                matches.append((qid, main_b.page_idx, main_b.y))
+                continue
+
+            sub_b, subsub_bs = letter_group[letter]
+            roman = _extract_sub_roman(qid)
+            romans = romans_by_letter.get(letter, [])
+
+            if not roman or not subsub_bs or qid not in romans:
+                matches.append((qid, sub_b.page_idx, sub_b.y))
+                continue
+
+            # The first roman sub-part is often inline with its letter
+            # marker ("(a) (i) ...") and shares its x-position, so it
+            # rarely gets detected as its own SUBSUB boundary. If exactly
+            # one fewer SUBSUB was detected than there are romans, assume
+            # the missing one is the first and anchor it to the letter's
+            # own boundary instead.
+            positions = subsub_bs
+            if len(subsub_bs) == len(romans) - 1:
+                positions = [sub_b, *subsub_bs]
+
+            idx = romans.index(qid)
+            if idx < len(positions):
+                ssb = positions[idx]
+                matches.append((qid, ssb.page_idx, ssb.y))
+            else:
+                matches.append((qid, sub_b.page_idx, sub_b.y))
 
     return matches
 
 
 # ── Convert matches to regions ────────────────────────────────────
 
-def _find_last_content_page(doc: fitz.Document, after: int = 0) -> int:
+def _find_last_content_page(pdf: PDF, after: int = 0) -> int:
     """Find the last page with actual content (curves in drawings).
 
     Pages after all questions (e.g. "Additional page") contain only
@@ -427,21 +555,18 @@ def _find_last_content_page(doc: fitz.Document, after: int = 0) -> int:
     from the end of the document to find the last page that still has
     bezier curve content.
     """
-    for i in range(len(doc) - 1, after - 1, -1):
-        page = doc[i]
-        for d in page.get_drawings():
-            for item in d.get("items", []):
-                if item[0] == "c":
-                    return i
+    for i in range(len(pdf.pages) - 1, after - 1, -1):
+        if pdf.pages[i].curves:
+            return i
     return after
 
 
-_MIN_CLIP_HEIGHT = 50.0
+_MIN_CLIP_HEIGHT = 20.0
 
 
 def _build_regions(
     matches: list[tuple[str, int, float]],
-    doc: fitz.Document,
+    page_count: int,
     footer_y: float,
     top_margin: float,
     *,
@@ -451,7 +576,7 @@ def _build_regions(
     if not matches:
         return []
 
-    max_page = last_content_page if last_content_page is not None else len(doc) - 1
+    max_page = last_content_page if last_content_page is not None else page_count - 1
     regions: list[QuestionRegion] = []
 
     for idx, (qid, start_page, start_y) in enumerate(matches):
@@ -465,11 +590,16 @@ def _build_regions(
         clips: list[PageClip] = []
 
         if start_page == end_page:
-            clips.append(PageClip(
-                page_idx=start_page,
-                y_top=start_y,
-                y_bottom=end_y,
-            ))
+            # Two consecutive boundaries can land on (near) the same Y
+            # coordinate (e.g. a mis-detected duplicate boundary, or a
+            # sub-question with no content of its own). Skip degenerate
+            # clips rather than emitting a zero/negative-height crop.
+            if end_y - start_y >= _MIN_CLIP_HEIGHT:
+                clips.append(PageClip(
+                    page_idx=start_page,
+                    y_top=start_y,
+                    y_bottom=end_y,
+                ))
         else:
             # First page: start_y → footer
             clips.append(PageClip(
@@ -500,7 +630,7 @@ def _build_regions(
 # ── Public API ────────────────────────────────────────────────────
 
 def segment_questions(
-    doc: fitz.Document,
+    pdf: PDF,
     question_ids: list[str],
     *,
     skip_pages: set[int] | None = None,
@@ -508,7 +638,7 @@ def segment_questions(
     """Detect question boundaries and return cropping regions.
 
     Args:
-        doc: Opened PyMuPDF document (question paper or GoodNotes export).
+        pdf: Opened pdfplumber PDF (question paper or GoodNotes export).
         question_ids: Ordered list from PaperConfig.questions.keys().
         skip_pages: 0-indexed pages to skip (e.g. cover page).
                     Defaults to {0} (skip first page).
@@ -520,19 +650,19 @@ def segment_questions(
     if skip_pages is None:
         skip_pages = {0}
 
-    boundaries = _extract_boundaries(doc, skip_pages=skip_pages)
+    boundaries = _extract_boundaries(pdf, skip_pages=skip_pages)
     if not boundaries:
         return []
 
-    fmt = _detect_format(doc[0])
+    fmt = _detect_format(pdf.pages[0])
     params = _FORMAT_PARAMS[fmt]
 
     last_boundary_page = max(b.page_idx for b in boundaries)
-    last_content = _find_last_content_page(doc, after=last_boundary_page)
+    last_content = _find_last_content_page(pdf, after=last_boundary_page)
 
     matches = _match_boundaries(boundaries, question_ids)
     return _build_regions(
-        matches, doc, params["footer_y"], params["top_margin"],
+        matches, len(pdf.pages), params["footer_y"], params["top_margin"],
         last_content_page=last_content,
     )
 

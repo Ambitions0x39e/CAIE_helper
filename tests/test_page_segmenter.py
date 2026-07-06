@@ -1,8 +1,13 @@
 """Tests for modules.page_segmenter using synthetic PDFs."""
 from __future__ import annotations
 
-import fitz
+import tempfile
+from types import SimpleNamespace
+
+import pdfplumber
 import pytest
+from fpdf import FPDF
+from pdfplumber.pdf import PDF
 
 from modules.page_segmenter import (
     PageClip,
@@ -24,17 +29,23 @@ def _make_doc(
     pages: list[list[tuple[float, float, str]]],
     width: float = 612,
     height: float = 792,
-) -> fitz.Document:
+) -> PDF:
     """Create a synthetic PDF with text at specific positions.
 
-    Each page is a list of (x, y, text) tuples.
+    Each page is a list of (x, y, text) tuples where y is the baseline.
+    Returns an opened pdfplumber PDF (caller must close).
     """
-    doc = fitz.open()
+    pdf = FPDF(unit="pt", format=(width, height))
+    pdf.set_auto_page_break(auto=False)
     for spans in pages:
-        page = doc.new_page(width=width, height=height)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=10.8)
         for x, y, text in spans:
-            page.insert_text((x, y), text, fontsize=10.8)
-    return doc
+            pdf.text(x, y, text)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        pdf.output(tmp.name)
+    return pdfplumber.open(tmp.name)
 
 
 def _make_cie_page(
@@ -53,20 +64,16 @@ def _make_cie_page(
     """
     spans = []
     if main_q is not None:
-        # Main question: 2-char span at left margin
         spans.append((72.4, 53.0, main_q))
 
     if subs:
         for y, label in subs:
-            # 1-char marker at left margin
             spans.append((72.4, y, "}"))
-            # Sub-question label at sub_q_x position
             spans.append((93.7, y, label))
 
     if extra:
         spans.extend(extra)
 
-    # Footer (should be excluded)
     spans.append((72.4, 746.0, "footer text here"))
     return spans
 
@@ -85,52 +92,49 @@ class TestExtractBoundaries:
         when it has a genuine bracket-pair companion at sub_q_x — a
         char-map collision is not proof the span is a MAIN question number.
         """
-        # Page-number spans (near top-center) teach the char map:
-        # '}' -> '1' (from page idx 0), '~' -> '2' (from page idx 1).
         page0 = [(306.0, 30.0, "}")]
         page1 = [
             (306.0, 30.0, "~"),
-            (72.4, 200.0, "}"),  # SUB marker — byte collides with page 0's '1'
+            (72.4, 200.0, "}"),
             (93.7, 200.0, _sub_label("a")),
         ]
         page2 = [
             (306.0, 30.0, "!"),
-            (72.4, 400.0, "}"),  # second SUB occurrence (for bracket-pair count>=2)
+            (72.4, 400.0, "}"),
             (93.7, 400.0, _sub_label("b")),
         ]
-        doc = _make_doc([page0, page1, page2])
-        boundaries = _extract_boundaries(doc, skip_pages=set())
+        pdf = _make_doc([page0, page1, page2])
+        boundaries = _extract_boundaries(pdf, skip_pages=set())
 
         mains = [b for b in boundaries if b.kind == _BoundaryKind.MAIN]
         subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
         assert len(mains) == 0
         assert len(subs) == 2
-        doc.close()
+        pdf.close()
 
     def test_detect_main_question(self) -> None:
         page_spans = _make_cie_page(main_q="Q1")
-        doc = _make_doc([page_spans])
-        boundaries = _extract_boundaries(doc, skip_pages=set())
+        pdf = _make_doc([page_spans])
+        boundaries = _extract_boundaries(pdf, skip_pages=set())
 
         mains = [b for b in boundaries if b.kind == _BoundaryKind.MAIN]
         assert len(mains) == 1
         assert mains[0].page_idx == 0
-        doc.close()
+        pdf.close()
 
     def test_detect_sub_question(self) -> None:
         page_spans = _make_cie_page(
             main_q="Q1",
             subs=[(100.0, _sub_label("a")), (350.0, _sub_label("b"))],
         )
-        doc = _make_doc([page_spans])
-        boundaries = _extract_boundaries(doc, skip_pages=set())
+        pdf = _make_doc([page_spans])
+        boundaries = _extract_boundaries(pdf, skip_pages=set())
 
         subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
         assert len(subs) == 2
-        # insert_text y is the baseline; bbox y0 is the ascent above it
         assert subs[0].y == pytest.approx(100.0, abs=15)
         assert subs[1].y == pytest.approx(350.0, abs=15)
-        doc.close()
+        pdf.close()
 
     def test_context_line_ignored(self) -> None:
         """A len=1 span at x=72.4 without a \\xa8 companion is not a SUB."""
@@ -141,65 +145,53 @@ class TestExtractBoundaries:
                 (93.7, 200.0, "some context text"),
             ],
         )
-        doc = _make_doc([page_spans])
-        boundaries = _extract_boundaries(doc, skip_pages=set())
+        pdf = _make_doc([page_spans])
+        boundaries = _extract_boundaries(pdf, skip_pages=set())
 
         subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
         assert len(subs) == 0
-        doc.close()
+        pdf.close()
 
     def test_footer_excluded(self) -> None:
-        # insert_text y is baseline; bbox y0 = y - ascent (~11.6pt for size 10.8)
-        # Place footer text high enough that bbox top > 740 threshold
         page_spans = [
             (72.4, 53.0, "Q1"),
             (72.4, 755.0, "XX"),
         ]
-        doc = _make_doc([page_spans])
-        boundaries = _extract_boundaries(doc, skip_pages=set())
+        pdf = _make_doc([page_spans])
+        boundaries = _extract_boundaries(pdf, skip_pages=set())
 
         assert len(boundaries) == 1
         assert boundaries[0].y == pytest.approx(53.0, abs=15)
-        doc.close()
+        pdf.close()
 
     def test_skip_pages(self) -> None:
         page0 = _make_cie_page(main_q="Q0")
         page1 = _make_cie_page(main_q="Q1")
-        doc = _make_doc([page0, page1])
-        boundaries = _extract_boundaries(doc, skip_pages={0})
+        pdf = _make_doc([page0, page1])
+        boundaries = _extract_boundaries(pdf, skip_pages={0})
 
         assert len(boundaries) == 1
         assert boundaries[0].page_idx == 1
-        doc.close()
+        pdf.close()
 
-    def test_empty_document(self) -> None:
-        doc = fitz.open()
-        boundaries = _extract_boundaries(doc, skip_pages=set())
+    def test_no_text_page(self) -> None:
+        """A page with no text spans yields no boundaries."""
+        pdf = _make_doc([[]])
+        boundaries = _extract_boundaries(pdf, skip_pages=set())
         assert boundaries == []
-        doc.close()
-
-    def test_no_text_layer(self) -> None:
-        """A page with only an image has no text spans."""
-        doc = fitz.open()
-        page = doc.new_page(width=612, height=792)
-        # Insert a dummy rectangle (no text)
-        page.draw_rect(fitz.Rect(100, 100, 200, 200), color=(0, 0, 0))
-        boundaries = _extract_boundaries(doc, skip_pages=set())
-        assert boundaries == []
-        doc.close()
+        pdf.close()
 
 
 class TestBuildCharMapping:
     def test_catches_page_number_with_tall_header(self) -> None:
         """The original motivating case: a page-number span whose bbox top
         sits at y~=46 (a taller-than-usual header) must still be captured."""
-        # baseline 57.6 -> bbox top ~= 46.0 for fontsize 10.8 (measured).
         page0 = [(306.0, 57.6, "A")]
         page1 = [(306.0, 30.0, "B")]
         page2 = [(306.0, 30.0, "C")]
-        doc = _make_doc([page0, page1, page2])
-        mapping = _build_char_mapping(doc)
-        doc.close()
+        pdf = _make_doc([page0, page1, page2])
+        mapping = _build_char_mapping(pdf)
+        pdf.close()
 
         assert mapping is not None
         assert mapping[ord("A")] == "1"
@@ -209,14 +201,13 @@ class TestBuildCharMapping:
         header band, before the widened threshold existed this would already
         be page-content) must NOT be treated as a page-number candidate, even
         if its length coincidentally matches the expected digit count."""
-        # baseline 66.6 -> bbox top ~= 55.0 for fontsize 10.8 (measured).
         page0 = [(306.0, 30.0, "A")]
         page1 = [(306.0, 30.0, "B")]
-        page2 = [(306.0, 66.6, "X")]  # attack: would decode as this page's "3"
+        page2 = [(306.0, 66.6, "X")]
         page3 = [(306.0, 30.0, "C")]
-        doc = _make_doc([page0, page1, page2, page3])
-        mapping = _build_char_mapping(doc)
-        doc.close()
+        pdf = _make_doc([page0, page1, page2, page3])
+        mapping = _build_char_mapping(pdf)
+        pdf.close()
 
         assert mapping is not None
         assert ord("X") not in mapping
@@ -235,7 +226,7 @@ class TestMatchBoundaries:
         matches = _match_boundaries(boundaries, question_ids)
 
         assert len(matches) == 2
-        assert matches[0] == ("Q1a", 0, 50)  # uses stem Y
+        assert matches[0] == ("Q1a", 0, 50)
         assert matches[1] == ("Q1b", 0, 350)
 
     def test_standalone_question(self) -> None:
@@ -288,11 +279,7 @@ class TestMatchBoundaries:
 class TestBuildRegions:
     def test_single_page_two_questions(self) -> None:
         matches = [("Q1a", 0, 50.0), ("Q1b", 0, 400.0)]
-        doc = fitz.open()
-        doc.new_page(width=612, height=792)
-
-        regions = _build_regions(matches, doc, footer_y=740.0, top_margin=45.0)
-        doc.close()
+        regions = _build_regions(matches, page_count=1, footer_y=740.0, top_margin=45.0)
 
         assert len(regions) == 2
         assert regions[0].question_id == "Q1a"
@@ -302,29 +289,21 @@ class TestBuildRegions:
 
         assert regions[1].question_id == "Q1b"
         assert regions[1].clips[0].y_top == 400.0
-        assert regions[1].clips[0].y_bottom == 740.0  # last → footer
+        assert regions[1].clips[0].y_bottom == 740.0
 
     def test_cross_page_region(self) -> None:
-        matches = [("Q1b", 0, 500.0), ("Q2", 2, 60.0)]
-        doc = fitz.open()
-        for _ in range(3):
-            doc.new_page(width=612, height=792)
-
-        regions = _build_regions(matches, doc, footer_y=740.0, top_margin=45.0)
-        doc.close()
+        matches = [("Q1b", 0, 500.0), ("Q2", 2, 200.0)]
+        regions = _build_regions(matches, page_count=3, footer_y=740.0, top_margin=45.0)
 
         q1b = regions[0]
         assert q1b.question_id == "Q1b"
         assert len(q1b.clips) == 3
         assert q1b.clips[0] == PageClip(page_idx=0, y_top=500.0, y_bottom=740.0)
         assert q1b.clips[1] == PageClip(page_idx=1, y_top=45.0, y_bottom=740.0)
-        assert q1b.clips[2] == PageClip(page_idx=2, y_top=45.0, y_bottom=60.0)
+        assert q1b.clips[2] == PageClip(page_idx=2, y_top=45.0, y_bottom=200.0)
 
     def test_empty_matches(self) -> None:
-        doc = fitz.open()
-        doc.new_page()
-        regions = _build_regions([], doc, footer_y=740.0, top_margin=45.0)
-        doc.close()
+        regions = _build_regions([], page_count=1, footer_y=740.0, top_margin=45.0)
         assert regions == []
 
 
@@ -332,22 +311,13 @@ class TestBuildRegions:
 
 class TestDetectFormat:
     def test_letter(self) -> None:
-        doc = fitz.open()
-        doc.new_page(width=612, height=792)
-        assert _detect_format(doc[0]) == "letter"
-        doc.close()
+        assert _detect_format(SimpleNamespace(width=612)) == "letter"  # type: ignore[arg-type]
 
     def test_a4(self) -> None:
-        doc = fitz.open()
-        doc.new_page(width=595, height=842)
-        assert _detect_format(doc[0]) == "a4"
-        doc.close()
+        assert _detect_format(SimpleNamespace(width=595)) == "a4"  # type: ignore[arg-type]
 
     def test_unknown_defaults_to_letter(self) -> None:
-        doc = fitz.open()
-        doc.new_page(width=500, height=700)
-        assert _detect_format(doc[0]) == "letter"
-        doc.close()
+        assert _detect_format(SimpleNamespace(width=500)) == "letter"  # type: ignore[arg-type]
 
 
 # ── Tests: validate_regions ───────────────────────────────────────
@@ -381,10 +351,10 @@ class TestSegmentQuestions:
         page1 = _make_cie_page(
             main_q="Q2",
         )
-        doc = _make_doc([page0, page1])
+        pdf = _make_doc([page0, page1])
 
-        regions = segment_questions(doc, ["Q1a", "Q1b", "Q2"], skip_pages=set())
-        doc.close()
+        regions = segment_questions(pdf, ["Q1a", "Q1b", "Q2"], skip_pages=set())
+        pdf.close()
 
         assert len(regions) == 3
         assert regions[0].question_id == "Q1a"
@@ -392,18 +362,18 @@ class TestSegmentQuestions:
         assert regions[2].question_id == "Q2"
 
     def test_default_skips_first_page(self) -> None:
-        page0 = _make_cie_page(main_q="XX")  # cover page
+        page0 = _make_cie_page(main_q="XX")
         page1 = _make_cie_page(main_q="Q1")
-        doc = _make_doc([page0, page1])
+        pdf = _make_doc([page0, page1])
 
-        regions = segment_questions(doc, ["Q1"])
-        doc.close()
+        regions = segment_questions(pdf, ["Q1"])
+        pdf.close()
 
         assert len(regions) == 1
         assert regions[0].clips[0].page_idx == 1
 
-    def test_empty_doc_returns_empty(self) -> None:
-        doc = fitz.open()
-        regions = segment_questions(doc, ["Q1", "Q2"])
-        doc.close()
+    def test_empty_page_returns_empty(self) -> None:
+        pdf = _make_doc([[]])
+        regions = segment_questions(pdf, ["Q1", "Q2"], skip_pages=set())
+        pdf.close()
         assert regions == []

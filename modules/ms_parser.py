@@ -13,8 +13,9 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-import fitz
+import pdfplumber
 from openai import OpenAI
+from pdfplumber.pdf import PDF
 from pydantic import BaseModel
 
 from core.models import PaperType
@@ -22,6 +23,37 @@ from core.settings import GraderConfig
 from modules.pdf_renderer import render_pages_from_path
 
 QUESTION_ID_RE = re.compile(r"^(\d+)(?:\(([a-z])\))?$")
+
+_MAIN_NUM_RE = re.compile(r"\d+")
+_SUB_LETTER_RE = re.compile(r"[a-z]")
+_ROMAN_SUFFIX_RE = re.compile(r"\(([ivx]+)\)\s*$")
+_ROMAN_VALUES = {
+    "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5,
+    "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10,
+}
+
+
+def _question_sort_key(qid: str) -> tuple[int, str, int]:
+    """Sort key that orders question IDs numerically, not lexicographically.
+
+    Question IDs come in mixed notation from VL extraction — normalised
+    ("Q2a") and raw nested ("Q2(b)(i)") — so a plain string compare puts
+    "(" (ASCII 40) before letters, sorting "Q2(b)(i)" before "Q2a". This
+    extracts (main_number, sub_letter, sub_roman_index) so ordering is
+    numeric/alphabetic regardless of notation style.
+    """
+    body = qid[1:] if qid.startswith("Q") else qid
+    num_m = _MAIN_NUM_RE.search(body)
+    main_num = int(num_m.group()) if num_m else 0
+
+    rest = body[num_m.end():] if num_m else body
+    letter_m = _SUB_LETTER_RE.search(rest)
+    letter = letter_m.group() if letter_m else ""
+
+    roman_m = _ROMAN_SUFFIX_RE.search(body)
+    roman = _ROMAN_VALUES.get(roman_m.group(1), 0) if roman_m else 0
+
+    return (main_num, letter, roman)
 
 
 class QuestionConfig(BaseModel):
@@ -49,9 +81,9 @@ def normalize_question_id(raw: str) -> str:
     return f"Q{raw}"
 
 
-def _extract_paper_info(doc: fitz.Document) -> tuple[str, int]:
+def _extract_paper_info(pdf: PDF) -> tuple[str, int]:
     """Extract paper_id and total_marks from the cover page via text."""
-    text = doc[0].get_text()
+    text = pdf.pages[0].extract_text() or ""
     paper_id = ""
     total_marks = 0
 
@@ -249,16 +281,38 @@ def _parse_all_vl(
     sorted_questions = dict(
         sorted(
             all_questions.items(),
-            key=lambda kv: (
-                int(re.search(r"\d+", kv[0]).group()),  # type: ignore[union-attr]
-                kv[0],
-            ),
+            key=lambda kv: _question_sort_key(kv[0]),
         )
     )
     return sorted_questions
 
 
 # ── Public API ───────────────────────────────────────────────────
+
+
+def _cache_path_for(pdf_path: Path) -> Path:
+    """Return the JSON cache path for a mark scheme PDF."""
+    from core.settings import app_settings
+
+    return app_settings.ms_cache_dir / f"{pdf_path.stem}.json"
+
+
+def _load_cached(pdf_path: Path) -> PaperConfig | None:
+    """Load a previously cached PaperConfig, or None on miss."""
+    cp = _cache_path_for(pdf_path)
+    if not cp.exists():
+        return None
+    try:
+        return PaperConfig.model_validate_json(cp.read_text("utf-8"))
+    except Exception:
+        return None
+
+
+def _save_cache(pdf_path: Path, config: PaperConfig) -> None:
+    """Persist a PaperConfig to the cache directory."""
+    cp = _cache_path_for(pdf_path)
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(config.model_dump_json(indent=2), "utf-8")
 
 
 def parse_mark_scheme(
@@ -270,9 +324,8 @@ def parse_mark_scheme(
 ) -> PaperConfig:
     """Parse a mark scheme PDF into structured question configs.
 
-    Dispatches to the appropriate parser based on paper_type:
-    - MCQ: PyMuPDF block extraction (no API needed).
-    - MATH: VL model extraction (requires grader_config).
+    Returns a cached result when available, otherwise dispatches to
+    the appropriate parser and caches the result for future calls.
 
     Args:
         pdf_path: Path to the MS PDF file.
@@ -285,21 +338,30 @@ def parse_mark_scheme(
         NotImplementedError: If paper_type has no parser yet.
         ValueError: If grader_config is None for a VL-based paper type.
     """
+    path = Path(pdf_path)
+
+    cached = _load_cached(path)
+    if cached is not None:
+        return cached
+
     if paper_type == PaperType.MCQ:
         from modules.mcq_parser import parse_mcq_mark_scheme
-        return parse_mcq_mark_scheme(pdf_path)
+        config = parse_mcq_mark_scheme(pdf_path)
+        _save_cache(path, config)
+        return config
 
     if paper_type != PaperType.MATH:
-        raise NotImplementedError(f"No mark scheme parser for {paper_type.value}")
+        raise NotImplementedError(
+            f"No mark scheme parser for {paper_type.value}"
+        )
 
     if grader_config is None:
-        raise ValueError("grader_config is required for MATH mark scheme parsing")
+        raise ValueError(
+            "grader_config is required for MATH mark scheme parsing"
+        )
 
-    doc = fitz.open(str(pdf_path))
-    try:
-        paper_id, total_marks = _extract_paper_info(doc)
-    finally:
-        doc.close()
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        paper_id, total_marks = _extract_paper_info(pdf)
 
     questions = _parse_all_vl(
         pdf_path,
@@ -308,8 +370,10 @@ def parse_mark_scheme(
         on_progress=on_progress,
     )
 
-    return PaperConfig(
+    config = PaperConfig(
         paper_id=paper_id,
         total_marks=total_marks,
         questions=questions,
     )
+    _save_cache(path, config)
+    return config

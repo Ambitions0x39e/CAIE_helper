@@ -15,7 +15,8 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-import fitz
+import pdfplumber
+from pdfplumber.pdf import PDF
 
 from core.settings import GraderConfig
 from modules.ms_parser import PaperConfig, QuestionConfig
@@ -124,7 +125,7 @@ def _resolve_skip_pages(source_stem: str) -> set[int]:
 
 
 def _build_page_batches(
-    doc: fitz.Document,
+    pdf: PDF,
     skip_pages: set[int],
 ) -> list[list[int]]:
     """Return one batch per non-skipped page.
@@ -133,7 +134,7 @@ def _build_page_batches(
     from one page image, so page-level batching is both sufficient and simpler
     than question-level segmentation.
     """
-    return [[i] for i in range(len(doc)) if i not in skip_pages]
+    return [[i] for i in range(len(pdf.pages)) if i not in skip_pages]
 
 
 # ── Public: mark scheme parsing ────────────────────────────────────────────
@@ -149,29 +150,25 @@ def parse_mcq_mark_scheme(pdf_path: str | Path) -> PaperConfig:
         ValueError: If no answers could be extracted from the PDF.
     """
     path = Path(pdf_path)
-    doc = fitz.open(str(path))
     questions: dict[str, QuestionConfig] = {}
 
-    try:
-        for page in doc:
-            for block in page.get_text("blocks"):
-                text: str = block[4]
-                lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-                i = 0
-                while i < len(lines) - 1:
-                    if (
-                        re.fullmatch(r"\d+", lines[i])
-                        and lines[i + 1] in _ANSWER_LETTERS
-                    ):
-                        qid = f"Q{lines[i]}"
-                        questions[qid] = QuestionConfig(
-                            max_marks=1, mark_scheme=lines[i + 1]
-                        )
-                        i += 2
-                    else:
-                        i += 1
-    finally:
-        doc.close()
+    with pdfplumber.open(str(path)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+            i = 0
+            while i < len(lines) - 1:
+                if (
+                    re.fullmatch(r"\d+", lines[i])
+                    and lines[i + 1] in _ANSWER_LETTERS
+                ):
+                    qid = f"Q{lines[i]}"
+                    questions[qid] = QuestionConfig(
+                        max_marks=1, mark_scheme=lines[i + 1]
+                    )
+                    i += 2
+                else:
+                    i += 1
 
     if not questions:
         raise ValueError(
@@ -227,9 +224,8 @@ def detect_student_answers(
     stem = Path(source_filename).stem if source_filename is not None else path.stem
     skip = _resolve_skip_pages(stem)
     q_ids = list(answer_key.questions.keys())
-    doc = fitz.open(str(path))
-    try:
-        page_batches = _build_page_batches(doc, skip)
+    with pdfplumber.open(str(path)) as pdf:
+        page_batches = _build_page_batches(pdf, skip)
 
         raw_detected: dict[str, str] = {}  # "1" → "C"
         total = len(page_batches)
@@ -237,12 +233,9 @@ def detect_student_answers(
         for idx, page_idxs in enumerate(page_batches):
             if on_progress:
                 on_progress(idx + 1, total)
-            # render_pdf_pages is 1-indexed
-            images = render_pdf_pages(doc, [p + 1 for p in page_idxs], dpi=dpi)
+            images = render_pdf_pages(pdf, [p + 1 for p in page_idxs], dpi=dpi)
             batch_result = _call_vl(grader_config, images)
             raw_detected.update(batch_result)
-    finally:
-        doc.close()
 
     # Normalise to Q-prefixed IDs and filter to known questions
     detected: dict[str, str] = {}

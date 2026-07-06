@@ -2,6 +2,155 @@
 
 ---
 
+## 2026-07-06 — Analytics 折线图改用 flet.canvas 原生绘制（去除 plotly/kaleido）
+
+**改动文件：** `app_flet/tabs/analytics.py`, `pyproject.toml`, `uv.lock`
+
+### 功能说明
+
+为 iOS 打包扫清最大阻塞点：`kaleido` 内嵌无头 Chromium 做 PNG 导出，在 iOS 沙盒环境下无法运行。将 Analytics tab 的成绩趋势图从 plotly → kaleido → PNG → base64 → `ft.Image` 的渲染链路，改为用 `flet.canvas`（`Points`/`PointMode.POLYGON` 画线、`Circle` 画点、`Text` 画坐标轴标签）原生绘制，完全去掉 `plotly`/`kaleido` 依赖。
+
+- 确认当前 flet 版本（0.85.3，新架构）没有内置图表控件（旧版的 `ft.LineChart` 已不存在），但 `flet.canvas` 是核心控件自带，无需额外依赖
+- `pyproject.toml`/`uv.lock` 中移除 `plotly`、`kaleido`
+- `pandas` 保留（`core/storage.py` 的 CSV 存取仍依赖），仅替换图表渲染部分
+
+## 2026-07-06 — Windows 构建修复 + .env 路径迁移 + Cupertino 白色文字全局修复
+
+**改动文件：** `main.py`, `core/settings.py`, `app_flet/main.py`, `app_flet/tabs/mark.py`, `app_flet/tabs/download.py`, `app_flet/components/dialogs.py`
+
+### 功能说明
+
+修复 `flet build windows` 构建后 exe 闪退问题，将 `.env` 从项目根目录迁移到 `~/.cie_helper/.env` 以支持打包后和 iOS 环境，并全面修复 iOS Cupertino 模式下控件文字不可见的问题。
+
+### 1. Windows 构建入口修复（`main.py`）
+
+- 根目录 `main.py` 原为占位符（仅 `print("Hello")`），`flet build` 打包后 exe 启动即退出无 UI
+- 改为 `import flet as ft; from app_flet.main import main; ft.app(main)` 正确调用 Flet 入口
+- 构建后的 `cie-helper.exe` 现在能正常显示完整界面
+
+### 2. `.env` 路径迁移（`core/settings.py`）
+
+- `_ENV_PATH` 从 `Path(".env")`（相对路径）改为 `Path.home() / ".cie_helper" / ".env"`
+- `MailConfig` 和 `GraderConfig` 的 `env_file` 配置同步更新为新路径
+- 解决了打包后 exe 因 cwd 不确定而找不到 `.env` 的问题
+- iOS 上 `Path.home()` 指向 app 沙箱 Documents 目录，天然兼容
+- 已将现有 `.env` 复制到 `~/.cie_helper/.env`
+
+### 3. Cupertino 白色文字全局修复（`app_flet/main.py`, 多个 UI 文件）
+
+- `page.adaptive` 从 `True` 改为 `False`，iOS 上也使用 Material 控件，避免 Cupertino 控件忽略 `label_style` 等 Material 属性
+- 在 `page.theme` 中添加 `ColorScheme(on_surface=BLACK)` 和完整的 `TextTheme` 样式覆盖
+- 所有 `ft.Dropdown` 和 `ft.TextField` 补充 `label_style=ft.TextStyle(color=ft.Colors.BLACK)`，覆盖文件：
+  - `app_flet/tabs/mark.py`：科目/试卷 Dropdown、起始页/页码分配/调分/MCQ 手动输入 TextField
+  - `app_flet/tabs/download.py`：Paper ID TextField
+  - `app_flet/components/dialogs.py`：提交分数 Dropdown + TextField、设置页全部 TextField
+
+---
+
+## 2026-07-05 — Flet Mark tab (Math+MCQ) 完成 + Analytics 性能重构 + 分割/排序 bug 修复
+
+**改动文件：** `app_flet/main.py`, `app_flet/state.py`, `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `modules/ms_parser.py`, `modules/page_segmenter.py`, `.claude/launch.json`（新增）；删除遗留原型 `app_flet.py`
+
+### 功能说明
+
+继续 Streamlit→Flet 迁移的 Phase 4/5：完成 Mark tab 的 Math 结构化批改与 MCQ 批改两条完整流程，重构 Analytics tab 解决卡顿，并修复了批改流程中暴露出的两个 shared module（`page_segmenter.py`/`ms_parser.py`）级别的正确性 bug。
+
+### 1. Mark tab — Math 结构化批改（`app_flet/tabs/mark.py`）
+
+- Step 1：评分标准来源选择（已下载试卷 / 上传 PDF）+ 科目代码下拉 + 试卷下拉（按 paper_id 排序）+ 题型选择 + AI 解析（带批次进度条）
+- Step 2：上传答卷 PDF → 后台线程自动分割题目（`segment_questions`）→ 每题页码文本框（自动填充检测结果，可手动改）+ 删除题目按钮
+- Step 3：思考模式开关 + 题目复选框（"全选"/"全不选"）+ 后台线程逐题 AI 批改（裁剪题目区域优先，退回整页渲染）+ 进度条
+- Step 4：批改结果展开卡片（每个 marking point 对错图标 + 理由）+ 调分输入框 + 确认并写回 CSV
+
+### 2. Mark tab — MCQ 批改（`app_flet/tabs/mark.py` `_build_mcq_flow`）
+
+- 上传标注过的 QP → 通过 Vision API 检测学生作答（`detect_student_answers`）
+- 未检测到的题目提供手动下拉修正
+- 即时计分（无需 AI），确认后写回 CSV
+
+### 3. Analytics tab 性能重构（`app_flet/tabs/analytics.py`）
+
+此前每次打开统计页会为所有科目 × 所有 Paper Type 组合同时渲染 Plotly 折线图（每张图 kaleido 冷启动 ~2 秒）且全部展开，导致打开页面卡顿数十秒，且后续任何操作都会排在这个同步渲染后面（表现为"点设置一分钟后才弹出"）。
+
+- 科目区块默认折叠（`expanded=False`），只在**首次展开时**才构建该科目内容（含图表），避免打开 tab 时全量渲染
+- 同一科目内新增 Paper Type 切换板（`SegmentedButton`），一次只渲染当前选中类型的图表+表格，不再把所有 Paper Type 堆叠展示
+- 折线图标题暂时禁用（用户要求，减少视觉噪音）
+
+### 4. 修复：`_build_syllabus_section` 挂载前访问 `.page` 崩溃
+
+`ExpansionTile` 内容在挂载前（`build_analytics_tab` 首次同步构建阶段）就调用 `type_content.page` 判断是否需要 `page.update()`——Flet 的 `Control.page` 属性在控件未挂载时直接抛 `RuntimeError`。该异常被 Flet 的事件分发器静默捕获并显示为阻塞性错误浮层，表现为"切换到统计/管理/批改后无法再切换其他 tab"。改为只在用户触发的 `on_change`/`on_expand` 回调里调用 `page.update()`，初次构建不再调用。
+
+### 5. 修复：`app_flet.py` 遗留原型覆盖包目录
+
+仓库根目录残留了拆包前的单文件原型 `app_flet.py`（491 行，只有 Download tab demo）。`flet run app_flet` 在文件与同名目录都存在时优先解析成 `.py` 文件，导致所有测试实际跑的是这个过时原型而非 `app_flet/` 包，白测了好几轮。定位后删除该文件（未纳入版本控制，可安全删除）。
+
+### 6. 修复：`modules/page_segmenter.py` 裁剪区域为零面积崩溃
+
+用户的真实答卷跑批改时崩溃：`ValueError: Bounding box (0, 217.0, 612, 217.0) has an area of zero`。根因是 `_build_regions()` 只对跨页裁剪片段做了最小高度校验，同页裁剪片段完全没有下限——当两个相邻题目边界检测到同一 Y 坐标时（常见于嵌套子题只按字母级边界匹配、罗马数字子子题共享同一坐标的情况），会生成零高度矩形，crop 时抛异常。
+
+- 同页分支补上与跨页分支一致的 `_MIN_CLIP_HEIGHT` 校验，退化片段直接跳过（不再崩溃，题目会退回整页渲染兜底）
+- 顺带补上了罗马数字子子题（`(i)`/`(ii)`/`(iii)`）的独立边界检测（新增 `_BoundaryKind.SUBSUB`），让嵌套子题裁剪更精确，`_MIN_CLIP_HEIGHT` 相应从 50pt 收紧到 20pt 以适配更细粒度的裁剪
+
+### 7. 修复：`modules/ms_parser.py` 题目排序混合记法导致乱序
+
+VL 模型提取的题号记法不统一（有的被 `normalize_question_id` 规整成 `"Q2a"`，有的因不匹配正则原样保留成 `"Q2(b)(i)"`），原排序 key 对主序号相同的题目直接按字符串比较，导致 `"("`（ASCII 40）排在字母前面，"Q2(b)(i)" 排到了 "Q2a" 前面。新增 `_question_sort_key()` 提取 `(主序号, 子字母, 罗马数字序号)` 三元组排序，与记法风格无关。已用该 key 就地重新排序了两个既有的 mark scheme 缓存文件（`~/.cie_helper/.cache/ms/*.json`），无需重新调 AI 解析。
+
+### 8. Mark tab UI 细节修复
+
+- Checkbox 固定宽度导致短标签文字被拉伸放大、长短不一——改为把宽度约束放在外层 `Container` 上，`Checkbox` 本体不再被强制拉伸
+- "全不选"点击后下一次 rebuild 会被"若列表为空则自动填充全部"的兜底逻辑重新填满，导致无法真正取消全选——改为一次性 `seeded` 标记，只在首次构建时兜底填充一次
+- 新增"全选"/"全不选"按钮
+- Step 2 页码输入框布局从 3 列改为与 Step 3 复选框一致的 5 列每行
+
+### 验证结果
+
+- `ruff check .` / `mypy`：涉及文件全部通过
+- `pytest`：69/71 passed，2 个既存失败（`test_main_with_subs` 排序断言与本次改动无关、`GraderConfig try_load` 因本机 `.env` 已配置真实 key 触发，均非本次改动引入）
+
+---
+
+## 2026-07-02 — fitz→pdfplumber 迁移 + Mark tab 性能修复 + 评分 prompt 优化
+
+**改动文件：** `app.py`, `core/settings.py`, `modules/grader.py`, `modules/mcq_parser.py`, `modules/ms_parser.py`, `modules/page_segmenter.py`, `modules/pdf_renderer.py`, `pyproject.toml`, `tests/test_page_segmenter.py`, `uv.lock`
+
+### 功能说明
+
+为 iOS 移植做准备，将所有 PyMuPDF (`fitz`) 调用替换为 pdfplumber 等价写法。迁移过程中发现并修复了两个 pdfplumber 特有的行为差异导致的回归 bug，新增 mark scheme 缓存功能，修复 Mark tab 严重卡顿问题，并优化 AI 评分 prompt 解决输出冗长和自我矛盾问题。
+
+### 1. fitz→pdfplumber 全量迁移
+
+- **`modules/page_segmenter.py`**：最复杂的迁移。pdfplumber 渲染 CID 字体为 `(cid:N)` 字符串，所有 `len(text)` / `ord(text[0])` 判断全部失效。新增 `_parse_codepoints()` helper 做 CID-aware 解析，`_build_char_mapping`、`_decode_question_num`、`_extract_boundaries`、`_detect_bracket_pair` 全部改为使用 codepoint list
+- **`modules/grader.py`**：手写检测从 `page.get_drawings()` 迁移到 `page.curves` + `page.lines`。发现 pdfplumber 的 `page.curves` 不含 PDF annotation layer 的 ink strokes（Apple Pencil/stylus 批注），新增 `page.annots` InkList 检测作为第一优先级 heuristic
+- **`modules/pdf_renderer.py`**：`page.get_pixmap()` → `page.to_image().original` (PIL) + BytesIO 导出 PNG。修复 `_page_to_png` 参数类型从 `PDF` 到 `Page`
+- **`modules/mcq_parser.py`**、**`modules/ms_parser.py`**：import 修改为 `from pdfplumber.pdf import PDF`（pdfplumber 的 `PDF` 未在 `__all__` 导出，直接 import 会触发 mypy `name-defined` 错误）
+- **`app.py`**：`fitz.open` → `pdfplumber.open`，`len(doc)` → `len(pdf.pages)`
+- **`pyproject.toml`**：移除 `pymupdf` 依赖，新增 `fpdf2`（dev dependency，测试用），pdfplumber 加入 mypy ignore list
+- **`tests/test_page_segmenter.py`**：合成 PDF 从 `fitz.open()` + `insert_text()` 改为 `fpdf2` 生成；修复 `test_cross_page_region` 的 `end_y` 阈值（60→200，低于 `_MIN_CLIP_HEIGHT=50` 导致测试失败）
+
+### 2. Mark scheme 缓存
+
+- **`modules/ms_parser.py`**：新增 `_cache_path_for()` / `_load_cached()` / `_save_cache()` 三个函数，parse 过的 mark scheme 以 `PaperConfig.model_dump_json()` 缓存到 `~/.cie_helper/.cache/ms/<stem>.json`，下次 parse 直接读缓存
+- **`core/settings.py`**：`AppSettings` 新增 `ms_cache_dir` property + `init_dirs` 创建缓存目录
+
+### 3. Mark tab 性能修复
+
+- **`app.py`**：`pdfplumber.open()` + `detect_handwriting_pages()` + `segment_questions()` 原先在每次 Streamlit rerun 时都会重新执行（用户每按一个键都触发），导致严重卡顿。将三者合并到 `auto_pages_done` guard 内，结果缓存到 `st.session_state`，后续 rerun 直接读缓存。上传新 PDF 时清除缓存
+
+### 4. AI 评分 prompt 优化
+
+- **`modules/grader.py`**：`_MATH_GRADING_PROMPT` 新增"关键约束"部分：
+  - `reason` 字段限制为一句话（≤40 字），禁止写推理过程，附正确/错误示范
+  - `total` 必须等于 `awarded=true` 的数量之和，禁止 reason 说"应给分"但 `awarded=false` 的矛盾
+  - 要求"先做决定再填 JSON，不要在 reason 中犹豫或自我质疑"
+
+### 验证结果
+
+- `ruff check .`：通过
+- `pytest`：71/71 passed（1 个既存失败因 `.env` API key 不属于本次改动）
+- mypy：pdfplumber 相关 migration-specific 错误已解决
+
+---
+
 ## 2026-07-01 — Code review 发现的 10 个问题修复（TDD）
 
 **改动文件：** `app.py`, `core/config_store.py`, `core/settings.py`（净 diff 为空，见下）, `data/paper_page_config.json`, `modules/__init__.py`, `modules/mcq_parser.py`, `modules/page_segmenter.py`, `tests/test_page_segmenter.py`；新增 `tests/test_settings.py`, `tests/test_mcq_parser.py`, `tests/test_config_store.py`
