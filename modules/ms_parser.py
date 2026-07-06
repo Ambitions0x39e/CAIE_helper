@@ -24,6 +24,37 @@ from modules.pdf_renderer import render_pages_from_path
 
 QUESTION_ID_RE = re.compile(r"^(\d+)(?:\(([a-z])\))?$")
 
+_MAIN_NUM_RE = re.compile(r"\d+")
+_SUB_LETTER_RE = re.compile(r"[a-z]")
+_ROMAN_SUFFIX_RE = re.compile(r"\(([ivx]+)\)\s*$")
+_ROMAN_VALUES = {
+    "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5,
+    "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10,
+}
+
+
+def _question_sort_key(qid: str) -> tuple[int, str, int]:
+    """Sort key that orders question IDs numerically, not lexicographically.
+
+    Question IDs come in mixed notation from VL extraction — normalised
+    ("Q2a") and raw nested ("Q2(b)(i)") — so a plain string compare puts
+    "(" (ASCII 40) before letters, sorting "Q2(b)(i)" before "Q2a". This
+    extracts (main_number, sub_letter, sub_roman_index) so ordering is
+    numeric/alphabetic regardless of notation style.
+    """
+    body = qid[1:] if qid.startswith("Q") else qid
+    num_m = _MAIN_NUM_RE.search(body)
+    main_num = int(num_m.group()) if num_m else 0
+
+    rest = body[num_m.end():] if num_m else body
+    letter_m = _SUB_LETTER_RE.search(rest)
+    letter = letter_m.group() if letter_m else ""
+
+    roman_m = _ROMAN_SUFFIX_RE.search(body)
+    roman = _ROMAN_VALUES.get(roman_m.group(1), 0) if roman_m else 0
+
+    return (main_num, letter, roman)
+
 
 class QuestionConfig(BaseModel):
     max_marks: int
@@ -250,10 +281,7 @@ def _parse_all_vl(
     sorted_questions = dict(
         sorted(
             all_questions.items(),
-            key=lambda kv: (
-                int(re.search(r"\d+", kv[0]).group()),  # type: ignore[union-attr]
-                kv[0],
-            ),
+            key=lambda kv: _question_sort_key(kv[0]),
         )
     )
     return sorted_questions

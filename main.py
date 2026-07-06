@@ -1,6 +1,5 @@
-def main() -> None:
-    print("Hello from ciehelper!")
+import flet as ft
 
+from app_flet.main import main
 
-if __name__ == "__main__":
-    main()
+ft.app(main)
