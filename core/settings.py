@@ -5,14 +5,14 @@ from pathlib import Path
 from pydantic import EmailStr, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_ENV_PATH = Path(".env")
+_ENV_PATH = Path.home() / ".cie_helper" / ".env"
 
 
 class MailConfig(BaseSettings):
     """SMTP credentials — loaded from .env or environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_PATH),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -79,7 +79,7 @@ class GraderConfig(BaseSettings):
     """API credentials for the AI grader (Qwen-VL via Bailian)."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_PATH),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -139,10 +139,15 @@ class AppSettings(BaseSettings):
     def data_csv(self) -> Path:
         return self.base_dir / "data.csv"
 
+    @property
+    def ms_cache_dir(self) -> Path:
+        return self.base_dir / ".cache" / "ms"
+
     def init_dirs(self) -> None:
         """Create required directories if they don't exist."""
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.pdfs_dir.mkdir(parents=True, exist_ok=True)
+        self.ms_cache_dir.mkdir(parents=True, exist_ok=True)
 
 
 # Module-level singleton — import this directly in other modules
