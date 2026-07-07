@@ -13,13 +13,125 @@ from the parsed mark scheme, producing clip rectangles for cropped rendering.
 """
 from __future__ import annotations
 
+import io
 import re
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import (
+    LAParams,
+    LTChar,
+    LTContainer,
+    LTCurve,
+    LTLine,
+    LTRect,
+    LTTextLine,
+)
 from pdfplumber.page import Page
 from pdfplumber.pdf import PDF
 from pydantic import BaseModel
+
+# ── Neutral page model (pdfminer.six-backed) ──────────────────────
+
+
+@dataclass(frozen=True)
+class _SegWord:
+    """One word with pdfplumber-compatible geometry.
+
+    text may contain garbled ``(cid:N)`` glyphs — passed to
+    :func:`_parse_codepoints` unchanged. Coordinates are in points:
+    ``x0`` from the page left, ``top`` from the page top.
+    """
+
+    text: str
+    x0: float
+    top: float
+
+
+@dataclass(frozen=True)
+class _SegPage:
+    """One PDF page reduced to just what the segmenter needs."""
+
+    width: float
+    height: float
+    words: list[_SegWord]
+    has_curves: bool
+
+
+def _line_to_words(line: LTTextLine, page_height: float) -> list[_SegWord]:
+    """Group a pdfminer text line's chars into words on whitespace.
+
+    x0 = min char left edge; top = page_height - max char top edge
+    (pdfminer is bottom-left origin; pdfplumber ``top`` is from the top).
+    """
+    words: list[_SegWord] = []
+    current: list[LTChar] = []
+
+    def flush() -> None:
+        if current:
+            words.append(
+                _SegWord(
+                    text="".join(c.get_text() for c in current),
+                    x0=min(c.x0 for c in current),
+                    top=page_height - max(c.y1 for c in current),
+                )
+            )
+            current.clear()
+
+    for obj in line:
+        if isinstance(obj, LTChar) and not obj.get_text().isspace():
+            current.append(obj)
+        else:  # LTAnno or whitespace LTChar → word boundary
+            flush()
+    flush()
+    return words
+
+
+def _collect(
+    container: LTContainer,  # type: ignore[type-arg]
+    page_height: float,
+    words: list[_SegWord],
+    curve_flag: list[bool],
+) -> None:
+    """Recursively gather words and detect bezier-curve content."""
+    for element in container:
+        if isinstance(element, LTTextLine):
+            words.extend(_line_to_words(element, page_height))
+        elif isinstance(element, LTCurve) and not isinstance(
+            element, LTLine | LTRect
+        ):
+            curve_flag[0] = True
+        elif isinstance(element, LTContainer):
+            _collect(element, page_height, words, curve_flag)
+
+
+def _load_pages(source: str | bytes) -> list[_SegPage]:
+    """Load a PDF (path or raw bytes) into neutral pages via pdfminer.six."""
+    laparams = LAParams()
+    if isinstance(source, bytes):
+        layouts = list(extract_pages(io.BytesIO(source), laparams=laparams))
+    else:
+        with open(source, "rb") as fh:
+            layouts = list(extract_pages(fh, laparams=laparams))
+
+    pages: list[_SegPage] = []
+    for layout in layouts:
+        height = float(layout.height)
+        words: list[_SegWord] = []
+        curve_flag = [False]
+        _collect(layout, height, words, curve_flag)
+        pages.append(
+            _SegPage(
+                width=float(layout.width),
+                height=height,
+                words=words,
+                has_curves=curve_flag[0],
+            )
+        )
+    return pages
+
 
 # ── Models ────────────────────────────────────────────────────────
 
