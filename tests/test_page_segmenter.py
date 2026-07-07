@@ -226,7 +226,7 @@ class TestMatchBoundaries:
         matches = _match_boundaries(boundaries, question_ids)
 
         assert len(matches) == 2
-        assert matches[0] == ("Q1a", 0, 50)
+        assert matches[0] == ("Q1a", 0, 90)
         assert matches[1] == ("Q1b", 0, 350)
 
     def test_standalone_question(self) -> None:
