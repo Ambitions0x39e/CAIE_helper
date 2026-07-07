@@ -1,6 +1,7 @@
 """Tests for modules.page_segmenter using synthetic PDFs."""
 from __future__ import annotations
 
+import io
 import tempfile
 from types import SimpleNamespace
 
@@ -18,10 +19,27 @@ from modules.page_segmenter import (
     _build_regions,
     _detect_format,
     _extract_boundaries,
+    _load_pages,
     _match_boundaries,
     segment_questions,
     validate_regions,
 )
+
+
+def _make_pdf_bytes(
+    pages: list[list[tuple[float, float, str]]],
+    width: float = 612,
+    height: float = 792,
+) -> bytes:
+    """Like _make_doc but returns raw PDF bytes (each page: (x, y, text) spans)."""
+    pdf = FPDF(unit="pt", format=(width, height))
+    pdf.set_auto_page_break(auto=False)
+    for spans in pages:
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=10.8)
+        for x, y, text in spans:
+            pdf.text(x, y, text)
+    return bytes(pdf.output())
 
 # ── Helpers ────────────────────────────────────────────────────────
 
@@ -81,6 +99,38 @@ def _make_cie_page(
 def _sub_label(letter: str) -> str:
     """Create a garbled sub-question label starting with 0xa8."""
     return chr(0xA8) + letter + chr(0xAA) + " text"
+
+
+# ── Tests: pdfminer neutral loader ────────────────────────────────
+
+class TestLoadPages:
+    def test_words_match_pdfplumber_geometry(self) -> None:
+        pdf_bytes = _make_pdf_bytes(
+            [[(72.4, 100.0, "Hello"), (300.0, 100.0, "World")]]
+        )
+
+        seg_pages = _load_pages(pdf_bytes)
+        assert len(seg_pages) == 1
+        assert abs(seg_pages[0].width - 612) < 1
+        seg_words = {
+            w.text: (round(w.x0, 1), round(w.top, 1)) for w in seg_pages[0].words
+        }
+
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pp:
+            pp_words = {
+                w["text"]: (round(w["x0"], 1), round(w["top"], 1))
+                for w in pp.pages[0].extract_words()
+            }
+
+        # Same words, same x0/top (within 1pt) as pdfplumber.
+        for text, (x0, top) in pp_words.items():
+            assert text in seg_words, f"missing word {text!r}: {seg_words}"
+            assert abs(seg_words[text][0] - x0) <= 1.0
+            assert abs(seg_words[text][1] - top) <= 1.0
+
+    def test_has_curves_false_for_text_only(self) -> None:
+        pages = _load_pages(_make_pdf_bytes([[(72.4, 100.0, "text")]]))
+        assert pages[0].has_curves is False
 
 
 # ── Tests: boundary detection ─────────────────────────────────────
