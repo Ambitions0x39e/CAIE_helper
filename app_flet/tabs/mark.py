@@ -557,26 +557,28 @@ def build_mark_tab(
                 pc = state.paper_config
                 if pc is None:
                     return
+                # Page count still comes from pdfplumber (desktop); segmentation
+                # is pdfminer-backed (iOS-safe) and takes the path directly.
                 with pdfplumber.open(path) as answer_pdf:
                     state.answer_total_pages = len(answer_pdf.pages)
-                    q_ids = list(pc.questions.keys())
-                    regions = segment_questions(answer_pdf, q_ids)
-                    _matched, _unmatched = validate_regions(
-                        regions, q_ids,
+                q_ids = list(pc.questions.keys())
+                regions = segment_questions(path, q_ids)
+                _matched, _unmatched = validate_regions(
+                    regions, q_ids,
+                )
+                auto_pages: dict[str, str] = {}
+                auto_clips: dict[str, list[PageClip]] = {}
+                for r in regions:
+                    page_nums = sorted(
+                        {c.page_idx + 1 for c in r.clips}
                     )
-                    auto_pages: dict[str, str] = {}
-                    auto_clips: dict[str, list[PageClip]] = {}
-                    for r in regions:
-                        page_nums = sorted(
-                            {c.page_idx + 1 for c in r.clips}
-                        )
-                        auto_pages[r.question_id] = ",".join(
-                            str(p) for p in page_nums
-                        )
-                        auto_clips[r.question_id] = r.clips
-                    state.auto_pages = auto_pages
-                    state.auto_clips = auto_clips
-                    state.auto_pages_done = True
+                    auto_pages[r.question_id] = ",".join(
+                        str(p) for p in page_nums
+                    )
+                    auto_clips[r.question_id] = r.clips
+                state.auto_pages = auto_pages
+                state.auto_clips = auto_clips
+                state.auto_pages_done = True
                 _rebuild()
             except Exception as exc:
                 show_snack(
