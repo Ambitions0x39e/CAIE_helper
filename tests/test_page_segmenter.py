@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import io
-import tempfile
 from types import SimpleNamespace
 
 import pdfplumber
 import pytest
 from fpdf import FPDF
-from pdfplumber.pdf import PDF
 
 from modules.page_segmenter import (
     PageClip,
@@ -21,6 +19,7 @@ from modules.page_segmenter import (
     _extract_boundaries,
     _load_pages,
     _match_boundaries,
+    _SegPage,
     segment_questions,
     validate_regions,
 )
@@ -47,23 +46,13 @@ def _make_doc(
     pages: list[list[tuple[float, float, str]]],
     width: float = 612,
     height: float = 792,
-) -> PDF:
-    """Create a synthetic PDF with text at specific positions.
+) -> list[_SegPage]:
+    """Create a synthetic PDF and load it into the neutral page model.
 
     Each page is a list of (x, y, text) tuples where y is the baseline.
-    Returns an opened pdfplumber PDF (caller must close).
+    Returns list[_SegPage] (pdfminer.six-backed) — no resource to close.
     """
-    pdf = FPDF(unit="pt", format=(width, height))
-    pdf.set_auto_page_break(auto=False)
-    for spans in pages:
-        pdf.add_page()
-        pdf.set_font("Helvetica", size=10.8)
-        for x, y, text in spans:
-            pdf.text(x, y, text)
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        pdf.output(tmp.name)
-    return pdfplumber.open(tmp.name)
+    return _load_pages(_make_pdf_bytes(pages, width, height))
 
 
 def _make_cie_page(
@@ -160,7 +149,6 @@ class TestExtractBoundaries:
         subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
         assert len(mains) == 0
         assert len(subs) == 2
-        pdf.close()
 
     def test_detect_main_question(self) -> None:
         page_spans = _make_cie_page(main_q="Q1")
@@ -170,7 +158,6 @@ class TestExtractBoundaries:
         mains = [b for b in boundaries if b.kind == _BoundaryKind.MAIN]
         assert len(mains) == 1
         assert mains[0].page_idx == 0
-        pdf.close()
 
     def test_detect_sub_question(self) -> None:
         page_spans = _make_cie_page(
@@ -184,7 +171,6 @@ class TestExtractBoundaries:
         assert len(subs) == 2
         assert subs[0].y == pytest.approx(100.0, abs=15)
         assert subs[1].y == pytest.approx(350.0, abs=15)
-        pdf.close()
 
     def test_context_line_ignored(self) -> None:
         """A len=1 span at x=72.4 without a \\xa8 companion is not a SUB."""
@@ -200,7 +186,6 @@ class TestExtractBoundaries:
 
         subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
         assert len(subs) == 0
-        pdf.close()
 
     def test_footer_excluded(self) -> None:
         page_spans = [
@@ -212,7 +197,6 @@ class TestExtractBoundaries:
 
         assert len(boundaries) == 1
         assert boundaries[0].y == pytest.approx(53.0, abs=15)
-        pdf.close()
 
     def test_skip_pages(self) -> None:
         page0 = _make_cie_page(main_q="Q0")
@@ -222,14 +206,12 @@ class TestExtractBoundaries:
 
         assert len(boundaries) == 1
         assert boundaries[0].page_idx == 1
-        pdf.close()
 
     def test_no_text_page(self) -> None:
         """A page with no text spans yields no boundaries."""
         pdf = _make_doc([[]])
         boundaries = _extract_boundaries(pdf, skip_pages=set())
         assert boundaries == []
-        pdf.close()
 
 
 class TestBuildCharMapping:
@@ -241,7 +223,6 @@ class TestBuildCharMapping:
         page2 = [(306.0, 30.0, "C")]
         pdf = _make_doc([page0, page1, page2])
         mapping = _build_char_mapping(pdf)
-        pdf.close()
 
         assert mapping is not None
         assert mapping[ord("A")] == "1"
@@ -257,7 +238,6 @@ class TestBuildCharMapping:
         page3 = [(306.0, 30.0, "C")]
         pdf = _make_doc([page0, page1, page2, page3])
         mapping = _build_char_mapping(pdf)
-        pdf.close()
 
         assert mapping is not None
         assert ord("X") not in mapping
@@ -401,10 +381,11 @@ class TestSegmentQuestions:
         page1 = _make_cie_page(
             main_q="Q2",
         )
-        pdf = _make_doc([page0, page1])
+        pdf_bytes = _make_pdf_bytes([page0, page1])
 
-        regions = segment_questions(pdf, ["Q1a", "Q1b", "Q2"], skip_pages=set())
-        pdf.close()
+        regions = segment_questions(
+            pdf_bytes, ["Q1a", "Q1b", "Q2"], skip_pages=set()
+        )
 
         assert len(regions) == 3
         assert regions[0].question_id == "Q1a"
@@ -414,16 +395,14 @@ class TestSegmentQuestions:
     def test_default_skips_first_page(self) -> None:
         page0 = _make_cie_page(main_q="XX")
         page1 = _make_cie_page(main_q="Q1")
-        pdf = _make_doc([page0, page1])
+        pdf_bytes = _make_pdf_bytes([page0, page1])
 
-        regions = segment_questions(pdf, ["Q1"])
-        pdf.close()
+        regions = segment_questions(pdf_bytes, ["Q1"])
 
         assert len(regions) == 1
         assert regions[0].clips[0].page_idx == 1
 
     def test_empty_page_returns_empty(self) -> None:
-        pdf = _make_doc([[]])
-        regions = segment_questions(pdf, ["Q1", "Q2"], skip_pages=set())
-        pdf.close()
+        pdf_bytes = _make_pdf_bytes([[]])
+        regions = segment_questions(pdf_bytes, ["Q1", "Q2"], skip_pages=set())
         assert regions == []
