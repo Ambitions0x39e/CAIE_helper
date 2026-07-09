@@ -1,0 +1,60 @@
+"""Render round-trip harness for the PdfRenderer extension.
+
+Reads a real PDF, renders (1) a full page and (2) a cropped vertical slice via
+the native pdfrx-backed service, and shows both. Proves the Python<->Dart
+bytes round-trip and the point->pixel crop mapping on desktop before iOS.
+
+Set PDF_PATH to a PDF on disk. On desktop it can be an absolute path.
+"""
+import base64
+
+import flet as ft
+
+from flet_pdf_render import PdfRenderer, RenderClip
+
+PDF_PATH = r"D:/repos/CieHelperWin/9702_s25_qp_21.pdf.pdf"
+
+
+def main(page: ft.Page):
+    page.title = "PdfRenderer round-trip test"
+    page.scroll = ft.ScrollMode.AUTO
+
+    renderer = PdfRenderer()
+    page.services.append(renderer)
+
+    status = ft.Text("Rendering…", size=14)
+    images_col = ft.Column()
+    page.add(status, images_col)
+
+    async def do_render():
+        try:
+            with open(PDF_PATH, "rb") as f:
+                pdf = f.read()
+
+            # (1) full page 2 (0-indexed page 1); a4/letter height ~792pt
+            # (2) a cropped top slice of page 2 (points, top-origin)
+            clips = [
+                RenderClip(page=1, y_top=0.0, y_bottom=792.0),
+                RenderClip(page=1, y_top=60.0, y_bottom=300.0),
+            ]
+            pngs = await renderer.render_regions(pdf, clips, dpi=150)
+
+            status.value = f"OK — {len(pngs)} images rendered"
+            for i, png in enumerate(pngs):
+                b64 = base64.b64encode(png).decode()
+                images_col.controls.append(
+                    ft.Column([
+                        ft.Text(f"image {i}: {len(png)} bytes", size=12),
+                        ft.Image(src_base64=b64, width=400, border_radius=4),
+                    ])
+                )
+            page.update()
+        except Exception as exc:
+            status.value = f"FAIL: {type(exc).__name__}: {exc}"
+            status.color = ft.Colors.RED
+            page.update()
+
+    page.run_task(do_render)
+
+
+ft.run(main)
