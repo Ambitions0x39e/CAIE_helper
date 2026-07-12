@@ -49,6 +49,11 @@ module = ["pandas", "pandas.*", "requests", "requests.*", "pdfplumber", "pdfplum
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# Local Flet extension (extensions/flet_pdf_render) — wired as a build dep in 2B.3.
+module = ["flet_pdf_render", "flet_pdf_render.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
 
