@@ -6,24 +6,39 @@ readme = "README.md"
 requires-python = ">=3.13"
 
 dependencies = [
-    "streamlit>=1.35.0",
+    # Runtime deps packaged for iOS — keep this list pure Python / iOS-wheel-safe.
+    # NB: plain "flet" (not flet[all]) — the [all] extra drags in flet-cli ->
+    # watchdog, which has no iOS wheel and breaks `flet build ipa`.
+    "flet>=0.85.3",
+    "flet-pdf-render",  # local native pdfrx render extension
     "pandas>=2.2.0",
     "pydantic[email]>=2.7.0",
     "pydantic-settings>=2.3.0",
     "requests>=2.32.0",
-    "pdfplumber>=0.11.0",
+    "pdfminer.six>=20240706",  # segmentation + text extraction (was via pdfplumber)
     "python-dotenv>=1.0.0",
     "openai>=1.30.0",
     "pyyaml>=6.0",
-    "flet[all]>=0.85.3",
 ]
 
 [project.optional-dependencies]
+# Legacy Streamlit app (app.py, pages/*) + grade-threshold parsing. NOT part of
+# the Flet app and NOT iOS-safe (pdfplumber -> pypdfium2 has no iOS wheel).
+legacy = [
+    "streamlit>=1.35.0",
+    "pdfplumber>=0.11.0",
+]
 dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "pytest>=8.2.0",
 ]
+
+[tool.flet.dev_packages]
+flet-pdf-render = "extensions/flet_pdf_render"
+
+[tool.uv.sources]
+flet-pdf-render = { path = "extensions/flet_pdf_render", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -45,7 +60,10 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pandas", "pandas.*", "requests", "requests.*", "pdfplumber", "pdfplumber.*"]
+module = [
+    "pandas", "pandas.*", "requests", "requests.*",
+    "pdfplumber", "pdfplumber.*", "streamlit", "streamlit.*",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -66,4 +84,11 @@ dev = [
     "ruff>=0.15.8",
     "fpdf2>=2.8.0",
     "mypy>=1.10.0",
+    # flet build/run tooling — local only, NOT packaged for iOS (watchdog).
+    "flet-cli>=0.85.3",
+    "flet-desktop>=0.85.3",
+    # Legacy deps needed to run the full test suite locally (segmenter fidelity
+    # check compares pdfminer vs pdfplumber; visualizer tests need streamlit).
+    "pdfplumber>=0.11.0",
+    "streamlit>=1.35.0",
 ]

@@ -8,19 +8,23 @@ vision-language model, and parses the structured JSON response into
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pdfplumber
 from openai import OpenAI
-from pdfplumber.pdf import PDF
+from pdfminer.high_level import extract_text
 from pydantic import BaseModel
 
 from core.models import PaperType
 from core.settings import GraderConfig
-from modules.pdf_renderer import render_pages_from_path
+from modules.renderer import page_count, to_pdf_bytes
+
+if TYPE_CHECKING:
+    from modules.renderer import NativeRenderer
 
 QUESTION_ID_RE = re.compile(r"^(\d+)(?:\(([a-z])\))?$")
 
@@ -81,9 +85,12 @@ def normalize_question_id(raw: str) -> str:
     return f"Q{raw}"
 
 
-def _extract_paper_info(pdf: PDF) -> tuple[str, int]:
-    """Extract paper_id and total_marks from the cover page via text."""
-    text = pdf.pages[0].extract_text() or ""
+def _extract_paper_info(pdf_path: str | Path) -> tuple[str, int]:
+    """Extract paper_id and total_marks from the cover page via text.
+
+    Uses pdfminer.six (pure Python, iOS-safe) on the first page only.
+    """
+    text = extract_text(io.BytesIO(to_pdf_bytes(pdf_path)), page_numbers=[0]) or ""
     paper_id = ""
     total_marks = 0
 
@@ -233,6 +240,7 @@ def _merge_questions(
 def _parse_all_vl(
     pdf_path: str | Path,
     grader_config: GraderConfig,
+    renderer: NativeRenderer,
     start_page: int = 6,
     batch_size: int = 2,
     on_progress: Callable[[int, int], None] | None = None,
@@ -255,7 +263,9 @@ def _parse_all_vl(
     Raises:
         RuntimeError: If extraction fails or returns no questions.
     """
-    all_pngs = render_pages_from_path(pdf_path, start_page, dpi=grader_config.dpi)
+    pdf_bytes = to_pdf_bytes(pdf_path)
+    pages = list(range(start_page, page_count(pdf_bytes) + 1))
+    all_pngs = renderer.render_pages(pdf_bytes, pages, dpi=grader_config.dpi)
     if not all_pngs:
         raise RuntimeError(
             f"No pages to render from page {start_page} onward"
@@ -321,6 +331,7 @@ def parse_mark_scheme(
     grader_config: GraderConfig | None = None,
     start_page: int = 6,
     on_progress: Callable[[int, int], None] | None = None,
+    renderer: NativeRenderer | None = None,
 ) -> PaperConfig:
     """Parse a mark scheme PDF into structured question configs.
 
@@ -359,13 +370,17 @@ def parse_mark_scheme(
         raise ValueError(
             "grader_config is required for MATH mark scheme parsing"
         )
+    if renderer is None:
+        raise ValueError(
+            "renderer is required for MATH mark scheme parsing"
+        )
 
-    with pdfplumber.open(str(pdf_path)) as pdf:
-        paper_id, total_marks = _extract_paper_info(pdf)
+    paper_id, total_marks = _extract_paper_info(pdf_path)
 
     questions = _parse_all_vl(
         pdf_path,
         grader_config,
+        renderer,
         start_page=start_page,
         on_progress=on_progress,
     )

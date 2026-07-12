@@ -4,7 +4,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import flet as ft
-import pdfplumber
 
 from app_flet.components.widgets import metric_card, success_banner
 from core.models import PaperType
@@ -13,8 +12,6 @@ from modules.grader import (
     QuestionResult,
     grade_question,
     parse_grading_result,
-    render_pages,
-    render_question_regions,
 )
 from modules.mcq_parser import (
     detect_student_answers,
@@ -23,6 +20,7 @@ from modules.mcq_parser import (
 )
 from modules.ms_parser import parse_mark_scheme
 from modules.page_segmenter import PageClip, segment_questions, validate_regions
+from modules.renderer import NativeRenderer, page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
@@ -377,6 +375,9 @@ def build_mark_tab(
                     grader_config=state.grader_config,
                     start_page=start_page_ref[0],
                     on_progress=_on_progress,
+                    renderer=NativeRenderer(
+                        state.pdf_renderer, page.session.connection.loop,
+                    ),
                 )
                 state.paper_config = pc
                 state.paper_type = pt.value
@@ -557,10 +558,8 @@ def build_mark_tab(
                 pc = state.paper_config
                 if pc is None:
                     return
-                # Page count still comes from pdfplumber (desktop); segmentation
-                # is pdfminer-backed (iOS-safe) and takes the path directly.
-                with pdfplumber.open(path) as answer_pdf:
-                    state.answer_total_pages = len(answer_pdf.pages)
+                # Page count + segmentation both pdfminer-backed (iOS-safe).
+                state.answer_total_pages = page_count(path)
                 q_ids = list(pc.questions.keys())
                 regions = segment_questions(path, q_ids)
                 _matched, _unmatched = validate_regions(
@@ -787,49 +786,48 @@ def build_mark_tab(
             total_max = 0
 
             try:
-                with pdfplumber.open(
-                    state.answer_pdf_path,  # type: ignore[arg-type]
-                ) as answer_pdf:
-                    for i, qid in enumerate(questions_to_grade):
-                        progress_bar.value = (
-                            i / len(questions_to_grade)
-                        )
-                        progress_text.value = f"正在批改 {qid}…"
-                        page.update()
-
-                        qcfg = pc.questions[qid]
-                        q_pages = assignments[qid]
-                        clips_for_q = state.auto_clips.get(qid)
-
-                        if clips_for_q:
-                            images = render_question_regions(
-                                answer_pdf, clips_for_q,
-                                dpi=grade_cfg.dpi,
-                            )
-                        else:
-                            images = render_pages(
-                                answer_pdf, q_pages,
-                                dpi=grade_cfg.dpi,
-                            )
-
-                        raw = grade_question(
-                            config=grade_cfg,
-                            images=images,
-                            question_id=qid,
-                            mark_scheme=qcfg.mark_scheme,
-                            max_marks=qcfg.max_marks,
-                            paper_type=PaperType(
-                                state.paper_type or "math"
-                            ),
-                        )
-                        qr = parse_grading_result(raw)
-                        results.append(qr)
-                        total_score += qr.total
-                        total_max += qr.max
-
-                    progress_bar.value = 1.0
-                    progress_text.value = "批改完成!"
+                renderer = NativeRenderer(
+                    state.pdf_renderer, page.session.connection.loop,
+                )
+                pdf_bytes = to_pdf_bytes(state.answer_pdf_path)  # type: ignore[arg-type]
+                for i, qid in enumerate(questions_to_grade):
+                    progress_bar.value = (
+                        i / len(questions_to_grade)
+                    )
+                    progress_text.value = f"正在批改 {qid}…"
                     page.update()
+
+                    qcfg = pc.questions[qid]
+                    q_pages = assignments[qid]
+                    clips_for_q = state.auto_clips.get(qid)
+
+                    if clips_for_q:
+                        images = renderer.render_regions(
+                            pdf_bytes, clips_for_q, dpi=grade_cfg.dpi,
+                        )
+                    else:
+                        images = renderer.render_pages(
+                            pdf_bytes, q_pages, dpi=grade_cfg.dpi,
+                        )
+
+                    raw = grade_question(
+                        config=grade_cfg,
+                        images=images,
+                        question_id=qid,
+                        mark_scheme=qcfg.mark_scheme,
+                        max_marks=qcfg.max_marks,
+                        paper_type=PaperType(
+                            state.paper_type or "math"
+                        ),
+                    )
+                    qr = parse_grading_result(raw)
+                    results.append(qr)
+                    total_score += qr.total
+                    total_max += qr.max
+
+                progress_bar.value = 1.0
+                progress_text.value = "批改完成!"
+                page.update()
 
                 state.grading_results = results  # type: ignore[assignment]
                 state.score_overrides = {
@@ -1284,10 +1282,14 @@ def build_mark_tab(
                 page.update()
 
             try:
+                renderer = NativeRenderer(
+                    state.pdf_renderer, page.session.connection.loop,
+                )
                 detected, undetected = detect_student_answers(
                     state.mcq_qp_path,  # type: ignore[arg-type]
                     pc,
                     gc,
+                    renderer,
                     on_progress=_on_progress,
                     source_filename=state.mcq_qp_filename,
                 )
