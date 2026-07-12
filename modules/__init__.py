@@ -1,56 +1,12 @@
-from modules.downloader import (
-    DownloadRequest,
-    DownloadResult,
-    DownloadSource,
-    PaperDownloader,
-)
-from modules.mailer import GoodNotesMailer, MailRequest, MailResult
-from modules.manager import (
-    DeleteRequest,
-    DeleteResult,
-    OpenResult,
-    PaperManager,
-    ScoreUpdate,
-    UpdateResult,
-)
-from modules.mcq_parser import (
-    detect_student_answers,
-    is_valid_manual_answer,
-    parse_mcq_mark_scheme,
-    score_mcq_answers,
-)
-from modules.page_segmenter import (
-    PageClip,
-    QuestionRegion,
-    segment_questions,
-    validate_regions,
-)
-from modules.pdf_renderer import render_pages_from_path, render_pdf_pages
-from modules.visualizer import PaperVisualizer
+"""Business-logic layer.
 
-__all__ = [
-    "detect_student_answers",
-    "is_valid_manual_answer",
-    "parse_mcq_mark_scheme",
-    "score_mcq_answers",
-    "DownloadRequest",
-    "DownloadResult",
-    "DownloadSource",
-    "PaperDownloader",
-    "GoodNotesMailer",
-    "MailRequest",
-    "MailResult",
-    "DeleteRequest",
-    "DeleteResult",
-    "OpenResult",
-    "PaperManager",
-    "ScoreUpdate",
-    "UpdateResult",
-    "PageClip",
-    "QuestionRegion",
-    "segment_questions",
-    "validate_regions",
-    "PaperVisualizer",
-    "render_pdf_pages",
-    "render_pages_from_path",
-]
+Intentionally NO eager re-exports. Importing a single submodule (e.g.
+``modules.page_segmenter``) must not drag in heavy, platform-specific
+dependencies from sibling submodules — the Streamlit-based ``visualizer``
+and the pdfplumber-based ``pdf_renderer`` have no iOS wheels and would make
+every ``modules.*`` import fail on iOS (and require ``streamlit`` everywhere).
+
+Import what you need directly, e.g. ``from modules.page_segmenter import
+segment_questions``. Nothing in the codebase relies on package-level
+re-exports (``from modules import X``), so this keeps each import minimal.
+"""
