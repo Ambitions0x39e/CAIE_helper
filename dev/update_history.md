@@ -2,7 +2,30 @@
 
 ---
 
-## 2026-07-06 — Analytics 折线图改用 flet.canvas 原生绘制（去除 plotly/kaleido）
+## 2026-07-12 — Phase 2 part 1：modules 解耦（2A）+ pdfrx 原生渲染 Flet 扩展（2B.1）
+
+**改动文件：** `modules/__init__.py`, `tests/test_modules_import.py`（新增）, `extensions/flet_pdf_render/`（新增整个扩展）
+
+### 功能说明
+
+延续 iOS 迁移：Phase 1 已把题目分割从 pdfplumber 迁到 pdfminer.six，Phase 2 要把**渲染**也迁离 pdfplumber（`pypdfium2` 无 iOS wheel），改用 Flet 自定义 Dart 扩展 + pdfrx（PDFium/PDFKit 原生）。本次完成两块:让 `modules` 能在无 streamlit/pdfplumber 环境下 import(2A)，以及写出并端到端验证了 pdfrx 渲染扩展(2B.1)。尚未接入 app（2B.2/2B.3/2B.4 待做）。
+
+### 2A — 解耦 `modules/__init__.py`
+
+- **`modules/__init__.py`**：原来 eager import 了所有子模块（含 Streamlit 版 `visualizer`、pdfplumber 版 `pdf_renderer`），导致 `import modules.page_segmenter` 就会拖进 streamlit + pdfplumber，iOS 上直接崩、且 streamlit 变 optional 后 pytest 收集就报错。改为**不做任何 eager re-export**（全仓库无人用 `from modules import X`，直接 import 子模块即可）。
+- **`tests/test_modules_import.py`**（新增）：子进程 import guard，断言 `import modules.page_segmenter`/`modules.grader` 不会把 streamlit 拉进 `sys.modules`。
+
+### 2B.1 — pdfrx 原生渲染 Flet 扩展（`extensions/flet_pdf_render/`）
+
+- **Python 侧**：`PdfRenderer(ft.Service)` + `RenderClip`，`render_regions(pdf: bytes, clips, dpi) -> list[bytes]`，经 `_invoke_method("render_regions", …)` 把 PDF 字节和裁剪矩形传给 Dart，拿回每个区域的 PNG 字节。
+- **Dart 侧**：`PdfRendererService(FletService)`，`PdfDocument.openData(bytes)` 打开，`page.render(x,y,width,height,fullWidth,fullHeight)` 渲染每个全宽竖直切片（点→像素按 `dpi/72`，top-origin），`PdfImage.createImage() → toByteData(png)` 转 PNG，返回 `List<Uint8List>`。`Extension.createService` 按控件类型 `"PdfRenderer"` 注册。pubspec 加 `pdfrx: ^2.4.4`。
+- **端到端验证（Windows 桌面）**：对真实 9702 物理卷渲染，整页切片 `y=0..792pt @150dpi → 1275×1650px`、裁剪 `y=60..300pt → 1275×500px`，点→像素映射精确、渲染内容清晰正确。
+
+### 注意事项：Chinese Windows 上 `flet build windows` 三个坑
+
+1. **路径过长**：worktree 路径太深会触发 `C1083`/`FTK1011`（FileTracker 非长路径感知，junction 也没用因为工具会解析回真实路径）。需从**短的真实路径**构建（如 `robocopy` 到 `C:\pdfext` 再 build）。
+2. **UTF-8**：flet 日志打 emoji（✅🥳），GBK 控制台编码报 `UnicodeEncodeError`，表现为误导性的 "app.zip was not created"。需 `PYTHONIOENCODING=utf-8 PYTHONUTF8=1`。
+3. **exe 占用**：重建时旧 exe 还在跑会锁 `libcrypto-3.dll` → `PermissionError`，需先 `taskkill /F /IM <app>.exe`。
 
 **改动文件：** `app_flet/tabs/analytics.py`, `pyproject.toml`, `uv.lock`
 
