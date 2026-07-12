@@ -1,18 +1,18 @@
 """Render round-trip harness for the PdfRenderer extension.
 
 Reads a real PDF, renders (1) a full page and (2) a cropped vertical slice via
-the native pdfrx-backed service, and shows both. Proves the Python<->Dart
-bytes round-trip and the point->pixel crop mapping on desktop before iOS.
-
-Set PDF_PATH to a PDF on disk. On desktop it can be an absolute path.
+the native pdfrx-backed service, shows both, and saves the PNGs to OUT_DIR for
+inspection. Proves the Python<->Dart bytes round-trip and the point->pixel crop
+mapping on desktop before iOS.
 """
-import base64
+import os
 
 import flet as ft
 
 from flet_pdf_render import PdfRenderer, RenderClip
 
 PDF_PATH = r"D:/repos/CieHelperWin/9702_s25_qp_21.pdf.pdf"
+OUT_DIR = r"C:/pdfext/out"
 
 
 def main(page: ft.Page):
@@ -39,13 +39,16 @@ def main(page: ft.Page):
             ]
             pngs = await renderer.render_regions(pdf, clips, dpi=150)
 
+            os.makedirs(OUT_DIR, exist_ok=True)
             status.value = f"OK — {len(pngs)} images rendered"
             for i, png in enumerate(pngs):
-                b64 = base64.b64encode(png).decode()
+                out_path = os.path.join(OUT_DIR, f"img_{i}.png")
+                with open(out_path, "wb") as of:
+                    of.write(png)
                 images_col.controls.append(
                     ft.Column([
-                        ft.Text(f"image {i}: {len(png)} bytes", size=12),
-                        ft.Image(src_base64=b64, width=400, border_radius=4),
+                        ft.Text(f"image {i}: {len(png)} bytes -> {out_path}", size=12),
+                        ft.Image(src=png, width=400, border_radius=4),
                     ])
                 )
             page.update()
