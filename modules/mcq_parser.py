@@ -10,16 +10,21 @@ Two responsibilities:
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pdfplumber
-from pdfplumber.pdf import PDF
+from pdfminer.high_level import extract_text
 
 from core.settings import GraderConfig
 from modules.ms_parser import PaperConfig, QuestionConfig
+from modules.renderer import page_count, to_pdf_bytes
+
+if TYPE_CHECKING:
+    from modules.renderer import NativeRenderer
 
 _ANSWER_LETTERS = frozenset("ABCD")
 
@@ -125,7 +130,7 @@ def _resolve_skip_pages(source_stem: str) -> set[int]:
 
 
 def _build_page_batches(
-    pdf: PDF,
+    n_pages: int,
     skip_pages: set[int],
 ) -> list[list[int]]:
     """Return one batch per non-skipped page.
@@ -134,7 +139,7 @@ def _build_page_batches(
     from one page image, so page-level batching is both sufficient and simpler
     than question-level segmentation.
     """
-    return [[i] for i in range(len(pdf.pages)) if i not in skip_pages]
+    return [[i] for i in range(n_pages) if i not in skip_pages]
 
 
 # ── Public: mark scheme parsing ────────────────────────────────────────────
@@ -152,23 +157,22 @@ def parse_mcq_mark_scheme(pdf_path: str | Path) -> PaperConfig:
     path = Path(pdf_path)
     questions: dict[str, QuestionConfig] = {}
 
-    with pdfplumber.open(str(path)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-            i = 0
-            while i < len(lines) - 1:
-                if (
-                    re.fullmatch(r"\d+", lines[i])
-                    and lines[i + 1] in _ANSWER_LETTERS
-                ):
-                    qid = f"Q{lines[i]}"
-                    questions[qid] = QuestionConfig(
-                        max_marks=1, mark_scheme=lines[i + 1]
-                    )
-                    i += 2
-                else:
-                    i += 1
+    # pdfminer.six text extraction (pure Python, iOS-safe — no pdfplumber).
+    text = extract_text(io.BytesIO(to_pdf_bytes(path))) or ""
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    i = 0
+    while i < len(lines) - 1:
+        if (
+            re.fullmatch(r"\d+", lines[i])
+            and lines[i + 1] in _ANSWER_LETTERS
+        ):
+            qid = f"Q{lines[i]}"
+            questions[qid] = QuestionConfig(
+                max_marks=1, mark_scheme=lines[i + 1]
+            )
+            i += 2
+        else:
+            i += 1
 
     if not questions:
         raise ValueError(
@@ -192,6 +196,7 @@ def detect_student_answers(
     qp_pdf_path: str | Path,
     answer_key: PaperConfig,
     grader_config: GraderConfig,
+    renderer: NativeRenderer,
     dpi: int = 200,
     on_progress: Callable[[int, int], None] | None = None,
     source_filename: str | Path | None = None,
@@ -218,24 +223,23 @@ def detect_student_answers(
         student's selected letter, and ``undetected`` lists question IDs the VL
         could not find or was uncertain about.
     """
-    from modules.pdf_renderer import render_pdf_pages
-
     path = Path(qp_pdf_path)
     stem = Path(source_filename).stem if source_filename is not None else path.stem
     skip = _resolve_skip_pages(stem)
     q_ids = list(answer_key.questions.keys())
-    with pdfplumber.open(str(path)) as pdf:
-        page_batches = _build_page_batches(pdf, skip)
 
-        raw_detected: dict[str, str] = {}  # "1" → "C"
-        total = len(page_batches)
+    pdf_bytes = to_pdf_bytes(path)
+    page_batches = _build_page_batches(page_count(pdf_bytes), skip)
 
-        for idx, page_idxs in enumerate(page_batches):
-            if on_progress:
-                on_progress(idx + 1, total)
-            images = render_pdf_pages(pdf, [p + 1 for p in page_idxs], dpi=dpi)
-            batch_result = _call_vl(grader_config, images)
-            raw_detected.update(batch_result)
+    raw_detected: dict[str, str] = {}  # "1" → "C"
+    total = len(page_batches)
+
+    for idx, page_idxs in enumerate(page_batches):
+        if on_progress:
+            on_progress(idx + 1, total)
+        images = renderer.render_pages(pdf_bytes, [p + 1 for p in page_idxs], dpi=dpi)
+        batch_result = _call_vl(grader_config, images)
+        raw_detected.update(batch_result)
 
     # Normalise to Q-prefixed IDs and filter to known questions
     detected: dict[str, str] = {}

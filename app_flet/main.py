@@ -5,6 +5,7 @@ Run with:  uv run flet run app_flet
 from __future__ import annotations
 
 import flet as ft
+from flet_pdf_render import PdfRenderer
 
 from app_flet.components.dialogs import show_settings_dialog
 from app_flet.state import AppState
@@ -59,10 +60,12 @@ def main(page: ft.Page) -> None:
     snackbar = ft.SnackBar(ft.Text(""))
     page.overlay.append(snackbar)
 
-    # ── Shared file pickers (services — created once, reused) ───────
+    # ── Shared services (created once, reused) ──────────────────────
     ms_picker = ft.FilePicker()
     answer_picker = ft.FilePicker()
-    page.services.extend([ms_picker, answer_picker])
+    pdf_renderer = PdfRenderer()  # native pdfrx renderer (iOS-safe)
+    page.services.extend([ms_picker, answer_picker, pdf_renderer])
+    state.pdf_renderer = pdf_renderer
 
     def show_snack(msg: str, color: str = ft.Colors.AMBER) -> None:
         snackbar.content = ft.Text(msg)

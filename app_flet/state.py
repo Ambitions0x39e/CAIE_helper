@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from core.settings import GraderConfig, MailConfig
 from core.storage import CSVStore
 from modules.ms_parser import PaperConfig
 from modules.page_segmenter import PageClip
+
+if TYPE_CHECKING:
+    from flet_pdf_render import PdfRenderer
 
 
 @dataclass
@@ -13,6 +17,9 @@ class AppState:
     """Mutable application state shared across all tabs."""
 
     store: CSVStore = field(default_factory=CSVStore)
+
+    # Native PDF renderer service (pdfrx-backed; added to page.services once).
+    pdf_renderer: PdfRenderer | None = None
 
     # Credentials (loaded from .env on startup, editable via settings)
     mail_config: MailConfig | None = None

@@ -30,6 +30,11 @@ def to_pdf_bytes(source: str | bytes | Path) -> bytes:
     return Path(source).read_bytes()
 
 
+def page_count(source: str | bytes | Path) -> int:
+    """Number of pages in the PDF (via pdfminer — iOS-safe, no pdfplumber)."""
+    return len(_load_pages(to_pdf_bytes(source)))
+
+
 def full_page_clips(source: str | bytes | Path) -> list[PageClip]:
     """One full-page clip per page (page sizes read via pdfminer — iOS-safe)."""
     pages = _load_pages(to_pdf_bytes(source))

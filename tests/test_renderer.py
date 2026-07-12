@@ -12,7 +12,7 @@ from pathlib import Path
 from fpdf import FPDF
 
 from modules.page_segmenter import PageClip
-from modules.renderer import full_page_clips, to_pdf_bytes
+from modules.renderer import full_page_clips, page_count, to_pdf_bytes
 
 
 def _make_pdf_bytes(n_pages: int, width: float = 612, height: float = 792) -> bytes:
@@ -37,6 +37,10 @@ def test_to_pdf_bytes_reads_path() -> None:
         path = tmp.name
     assert to_pdf_bytes(path) == data
     assert to_pdf_bytes(Path(path)) == data
+
+
+def test_page_count() -> None:
+    assert page_count(_make_pdf_bytes(4)) == 4
 
 
 def test_full_page_clips_one_per_page() -> None:

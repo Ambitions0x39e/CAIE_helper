@@ -10,17 +10,14 @@ Ported from D:\\repos\\grader\\grader.py.
 from __future__ import annotations
 
 import base64
-import io
 import json
 import re
 
 from openai import OpenAI
-from pdfplumber.pdf import PDF
 from pydantic import BaseModel
 
 from core.models import PaperType
 from core.settings import GraderConfig
-from modules.page_segmenter import PageClip
 
 # ── Prompt registry — one template per paper type ──────────────
 
@@ -96,105 +93,6 @@ class GradingReport(BaseModel):
     total_score: int
     total_max: int
 
-
-def detect_handwriting_pages(
-    pdf: PDF,
-    *,
-    skip_first: int = 1,
-    curve_threshold: int = 50,
-    ink_annot_threshold: int = 3,
-) -> list[int]:
-    """Detect pages containing handwriting.
-
-    Uses three heuristics (any triggers detection):
-    1. Ink annotations — PDF annotation layer strokes (e.g. Apple
-       Pencil / stylus annotations). Most annotator apps store
-       handwriting here, not in the content stream.
-    2. Blue-ink drawings (GoodNotes export) — >10 blue strokes in
-       the content stream.
-    3. Curve-heavy drawings (digitally filled CIE papers) — pages
-       with bezier curve items above *curve_threshold*.
-
-    Args:
-        pdf: opened pdfplumber PDF.
-        skip_first: number of leading pages to skip (cover page).
-        curve_threshold: minimum bezier curve count to flag a page.
-        ink_annot_threshold: minimum ink annotations to flag a page.
-
-    Returns:
-        1-indexed page numbers with handwriting, sorted.
-    """
-    pages_with_hw: list[int] = []
-    for i in range(skip_first, len(pdf.pages)):
-        page = pdf.pages[i]
-
-        ink_count = sum(
-            1
-            for a in (page.annots or [])
-            if "InkList" in (a.get("data") or {})
-        )
-        if ink_count >= ink_annot_threshold:
-            pages_with_hw.append(i + 1)
-            continue
-
-        curve_count = len(page.curves)
-
-        blue_count = 0
-        for obj in page.curves + page.lines:
-            color = (
-                obj.get("non_stroking_color")
-                or obj.get("stroking_color")
-                or (0, 0, 0)
-            )
-            if isinstance(color, (list, tuple)) and len(color) == 3:
-                r, _g, b = color
-                if b > 0.4 and r < 0.1:
-                    blue_count += 1
-
-        if blue_count > 10 or curve_count > curve_threshold:
-            pages_with_hw.append(i + 1)
-    return pages_with_hw
-
-
-def render_pages(
-    pdf: PDF,
-    page_numbers: list[int],
-    dpi: int = 200,
-) -> list[bytes]:
-    """Render full pages to PNG images.
-
-    Thin wrapper around :func:`pdf_renderer.render_pdf_pages`.
-    """
-    from modules.pdf_renderer import render_pdf_pages
-
-    return render_pdf_pages(pdf, page_numbers, dpi=dpi)
-
-
-def render_question_regions(
-    pdf: PDF,
-    clips: list[PageClip],
-    dpi: int = 200,
-) -> list[bytes]:
-    """Render cropped question regions to PNG images.
-
-    Args:
-        pdf: opened pdfplumber PDF.
-        clips: list of PageClip objects (page_idx, y_top, y_bottom).
-        dpi: render resolution.
-
-    Returns:
-        List of PNG bytes, one per clip.
-    """
-    images = []
-    for clip in clips:
-        page = pdf.pages[clip.page_idx]
-        bbox = (0, clip.y_top, page.width, clip.y_bottom)
-        cropped = page.crop(bbox)
-        img = cropped.to_image(resolution=dpi)
-        buf = io.BytesIO()
-        img.original.save(buf, format="PNG")
-        images.append(buf.getvalue())
-    return images
 
 
 def grade_question(
