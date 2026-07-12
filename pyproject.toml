@@ -34,6 +34,16 @@ dev = [
     "pytest>=8.2.0",
 ]
 
+[tool.flet.app]
+# Dev-only dirs kept out of the packaged app. Critical: `extensions/` holds the
+# render extension SOURCE (its Python comes from the installed dep + its Dart
+# from the installed package's bundled data, so the source tree isn't needed in
+# the package) — and a stale example `build/` there has a self-nesting
+# `.pod/dist_macos/...` path that blows past the filesystem name-length limit
+# during the app copy. flet only excludes a TOP-LEVEL `build`, so exclude the
+# whole dev dirs by name.
+exclude = ["extensions", "spikes", "tests", "dev"]
+
 [tool.flet.dev_packages]
 flet-pdf-render = "extensions/flet_pdf_render"
 
