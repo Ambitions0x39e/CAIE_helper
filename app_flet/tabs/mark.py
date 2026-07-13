@@ -79,6 +79,23 @@ def build_mark_tab(
             content.controls.extend(_build_mcq_flow())
         page.update()
 
+    def _responsive_grid(
+        cells: list[ft.Control],
+        cell_width: int,
+        spacing: int = 8,
+    ) -> list[ft.Control]:
+        # Lay the fixed-width cells out in as many columns as the current
+        # screen width fits, chunked into explicit Rows. This is deterministic
+        # (unlike Row(wrap=True), which collapsed the nested-Row page inputs
+        # into a single overlapping column on iPad); the column count tracks
+        # page.width so it adapts from phone (2 cols) to iPad Pro (5-7 cols).
+        avail = int(page.width or 1024) - 40  # tab Container padding, 20/side
+        cols = max(1, (avail + spacing) // (cell_width + spacing))
+        return [
+            ft.Row(cells[i : i + cols], spacing=spacing)
+            for i in range(0, len(cells), cols)
+        ]
+
     # ══════════════════════════════════════════════════════════════
     #  Step 1: Mark Scheme
     # ══════════════════════════════════════════════════════════════
@@ -505,7 +522,7 @@ def build_mark_tab(
                 label_style=ft.TextStyle(color=ft.Colors.BLACK),
                 value=default_val,
                 hint_text="例: 2,3",
-                width=110,
+                expand=True,
                 color=ft.Colors.BLACK,
                 dense=True,
             )
@@ -517,17 +534,21 @@ def build_mark_tab(
                     _rebuild()
                 return _handler
 
-            cells.append(ft.Row([
-                tf,
-                ft.IconButton(
-                    ft.Icons.CLOSE, tooltip=f"移除 {qid}",
-                    icon_size=18, on_click=_make_del_handler(),
-                ),
-            ], spacing=0))
+            # Fixed-width cell so the responsive grid can compute columns; the
+            # TextField expands to fill it, leaving room for the delete button.
+            cells.append(ft.Container(
+                ft.Row([
+                    tf,
+                    ft.IconButton(
+                        ft.Icons.CLOSE, tooltip=f"移除 {qid}",
+                        icon_size=18, on_click=_make_del_handler(),
+                    ),
+                ], spacing=0),
+                width=158,  # TextField + IconButton (~48)
+            ))
 
-        # Wrap the fixed-width cells to as many per row as the screen fits,
-        # instead of a hard 5-per-row that overflows on a phone.
-        controls.append(ft.Row(cells, wrap=True, spacing=4, run_spacing=4))
+        # Dynamic columns-per-row based on the live screen width.
+        controls.extend(_responsive_grid(cells, 158))
 
         return controls
 
@@ -664,9 +685,8 @@ def build_mark_tab(
                 ),
                 width=130,
             ))
-        # Wrap to as many checkboxes per row as fit; hard 5-per-row overflows
-        # on a phone.
-        controls.append(ft.Row(q_checks, wrap=True, spacing=4, run_spacing=4))
+        # Dynamic columns-per-row based on the live screen width.
+        controls.extend(_responsive_grid(q_checks, 130))
 
         # Validation
         assignments = _collect_page_assignments()
