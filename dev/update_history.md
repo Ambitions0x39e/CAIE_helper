@@ -2,6 +2,40 @@
 
 ---
 
+## 2026-07-13 — Phase 2 part 2：全应用切换到原生 pdfrx 渲染、彻底移除 pdfplumber，iOS 端到端跑通
+
+**改动文件：** `modules/renderer.py`（新增）, `tests/test_renderer.py`（新增）, `modules/pdf_renderer.py`（删除）, `modules/grader.py`, `modules/mcq_parser.py`, `modules/ms_parser.py`, `app_flet/main.py`, `app_flet/state.py`, `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `app_flet/tabs/manage.py`, `pyproject.toml`, `uv.lock`
+
+### 功能说明
+
+承接 part 1（2A 解耦 + 2B.1 扩展）：把 app 的**全部渲染路径**接到原生 pdfrx 扩展上，删掉最后一个 pdfplumber 使用者，让整个 `app_flet` import 图彻底无 pdfplumber。至此 iOS 迁移的三大阻塞（画图 kaleido、分割 pdfplumber、渲染 pdfplumber）全部清除，`flet build ios-simulator` 打包成功且在模拟器上把「解析评分标准 → 分割答卷 → 渲染 → AI 批改 → 记录分数」完整流程跑通，**功能在 iOS 上全部可行**。
+
+### 2B.2 — 渲染抽象层 `modules/renderer.py`
+
+- **纯函数**（app 无关、单测覆盖）：`to_pdf_bytes(source)` 归一化 path/bytes；`page_count(source)`、`full_page_clips(source)` 经 pdfminer 读页数与页尺寸（iOS 安全，不碰 pdfplumber）。
+- **`NativeRenderer(service, loop)`**：把扩展里 async 的 `PdfRenderer` 服务桥接到**同步、后台线程**的批改循环——`asyncio.run_coroutine_threadsafe(coro, loop).result()`，loop 取自 `page.session.connection.loop`。提供 `render_regions(source, clips, dpi)` 和 `render_pages(source, page_numbers, dpi)`。
+
+### 2B.3 — 全应用切到原生渲染，删除 pdfplumber
+
+- **`app_flet/main.py` / `state.py`**：创建一个 `PdfRenderer()` 服务挂到 `page.services`，存到 `state.pdf_renderer`，全 app 复用。
+- **`mark.py`**：`_do_parse`/`_do_segment`/`_do_grade` 改用 `NativeRenderer`；页数用 `page_count`（pdfminer），分割用已迁好的 `segment_questions`（pdfminer），渲染用 native。
+- **`ms_parser.py` / `mcq_parser.py`**：这两处原本各自开 pdfplumber 渲染，改成接收 `NativeRenderer`；MCQ 文本提取也走 pdfminer。
+- **`grader.py`**：删除已死的 pdfplumber 渲染函数。
+- **删除 `modules/pdf_renderer.py`**（pdfplumber 版渲染器整文件移除）。
+- **`pyproject.toml`**：`flet[all]`→`flet`（`[all]` 会拖进 flet-cli→watchdog，无 iOS wheel）；pdfplumber/streamlit 降级到 `legacy` extra 与 dev group（仅本地跑旧 Streamlit app / 全量测试用）；runtime 依赖加 `pdfminer.six` 与本地扩展 `flet-pdf-render`。**app_flet import 图现已无 pdfplumber**（mypy/ruff/测试全绿）。
+
+### 2B.4 — iOS 打包解阻 + 响应式 UI 修复
+
+- **`[tool.flet.app] exclude = ["extensions", "spikes", "tests", "dev"]`**：`flet build` 只排顶层 `build/`，而扩展示例残留的 `build/` 里有自嵌套 `.pod/dist_macos/...` 超长路径，打包拷贝时 `errno 63 File name too long`。扩展的 Python 来自已安装依赖、Dart 来自已安装包的 bundled data，源码树无需进包，故整目录排除是安全的。
+- **响应式修复（`analytics.py`/`mark.py`/`manage.py`）**：手机窄屏下三个 tab 的定宽横向布局触发 RenderFlex overflow。趋势图 Canvas 从死写 600px 改为按 `page.width` 计算并夹在 280..600、外套横向滚动；per-paper-type 的 SegmentedButton 横向滚动；Mark 的 Step 2 页码输入 / Step 3 题目勾选从死写「每行 5 个」改 `wrap=True` 自适应；Manage 列表卡片把分数文本挪进可伸缩的左列，右侧只留定宽按钮，杜绝溢出。
+
+### 注意事项
+
+- 桥接用的 event loop 必须是 flet page 的 loop（`page.session.connection.loop`），批改在 `page.run_thread` 的后台线程里跑，用 `run_coroutine_threadsafe` 回到该 loop 才能调到 async 的扩展服务。
+- `tests/test_paper_type.py::test_grader_config_try_load_returns_none_when_missing` 在本机因 `~/.cie_helper/.env` 有真实凭证而失败，属环境相关、与本次改动无关。
+
+---
+
 ## 2026-07-12 — Phase 2 part 1：modules 解耦（2A）+ pdfrx 原生渲染 Flet 扩展（2B.1）
 
 **改动文件：** `modules/__init__.py`, `tests/test_modules_import.py`（新增）, `extensions/flet_pdf_render/`（新增整个扩展）
