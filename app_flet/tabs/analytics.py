@@ -188,6 +188,7 @@ def _build_syllabus_section(
     syl_id: str,
     syl_entry: Mapping[str, object],
     syl_df: pd.DataFrame,
+    chart_width: int,
 ) -> ft.ExpansionTile:
     syl_name = syl_entry.get("name", syl_id)
 
@@ -237,7 +238,10 @@ def _build_syllabus_section(
                 type_title, size=16,
                 weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
             ),
-            _trend_chart(type_df),
+            ft.Row(
+                [_trend_chart(type_df, width=chart_width)],
+                scroll=ft.ScrollMode.AUTO,
+            ),
             ft.Row([_score_table(type_df)], scroll=ft.ScrollMode.AUTO),
         ])
 
@@ -262,7 +266,10 @@ def _build_syllabus_section(
             allow_multiple_selection=False,
             on_change=_on_type_change,  # type: ignore[arg-type]
         )
-        header_controls.append(type_selector)
+        # Scroll horizontally so several paper types don't overflow on a phone.
+        header_controls.append(
+            ft.Row([type_selector], scroll=ft.ScrollMode.AUTO)
+        )
 
     panel_content = ft.Column(
         [*header_controls, ft.Divider(), type_content],
@@ -381,7 +388,13 @@ def build_analytics_tab(
         scroll=ft.ScrollMode.AUTO,
     )
 
-    # Per-syllabus sections
+    # Per-syllabus sections. Size the trend chart to the current screen: the
+    # tab has 20px padding each side and each syllabus panel adds 16px each
+    # side, so the usable inner width is roughly page.width - 72. Clamp to a
+    # sane range; the chart is also wrapped in a horizontal scroller so any
+    # residual mismatch scrolls instead of throwing a RenderFlex overflow.
+    chart_width = int(max(280, min(600, (page.width or 390) - 72)))
+
     config_store = ConfigStore()
     syllabus_config = config_store.load_syllabus_config()
     syllabus_ids = sorted(df["syllabus_id"].unique())
@@ -390,6 +403,7 @@ def build_analytics_tab(
         _build_syllabus_section(
             page, syl_id, syllabus_config.get(syl_id, {}),
             df[df["syllabus_id"] == syl_id].copy().reset_index(drop=True),
+            chart_width,
         )
         for syl_id in syllabus_ids
     ]

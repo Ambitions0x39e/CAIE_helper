@@ -525,10 +525,9 @@ def build_mark_tab(
                 ),
             ], spacing=0))
 
-        cols_per_row = 5
-        for row_start in range(0, len(cells), cols_per_row):
-            chunk = cells[row_start:row_start + cols_per_row]
-            controls.append(ft.Row(chunk, spacing=4))
+        # Wrap the fixed-width cells to as many per row as the screen fits,
+        # instead of a hard 5-per-row that overflows on a phone.
+        controls.append(ft.Row(cells, wrap=True, spacing=4, run_spacing=4))
 
         return controls
 
@@ -665,10 +664,9 @@ def build_mark_tab(
                 ),
                 width=130,
             ))
-        cols_per_row = 5
-        for row_start in range(0, len(q_checks), cols_per_row):
-            chunk = q_checks[row_start:row_start + cols_per_row]
-            controls.append(ft.Row(chunk, spacing=4))
+        # Wrap to as many checkboxes per row as fit; hard 5-per-row overflows
+        # on a phone.
+        controls.append(ft.Row(q_checks, wrap=True, spacing=4, run_spacing=4))
 
         # Validation
         assignments = _collect_page_assignments()

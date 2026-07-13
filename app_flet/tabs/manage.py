@@ -203,6 +203,9 @@ def build_manage_tab(
                 ft.Container(
                     ft.Row(
                         [
+                            # Left meta column flexes and keeps the score with
+                            # it, so only the fixed-width action buttons sit on
+                            # the right — the row can't overflow on a phone.
                             ft.Column(
                                 [
                                     ft.Row([
@@ -219,15 +222,19 @@ def build_manage_tab(
                                         ),
                                     ], spacing=4),
                                     ft.Text(
-                            timestamp_text,
-                            size=11,
-                            color=ft.Colors.GREY,
-                        ),
+                                        score_text,
+                                        size=13,
+                                        color=ft.Colors.BLACK,
+                                    ),
+                                    ft.Text(
+                                        timestamp_text,
+                                        size=11,
+                                        color=ft.Colors.GREY,
+                                    ),
                                 ],
                                 spacing=2,
                                 expand=True,
                             ),
-                            ft.Text(score_text, size=13, color=ft.Colors.BLACK),
                             ft.Row(_make_actions(record), spacing=0),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
