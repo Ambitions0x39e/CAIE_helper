@@ -2,6 +2,34 @@
 
 ---
 
+## 2026-07-14 — 大 PDF 批改修复 + 批改流程响应式布局收尾
+
+**改动文件：** `modules/renderer.py`, `tests/test_renderer.py`, `pyproject.toml`, `uv.lock`, `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `app_flet/tabs/manage.py`, `app_flet/components/widgets.py`
+
+### 大 PDF 批改失败根因 + 修复(核心)
+
+**症状:** iPad 上用一份真实 9700 GoodNotes 答卷(34MB、21 页高清扫描图)批改,点"开始批改"后有进度条但**出不来结果**。
+
+**逐层排除(在真实文件上):** 分割 27/27、嵌套题号 `Q1(a)(i)`、评分标准数据、批改 API 调用、结果解析、PDFium 渲染(0.26s/页)——**全部正常**。唯一挂的是渲染 RPC 传输。
+
+**根因:** `NativeRenderer.render_regions` 在批改循环里**每道题都把整份 34MB PDF 经 Flet Python↔Dart RPC 传一遍**;34MB 的 msgpack 负载(×题数、120s 超时)撑爆传输 → 渲染协程失败 → 批改循环抛异常 → 被 `批改失败` 吞掉 → `grading_results` 为空 → Step 4 不显示。9231 答卷小,从没碰到。
+
+**修复(即 Phase 3 当初 defer 的"页预抽取"优化——大 PDF 测试既然挂了就补上):** 新增 `modules/renderer.py` `_extract_pages(pdf, pages)`,用纯 Python **pypdf**(iOS 安全,新增 runtime 依赖)只抽出这道题 clip 涉及的那几页、重映射页码,再发给 Dart。每题 RPC 负载 **34MB → 2.6–4.6MB**;抽出页渲染与原页**逐字节相同**;`render_pages` 因委托给 `render_regions` 一并受益;空 clip 短路返回 `[]`。新增 2 个单测。**已真机验证:34MB 答卷现在能正常出批改结果。**
+
+### 响应式布局收尾(手机/iPad 窄屏 overflow)
+
+- **Mark Step 2 页码输入 / Step 3 题目勾选**:`ResponsiveRow` 的断点在 iPad 上塌成一列且重叠 → 换成 `_responsive_grid()`,按 `page.width` 实时算列数并切成定宽 `ft.Row`(手机 ~2–3 列、iPad ~4–8 列)。
+- **Step 4 批改结果**:① `metric_card`(总分/百分比/题数)原本死写 `110×85` 配 size-28 数值,`123/150`/`100.0%` 塞不下 → 宽度 132、去掉固定高度自适应、size-24 居中换行;② 每题对错理由 / 评语的 `Text` 在 `Row` 里没 `expand`,长中文横向溢出 → 加 `expand=True` + 顶部对齐,自动折行。
+- **Analytics / Manage**(前次已并入 part 2,此处并列记录):趋势图按屏宽 + 横向滚动、SegmentedButton 横向滚动、Manage 卡片分数并入可伸缩左列。
+
+### 注意事项
+
+- `page.width` 在建 tab 时读一次;旋转设备不会实时重排,需切走再切回。若要实时,加 `page.on_resized` 回调。
+- pypdf 读 GoodNotes 的畸形 xref 会打 warning,已在 `_extract_pages` 里把 `pypdf` logger 降到 ERROR。
+- 遗留:`ruff check .` / `mypy .` 各 1 个错,均在 `extensions/.../examples/.../main.py`(dev 示例,早于本次),app 代码树干净。
+
+---
+
 ## 2026-07-13 — Phase 2 part 2：全应用切换到原生 pdfrx 渲染、彻底移除 pdfplumber，iOS 端到端跑通
 
 **改动文件：** `modules/renderer.py`（新增）, `tests/test_renderer.py`（新增）, `modules/pdf_renderer.py`（删除）, `modules/grader.py`, `modules/mcq_parser.py`, `modules/ms_parser.py`, `app_flet/main.py`, `app_flet/state.py`, `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `app_flet/tabs/manage.py`, `pyproject.toml`, `uv.lock`
