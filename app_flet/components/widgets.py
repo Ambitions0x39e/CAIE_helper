@@ -4,25 +4,28 @@ import flet as ft
 
 
 def metric_card(label: str, value: str, color: str) -> ft.Container:
+    # No fixed height — it auto-sizes to the content so a wide value (e.g.
+    # "123/150", "100.0%") wraps within the card instead of overflowing the
+    # old fixed 110x85 box. Width is comfortable for a 7-char value at size 24.
     return ft.Container(
         ft.Column(
             [
                 ft.Text(label, size=12, color=ft.Colors.GREY),
                 ft.Text(
                     value,
-                    size=28,
+                    size=24,
                     weight=ft.FontWeight.BOLD,
                     color=color,
+                    text_align=ft.TextAlign.CENTER,
                 ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=4,
         ),
-        width=110,
-        height=85,
+        width=132,
         border_radius=12,
         border=ft.Border.all(1, ft.Colors.GREY_300),
-        padding=16,
+        padding=12,
         alignment=ft.Alignment(0, 0),
     )
 

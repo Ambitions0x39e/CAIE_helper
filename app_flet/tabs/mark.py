@@ -919,26 +919,35 @@ def build_mark_tab(
                 color = (
                     ft.Colors.GREEN if m.awarded else ft.Colors.RED
                 )
-                mark_controls.append(ft.Row([
-                    ft.Icon(icon, color=color, size=18),
-                    ft.Text(
-                        f"{m.code}: {m.reason}",
-                        color=ft.Colors.BLACK, size=13,
-                    ),
-                ], spacing=6))
+                mark_controls.append(ft.Row(
+                    [
+                        ft.Icon(icon, color=color, size=18),
+                        ft.Text(
+                            f"{m.code}: {m.reason}",
+                            color=ft.Colors.BLACK, size=13,
+                            expand=True,  # wrap long reasons, don't overflow
+                        ),
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ))
 
             if qr.comment:
                 mark_controls.append(ft.Container(
-                    ft.Row([
-                        ft.Icon(
-                            ft.Icons.CHAT_BUBBLE,
-                            color=ft.Colors.BLUE, size=16,
-                        ),
-                        ft.Text(
-                            qr.comment,
-                            color=ft.Colors.GREY, size=12,
-                        ),
-                    ]),
+                    ft.Row(
+                        [
+                            ft.Icon(
+                                ft.Icons.CHAT_BUBBLE,
+                                color=ft.Colors.BLUE, size=16,
+                            ),
+                            ft.Text(
+                                qr.comment,
+                                color=ft.Colors.GREY, size=12,
+                                expand=True,  # wrap long comments
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.START,
+                    ),
                     padding=ft.Padding(
                         left=0, right=0, top=4, bottom=0,
                     ),
