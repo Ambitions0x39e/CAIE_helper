@@ -2,6 +2,23 @@
 
 ---
 
+## 2026-07-14 — README 准确性与语言修正 + Phase 2 合并入 main
+
+**改动文件：** `README.md`
+
+### 功能说明
+
+校对用户改写的 README，核对内容与实际代码 / `flet build` 目标后，修正若干事实性错误与英文语法/拼写。本次 session 的代码改动（大 PDF 批改修复、响应式布局收尾）已记录在同日及前一日条目中，此处仅记 README。另：Phase 2（整个 iOS 迁移）已在本次 session 以快进方式合并入 `main`（`abc49c8 → 12001af`），远端 `worktree-phase2b-renderer` 分支与本地 worktree 已清理，PR #7 自动标记 merged。
+
+- **事实性**：uv 安装链接 `uv.run/docs/installation` → 官方 `docs.astral.sh/uv/getting-started/installation/`；`flet build` 目标 `iOS` → 合法值 `ipa`（真机）/ `ios-simulator`（经 `flet build --help` 核实，合法集为 `{macos,linux,windows,web,apk,aab,ipa,ios-simulator}`）；文中的 "config view" 并不存在 → 实际为 **Settings**（设置）对话框。
+- **语言/拼写**：`a Image Model` → `an image model`；补冠词（`uses the qwen3-vl-flash model`）；指令语气 `could` → `can`；品牌名 `Goodnote(s)` → `GoodNotes`；`Dashscope by Aliyun` → `DashScope by Alibaba Cloud (Aliyun)`；首句去重（`track...and track`）并补上正文未提及的下载功能；`Install using flet build` → `Build the app with`（`flet build` 是打包而非安装）。
+
+### 注意事项
+
+- README 改动**未提交**，由用户决定是否 commit。
+
+---
+
 ## 2026-07-14 — 大 PDF 批改修复 + 批改流程响应式布局收尾
 
 **改动文件：** `modules/renderer.py`, `tests/test_renderer.py`, `pyproject.toml`, `uv.lock`, `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `app_flet/tabs/manage.py`, `app_flet/components/widgets.py`
