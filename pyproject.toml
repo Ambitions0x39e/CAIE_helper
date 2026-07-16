@@ -36,14 +36,38 @@ dev = [
 ]
 
 [tool.flet.app]
-# Dev-only dirs kept out of the packaged app. Critical: `extensions/` holds the
-# render extension SOURCE (its Python comes from the installed dep + its Dart
-# from the installed package's bundled data, so the source tree isn't needed in
-# the package) — and a stale example `build/` there has a self-nesting
-# `.pod/dist_macos/...` path that blows past the filesystem name-length limit
-# during the app copy. flet only excludes a TOP-LEVEL `build`, so exclude the
-# whole dev dirs by name.
-exclude = ["extensions", "spikes", "tests", "dev"]
+# What gets packaged into app.zip = the whole project dir MINUS these names.
+# flet does NOT read .gitignore, so every heavy non-app dir must be listed here
+# explicitly or it ships inside the app. Matched by TOP-LEVEL name.
+#
+# Runtime deps are installed FRESH into the bundle from [project.dependencies]
+# (see SERIOUS_PYTHON_SITE_PACKAGES), so the local `.venv` is NOT needed in the
+# package — excluding it is safe and removes ~425 MB (it also drags in the whole
+# legacy streamlit stack: streamlit/pyarrow/altair/pydeck).
+#
+# Categories below:
+#   dev-only dirs      : extensions*, spikes, tests, dev, in_dev, docs
+#   env / vcs / caches : .venv, .git, .claude, .mypy_cache, .pytest_cache,
+#                        .ruff_cache, .codegraph, .cursor, __pycache__, dist
+#   stray test PDFs    : the loose *.pdf files sitting in the repo root
+# (*extensions/ holds the render-extension SOURCE; its Python comes from the
+#  installed dep and its Dart from the package's bundled data, so the source
+#  tree isn't needed — and a stale nested build/ there overflows the filesystem
+#  name-length limit during the copy.)
+exclude = [
+    # dev-only dirs
+    "extensions", "spikes", "tests", "dev", "in_dev", "docs", "packaging", "packaging",
+    # environments / vcs / tool caches
+    ".venv", ".git", ".claude", ".mypy_cache", ".pytest_cache",
+    ".ruff_cache", ".codegraph", ".cursor", "__pycache__", "dist",
+    # stray test PDFs in repo root (should really be moved out of the repo)
+    "9231_s25_qp_11.pdf.pdf", "9700_w23_qp_21.pdf",
+    "9702_s25_qp_14.pdf.pdf", "9702_s25_qp_21.pdf.pdf",
+    # secrets / dev files — the local root `.env` holds REAL SMTP + API creds and
+    # ships inside app.zip even though the runtime only reads ~/.cie_helper/.env,
+    # so packaging it is a pure credential leak with zero functional need.
+    ".env", ".env.example",
+]
 
 [tool.flet.dev_packages]
 flet-pdf-render = "extensions/flet_pdf_render"
