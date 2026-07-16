@@ -262,7 +262,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flet", specifier = ">=0.85.3" },
+    { name = "flet", specifier = ">=0.85.3,<0.86" },
     { name = "flet-pdf-render", editable = "extensions/flet_pdf_render" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10.0" },
     { name = "openai", specifier = ">=1.30.0" },
@@ -283,8 +283,8 @@ provides-extras = ["legacy", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "flet-cli", specifier = ">=0.85.3" },
-    { name = "flet-desktop", specifier = ">=0.85.3" },
+    { name = "flet-cli", specifier = ">=0.85.3,<0.86" },
+    { name = "flet-desktop", specifier = ">=0.85.3,<0.86" },
     { name = "fpdf2", specifier = ">=2.8.0" },
     { name = "mypy", specifier = ">=1.10.0" },
     { name = "pdfplumber", specifier = ">=0.11.0" },
