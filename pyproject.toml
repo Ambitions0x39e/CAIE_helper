@@ -74,9 +74,6 @@ exclude = [
     # environments / vcs / tool caches
     ".venv", ".git", ".claude", ".mypy_cache", ".pytest_cache",
     ".ruff_cache", ".codegraph", ".cursor", "__pycache__", "dist",
-    # stray test PDFs in repo root (should really be moved out of the repo)
-    "9231_s25_qp_11.pdf.pdf", "9700_w23_qp_21.pdf",
-    "9702_s25_qp_14.pdf.pdf", "9702_s25_qp_21.pdf.pdf",
     # secrets / dev files — the local root `.env` holds REAL SMTP + API creds and
     # ships inside app.zip even though the runtime only reads ~/.cie_helper/.env,
     # so packaging it is a pure credential leak with zero functional need.
