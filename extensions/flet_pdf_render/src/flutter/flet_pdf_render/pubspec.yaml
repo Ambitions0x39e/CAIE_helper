@@ -8,7 +8,10 @@ environment:
   flutter: ">=1.17.0"
 
 dependencies:
-  flet: ^0.85.3
+  # NB: for 0.x versions, ^0.85.3 means <0.86.0 and will CONFLICT when the
+  # host app builds with a newer flet — keep this range in sync with the
+  # app's flet pin (see cie-helper pyproject NB2).
+  flet: ">=0.85.3 <0.87.0"
   flutter:
     sdk: flutter
 

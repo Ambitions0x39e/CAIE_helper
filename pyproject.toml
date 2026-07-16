@@ -9,7 +9,21 @@ dependencies = [
     # Runtime deps packaged for iOS — keep this list pure Python / iOS-wheel-safe.
     # NB: plain "flet" (not flet[all]) — the [all] extra drags in flet-cli ->
     # watchdog, which has no iOS wheel and breaks `flet build ipa`.
-    "flet>=0.85.3",
+    # NB2: UPPER BOUND IS LOAD-BEARING. `flet build` pip-installs this FRESH
+    # into the bundle (ignoring uv.lock), while the Flutter client is generated
+    # by flet-cli's pinned template. If pip grabs a newer flet (e.g. 0.86.0)
+    # than the flet-cli (0.85.3) client, the wire protocol mismatches and the
+    # packaged app white-screens (session never registers; main() never runs).
+    # When bumping flet-cli/flet-desktop in [dependency-groups], bump this
+    # range in lockstep.
+    # 2026-07-16: PINNED to 0.85.x by decision — do not bump casually.
+    # 0.86.0 is broken on Chinese-codepage Windows (flet#6686 C4819/C2220
+    # compile failure + serious_python 4.3.2 pip-install hangs forever during
+    # packaging), and this app no longer needs anything from 0.86: the large-PDF
+    # RPC issue is solved locally via pypdf page pre-extraction in
+    # modules/renderer.py. If an upgrade is ever attempted anyway, bump flet,
+    # flet-cli, flet-desktop AND the extension pubspec's flet range in lockstep.
+    "flet>=0.85.3,<0.86",
     "flet-pdf-render",  # local native pdfrx render extension
     "pandas>=2.2.0",
     "pydantic[email]>=2.7.0",
@@ -120,8 +134,10 @@ dev = [
     "fpdf2>=2.8.0",
     "mypy>=1.10.0",
     # flet build/run tooling — local only, NOT packaged for iOS (watchdog).
-    "flet-cli>=0.85.3",
-    "flet-desktop>=0.85.3",
+    # Keep in the SAME minor as the runtime `flet` pin above (see NB2 there):
+    # the cli's Flutter client and the bundled Python flet must match.
+    "flet-cli>=0.85.3,<0.86",
+    "flet-desktop>=0.85.3,<0.86",
     # Legacy deps needed to run the full test suite locally (segmenter fidelity
     # check compares pdfminer vs pdfplumber; visualizer tests need streamlit).
     "pdfplumber>=0.11.0",
