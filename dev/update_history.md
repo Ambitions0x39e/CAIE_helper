@@ -2,6 +2,66 @@
 
 ---
 
+## 2026-07-16 — Windows 安装包 + 图标 + 白屏根因修复（flet 版本锁定 0.85.3）
+
+**改动文件：** `pyproject.toml`, `packaging/windows/cie-helper.iss`（新增）, `packaging/windows/app.ico`（新增）, `assets/icon.png`（新增）, `extensions/flet_pdf_render/src/flutter/flet_pdf_render/pubspec.yaml`, `CLAUDE.md`, `uv.lock`
+
+### Windows 安装包（Inno Setup）
+
+- 新增 `packaging/windows/cie-helper.iss`：把 `flet build windows` 的整个输出目录（exe + 全部 DLL + `data/` + `Lib/` + `DLLs/` + `site-packages/`，缺一不可）打成单个向导式 `setup.exe`。产物 `dist/cie-helper-0.1.0-setup.exe`（**48 MB**，源目录 ~203 MB）。
+- 关键决策：`PrivilegesRequired=lowest` → **per-user 安装、无 UAC 弹窗**，装到 `%LocalAppData%\Programs`（未签名 app 对普通用户最顺滑）；`AppId` GUID 固定，**跨版本不可改**，否则升级会被当成新软件。
+- 编译命令：`"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/cie-helper.iss`。
+- 终端用户**无需预装** Python/Flutter/Dart——三套运行时全部内嵌。未签名 → 首次运行 SmartScreen 蓝框，点"更多信息→仍要运行"即可（2024 年起连 EV 证书也无法秒过，免费出路是 Microsoft Store 或 Azure Artifact Signing ~$10/月）。
+
+### App 图标
+
+- 新增 `assets/icon.png`（1024×1024 石墨灰 #334155 圆角方块 + 白色 "CIE" monogram，Pillow 生成）→ `flet build` 自动嵌入 exe/窗口/任务栏图标；`packaging/windows/app.ico`（多分辨率）→ 安装向导图标（`SetupIconFile`）。
+
+### 打包 app 白屏根因修复（本日核心）
+
+**症状：** 安装/直接运行打包 exe，窗口出现但永久白屏（先闪一下粉色），无任何报错。
+
+**排查（拆掉三层错误假设后钉死）：** 埋点证明 `main(page)` 从未被调用 → 最小 hello-world 同样复现（排除全部业务代码/PdfRenderer/重导入）→ Dart 侧 `--debug` 日志显示 registerClient 已发但 Python 零字节收到 → **载荷交换二分**（借 7/12 构建的扩展 example 的 site-packages 换入即恢复）→ 在 dist-info 目录名里发现真凶。
+
+**根因：** `[project.dependencies]` 的 `flet>=0.85.3` 无上限。`flet build` 打包时**无视 uv.lock**、按此约束全新 pip install → 抓到刚发布的 **flet 0.86.0**（Python 侧）；而 flet-cli 0.85.3 生成的 Flutter 客户端是 **0.85.3** → 两侧线协议不匹配 → session 永远无法注册 → 白屏。dev venv 和 pubspec.lock 都是 0.85.3，常规检查全部"看起来一致"，唯一错位的副本只在 bundle 里。macOS/iOS 能跑纯属时间运气（构建时 0.86.0 尚未发布）。
+
+**修复：** `flet`/`flet-cli`/`flet-desktop` 三件套锁步 pin `>=0.85.3,<0.86`（附详细注释）；重建后验证 session 建立、四 tab UI 全渲染。
+
+### flet 0.86.0 升级尝试 → 放弃（项目定死 0.85.3）
+
+- 用户希望升 0.86（含其上游提的 serious-python 修复），三件套 + 扩展 pubspec（`flet: ^0.85.3` → `">=0.85.3 <0.87.0"`，caret 对 0.x 即 `<0.86` 会在 pub 解析时冲突）齐步升级并实测。
+- **0.86.0 在中文（GBK 936）Windows 上双重破损，放弃：** ① `serious_python_windows_plugin.cpp` 含非 GBK 字符 → MSVC `C4819`→`C2220` 编译失败（[flet#6686](https://github.com/flet-dev/flet/issues/6686)，修复 PR 在 review；env `CL=-utf-8` 可绕过——注意 **dash 拼写**，Git Bash 会把 `/utf-8` 路径转换成 `C:/Program Files/Git/utf-8`）；② serious_python 4.3.2 的打包步骤 pip install **永久挂死**（site-packages 0 文件、无网络 I/O；同一条 pip 命令手动跑秒过——疑似子进程 stdout 管道未消费死锁），无 workaround。
+- **决策：本项目永久停留 0.85.3**——大 PDF 问题早已在 `modules/renderer.py` 用 pypdf 页预抽取本地解决，0.86 无不可替代价值。pyproject 注释已写明"不要随意升级"；如将来非升不可，flet 三件套 + 扩展 pubspec 四处必须锁步。
+- 附带环境收尾：0.86 工具链要求的 Flutter SDK 3.44.4（曾自动装到 `~/flutter/3.44.4`，~2GB）已删除；`D:\flutter`（3.41.7）保持不动，正是 0.85.3 构建所用。
+
+### 其他
+
+- `pyproject.toml` exclude 补入 `packaging`（安装包脚本目录不进 app.zip，下次 build 生效）。
+- `CLAUDE.md` 构建小节更新：完整构建命令升级为 `PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows`；新增 flet 三件套锁步纪律 + 打包 app 白屏调试技巧（exe 加 `--debug` 保留 Dart 日志、直接改 `%APPDATA%\Roaming\<company>\<app>\flet\app\` 免重建迭代）。
+- 本条目所有改动**未提交**，由用户决定是否 commit。
+
+---
+
+## 2026-07-15 — 打包体积从 ~900MB/1.2GB 降到 190MB（flet build exclude 修复）
+
+**改动文件：** `pyproject.toml`
+
+### 功能说明
+
+排查 `flet build` 出来的 macOS/Windows app 为何高达 ~1.2GB，定位到根因并修复：**flet 把整个项目工作目录复制进 `app.zip`（`build/<platform>/data/flutter_assets/app/`），且不读 `.gitignore`**，只按 `[tool.flet.app].exclude` 里显式列的**顶层名字**排除。修复前 `app.zip`（未压缩 1287MB / 磁盘 402MB）里塞满了 `.venv`(425MB)、`.claude/worktrees`(539MB)、`.mypy_cache`(181MB)、`.git`、`.codegraph` 和散落的根目录测试 PDF——而真正的代码（`app_flet`/`core`/`modules`）不到 1MB。
+
+- **修复**：把 `[tool.flet.app].exclude` 从 `["extensions", "spikes", "tests", "dev"]` 扩充为完整清单，新增 `.venv`、`.git`、`.claude`、`.mypy_cache`、`.pytest_cache`、`.ruff_cache`、`.codegraph`、`.cursor`、`__pycache__`、`dist`、`in_dev`、`docs` 以及 4 个散落根 PDF 文件名；并加详细注释说明打包机制。跨平台生效，故 macOS 构建同样受益。
+- **验证结果（Windows，真实 build）**：`build/windows` **901MB → 190MB**（-79%）；`app.zip` **402MB → 0.3MB**（条目 43327 → 67）；streamlit/pyarrow/altair/pydeck/.venv/.claude/.mypy_cache 全部确认清除。
+
+### 关键结论与注意事项
+
+- **依赖解析路径一直是干净的**：flet 只按 `[project.dependencies]` 把 runtime 依赖**全新装**进 bundle（`SERIOUS_PYTHON_SITE_PACKAGES` → `build/site-packages`），streamlit 从不在其中。streamlit 之所以随 app 分发，纯粹是因为 `.venv/` 目录被整个扫进了 `app.zip`。因此 `uv sync --no-dev` **无法减小体积**——`.venv` 无论装了什么都会被复制，唯一开关是 exclude 清单。
+- **剩余 190MB 是地板**：Flutter 引擎 + flet_web/canvaskit + CPython + 合法依赖（pandas/numpy ~55MB、openai、pdfminer、cryptography、pydantic）。若要更小，下一步是去 pandas 改用 stdlib `csv` 重构 `core/storage.py`（约再省 40–55MB），本次未做。
+- **安全（已修复）**：本地 repo 根目录的真 `.env`（含真实 SMTP 密码 + API key，git 忽略但磁盘存在，flet 从磁盘打包故进了 `app.zip`）会随分发包泄露。运行时其实**只读** `~/.cie_helper/.env`（`core/settings.py:8` `_ENV_PATH`），打包那份从不被读——纯死文件泄漏、零功能需求。已把 `.env`/`.env.example` 加入 exclude，并重新 build 验证 `.env` 已从 `app.zip` 消失。
+- pyproject 改动**未提交**，由用户决定是否 commit。
+
+---
+
 ## 2026-07-14 — README 准确性与语言修正 + Phase 2 合并入 main
 
 **改动文件：** `README.md`

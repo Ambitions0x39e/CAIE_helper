@@ -23,9 +23,26 @@ uv run ruff format .
 # Type check
 uv run mypy .
 
-# Run tests (none exist yet — pytest configured in pyproject.toml)
-# uv run pytest
+# Run tests
+uv run pytest
 ```
+
+## Building the packaged app (Flet)
+
+The distributable app is built with `flet build <platform>` (`windows`, `macos`, `ipa`, `ios-simulator`, …). Two hard-won gotchas — see memory `reference_flet_build_windows.md` and `reference_flet_build_size.md`:
+
+```bash
+# Windows (Chinese/GBK console): force UTF-8 or rich crashes on emoji output;
+# CL=-utf-8 or MSVC fails plugins containing non-GBK chars (C4819→C2220) —
+# dash spelling, NOT /utf-8, which Git Bash mangles into a Program Files path;
+# build from a SHORT real path (deep worktree paths overflow MSBuild).
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
+```
+
+- **What ships**: `flet build` installs `[project.dependencies]` FRESH into the bundle (`build/site-packages`) — that path is clean, streamlit is never there. Separately it copies the **entire working directory** into `app.zip` and **ignores `.gitignore`**. Only top-level names in `[tool.flet.app].exclude` are left out.
+- **Keep the exclude list complete.** Anything heavy not listed there (`.venv`, `.claude`, `.mypy_cache`, `.git`, caches, stray root PDFs) ships inside `app.zip` and bloats the app — this is what took it to ~1.2 GB. With the full exclude list, `build/windows` is ~190 MB. When adding a new top-level dir/cache, add it to `exclude`.
+- **`uv sync --no-dev` does NOT shrink the app** — the `.venv` folder is copied wholesale regardless of what's installed; only `exclude` controls size.
+- **Keep `flet`, `flet-cli`, `flet-desktop` pinned in the same minor, in lockstep** (see memory `reference_flet_version_pin.md`). The bundle's Python flet is pip-installed fresh from `[project.dependencies]` (uv.lock is ignored), while the Flutter client comes from flet-cli's template — if they diverge (e.g. bundle grabs a newer flet), the packaged app opens to a permanent white screen (session never registers, `main()` never runs). Debug a white-screening package by running the exe with `--debug` (keeps Dart-side logs) and editing the extracted app at `%APPDATA%\Roaming\<company>\<app>\flet\app\` (no rebuild needed).
 
 ## Stack
 
