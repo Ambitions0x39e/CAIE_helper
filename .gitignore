@@ -18,3 +18,6 @@ pages/admin.py
 # In development
 in_dev/
 /docs/superpowers
+
+# Local dev spikes (not part of the shipped project)
+spikes/
