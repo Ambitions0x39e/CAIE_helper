@@ -256,8 +256,46 @@ class TestMatchBoundaries:
         matches = _match_boundaries(boundaries, question_ids)
 
         assert len(matches) == 2
-        assert matches[0] == ("Q1a", 0, 90)
+        # The first sub-part anchors at the MAIN boundary (y=50), not its
+        # own (a) marker (y=90), so the question stem between the two is
+        # included in Q1a's crop rather than lost above it.
+        assert matches[0] == ("Q1a", 0, 50)
         assert matches[1] == ("Q1b", 0, 350)
+
+    def test_first_sub_of_next_main_does_not_leave_stem_behind(self) -> None:
+        """Q2's stem text sits between the MAIN "2" marker and its (a)
+        marker. The previous region (Q1b) ends where the next one starts,
+        so Q2a must start at Q2's MAIN boundary — otherwise the stem is
+        swallowed into Q1b's crop."""
+        boundaries = [
+            _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
+            _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=90),
+            _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=350),
+            # Q2: main marker at top of page 1, stem paragraph, then (a)
+            _Boundary(kind=_BoundaryKind.MAIN, page_idx=1, y=60),
+            _Boundary(kind=_BoundaryKind.SUB, page_idx=1, y=300),
+        ]
+        question_ids = ["Q1a", "Q1b", "Q2a"]
+        matches = _match_boundaries(boundaries, question_ids)
+
+        assert len(matches) == 3
+        assert matches[1] == ("Q1b", 0, 350)
+        # Q2a anchors at the MAIN boundary so Q1b's region ends there too.
+        assert matches[2] == ("Q2a", 1, 60)
+
+    def test_first_roman_sub_part_anchors_at_main(self) -> None:
+        """Nested first sub-part ("(a)(i)") also pulls back to MAIN."""
+        boundaries = [
+            _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
+            _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=120),
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=400),
+        ]
+        question_ids = ["Q1(a)(i)", "Q1(a)(ii)"]
+        matches = _match_boundaries(boundaries, question_ids)
+
+        assert len(matches) == 2
+        assert matches[0] == ("Q1(a)(i)", 0, 50)
+        assert matches[1] == ("Q1(a)(ii)", 0, 400)
 
     def test_standalone_question(self) -> None:
         boundaries = [
