@@ -85,6 +85,69 @@ def normalize_question_id(raw: str) -> str:
     return f"Q{raw}"
 
 
+# ── Start-page detection ─────────────────────────────────────────
+
+# Every text-based mark-scheme content page repeats this table header;
+# the cover page and generic-marking-principles pages never carry all
+# three tokens together.
+_MS_TABLE_HEADER = ("Question", "Answer", "Marks")
+_MS_START_PAGE_FALLBACK = 6
+_MS_START_SCAN_PAGES = 14
+
+
+def detect_ms_start_page(pdf_path: str | bytes | Path) -> int | None:
+    """Find the first page carrying question content (1-indexed).
+
+    Mark schemes open with a cover page and generic marking principles
+    before the questions start, but how many such pages there are varies
+    by syllabus and series — 9618 has been seen starting on page 3, 9231
+    on page 6, 9702 Paper 2 on page 8 — so it is detected, not assumed.
+
+    Two signals mark a content page, and we take the EARLIER of them:
+
+    * the repeated "Question / Answer / Marks" table header (text-based
+      content pages), and
+    * the first page with no text layer after the cover — mark schemes
+      whose answers are scanned images render as empty text, and the
+      opening question(s) often sit on those imaged pages BEFORE the
+      first page that still carries the header (e.g. 9618/w25/13 images
+      Q1 on pages 3-4, header first appears on page 5).
+
+    Preferring the earlier signal keeps detection biased toward starting
+    too early rather than too late: an extra front-matter page rendered
+    to the VL model just yields no questions, whereas starting late drops
+    real questions. Returns None only when neither signal fires within
+    the first ``_MS_START_SCAN_PAGES`` pages; callers fall back to
+    ``_MS_START_PAGE_FALLBACK`` (see :func:`resolve_ms_start_page`).
+    """
+    data = to_pdf_bytes(pdf_path)
+    limit = min(page_count(data), _MS_START_SCAN_PAGES)
+    header_pg: int | None = None
+    imaged_pg: int | None = None
+    for pg in range(limit):
+        text = extract_text(io.BytesIO(data), page_numbers=[pg]) or ""
+        if header_pg is None and all(t in text for t in _MS_TABLE_HEADER):
+            header_pg = pg + 1
+        # An empty text layer past the cover = image-rendered content.
+        if imaged_pg is None and pg >= 1 and not text.strip():
+            imaged_pg = pg + 1
+        if header_pg is not None and imaged_pg is not None:
+            break
+
+    candidates = [p for p in (header_pg, imaged_pg) if p is not None]
+    return min(candidates) if candidates else None
+
+
+def resolve_ms_start_page(
+    pdf_path: str | bytes | Path,
+    start_page: int | None,
+) -> int:
+    """Resolve an explicit start page, or detect one, or fall back."""
+    if start_page is not None:
+        return start_page
+    return detect_ms_start_page(pdf_path) or _MS_START_PAGE_FALLBACK
+
+
 def _extract_paper_info(pdf_path: str | Path) -> tuple[str, int]:
     """Extract paper_id and total_marks from the cover page via text.
 
@@ -300,16 +363,25 @@ def _parse_all_vl(
 # ── Public API ───────────────────────────────────────────────────
 
 
-def _cache_path_for(pdf_path: Path) -> Path:
-    """Return the JSON cache path for a mark scheme PDF."""
+def _cache_path_for(pdf_path: Path, start_page: int | None = None) -> Path:
+    """Return the JSON cache path for a mark scheme PDF.
+
+    VL-parsed (MATH) caches embed the resolved start page in the key —
+    the same PDF parsed from a different start page covers a different
+    set of questions, so the results must not shadow each other. MCQ
+    caches pass None and keep the plain filename key.
+    """
     from core.settings import app_settings
 
-    return app_settings.ms_cache_dir / f"{pdf_path.stem}.json"
+    suffix = f".sp{start_page}" if start_page is not None else ""
+    return app_settings.ms_cache_dir / f"{pdf_path.stem}{suffix}.json"
 
 
-def _load_cached(pdf_path: Path) -> PaperConfig | None:
+def _load_cached(
+    pdf_path: Path, start_page: int | None = None
+) -> PaperConfig | None:
     """Load a previously cached PaperConfig, or None on miss."""
-    cp = _cache_path_for(pdf_path)
+    cp = _cache_path_for(pdf_path, start_page)
     if not cp.exists():
         return None
     try:
@@ -318,20 +390,42 @@ def _load_cached(pdf_path: Path) -> PaperConfig | None:
         return None
 
 
-def _save_cache(pdf_path: Path, config: PaperConfig) -> None:
+def _save_cache(
+    pdf_path: Path, config: PaperConfig, start_page: int | None = None
+) -> None:
     """Persist a PaperConfig to the cache directory."""
-    cp = _cache_path_for(pdf_path)
+    cp = _cache_path_for(pdf_path, start_page)
     cp.parent.mkdir(parents=True, exist_ok=True)
     cp.write_text(config.model_dump_json(indent=2), "utf-8")
+
+
+def ms_cache_exists(
+    pdf_path: str | Path,
+    paper_type: PaperType,
+    start_page: int | None = None,
+) -> bool:
+    """Check whether ``parse_mark_scheme`` would hit its cache.
+
+    Lets the UI show a "result came from cache" hint and offer a forced
+    re-parse. For MATH the start page is resolved the same way
+    ``parse_mark_scheme`` resolves it, so the answer matches what a
+    subsequent call would actually do.
+    """
+    path = Path(pdf_path)
+    if paper_type == PaperType.MCQ:
+        return _cache_path_for(path).exists()
+    resolved = resolve_ms_start_page(path, start_page)
+    return _cache_path_for(path, resolved).exists()
 
 
 def parse_mark_scheme(
     pdf_path: str | Path,
     paper_type: PaperType,
     grader_config: GraderConfig | None = None,
-    start_page: int = 6,
+    start_page: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     renderer: NativeRenderer | None = None,
+    force: bool = False,
 ) -> PaperConfig:
     """Parse a mark scheme PDF into structured question configs.
 
@@ -343,7 +437,9 @@ def parse_mark_scheme(
         paper_type: Determines which parsing strategy to use.
         grader_config: API credentials for VL model (required for MATH).
         start_page: First page with actual mark scheme content (1-indexed).
+            None auto-detects it — pass a number only to override.
         on_progress: Optional callback ``(current_batch, total_batches)``.
+        force: Skip the cache and re-parse (the result is re-cached).
 
     Raises:
         NotImplementedError: If paper_type has no parser yet.
@@ -351,11 +447,10 @@ def parse_mark_scheme(
     """
     path = Path(pdf_path)
 
-    cached = _load_cached(path)
-    if cached is not None:
-        return cached
-
     if paper_type == PaperType.MCQ:
+        cached = None if force else _load_cached(path)
+        if cached is not None:
+            return cached
         from modules.mcq_parser import parse_mcq_mark_scheme
         config = parse_mcq_mark_scheme(pdf_path)
         _save_cache(path, config)
@@ -365,6 +460,14 @@ def parse_mark_scheme(
         raise NotImplementedError(
             f"No mark scheme parser for {paper_type.value}"
         )
+
+    # Resolve the start page BEFORE the cache lookup: the cache key
+    # embeds it, so parses from different start pages never shadow each
+    # other (a manual override after an auto-detect re-parses cleanly).
+    resolved_start = resolve_ms_start_page(pdf_path, start_page)
+    cached = None if force else _load_cached(path, resolved_start)
+    if cached is not None:
+        return cached
 
     if grader_config is None:
         raise ValueError(
@@ -381,7 +484,7 @@ def parse_mark_scheme(
         pdf_path,
         grader_config,
         renderer,
-        start_page=start_page,
+        start_page=resolved_start,
         on_progress=on_progress,
     )
 
@@ -390,5 +493,5 @@ def parse_mark_scheme(
         total_marks=total_marks,
         questions=questions,
     )
-    _save_cache(path, config)
+    _save_cache(path, config, resolved_start)
     return config

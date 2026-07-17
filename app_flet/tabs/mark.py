@@ -18,7 +18,11 @@ from modules.mcq_parser import (
     is_valid_manual_answer,
     score_mcq_answers,
 )
-from modules.ms_parser import parse_mark_scheme
+from modules.ms_parser import (
+    ms_cache_exists,
+    parse_mark_scheme,
+    resolve_ms_start_page,
+)
 from modules.page_segmenter import PageClip, segment_questions, validate_regions
 from modules.renderer import NativeRenderer, page_count, to_pdf_bytes
 
@@ -39,7 +43,8 @@ def build_mark_tab(
     # ── Local UI state ─────────────────────────────────────────────
     ms_source_ref: list[str] = ["downloaded"]
     paper_type_ref: list[PaperType] = [PaperType.MATH]
-    start_page_ref: list[int] = [6]
+    # None = auto-detect from the MS PDF; a number is a manual override.
+    start_page_ref: list[int | None] = [None]
     selected_syllabus_ref: list[str | None] = [None]
     selected_paper_ref: list[str | None] = [None]
     ms_upload_path_ref: list[str | None] = [None]
@@ -172,12 +177,16 @@ def build_mark_tab(
             start_page_field = ft.TextField(
                 label="评分标准内容起始页",
                 label_style=ft.TextStyle(color=ft.Colors.BLACK),
-                value=str(start_page_ref[0]),
+                value=(
+                    "" if start_page_ref[0] is None
+                    else str(start_page_ref[0])
+                ),
+                hint_text="自动",
                 keyboard_type=ft.KeyboardType.NUMBER,
                 width=200,
                 color=ft.Colors.BLACK,
                 helper=ft.Text(
-                    "CIE 评分标准通常从第 6 页开始",
+                    "留空 = 自动检测（各科起始页不同，3–8 页都有）",
                     size=11, color=ft.Colors.GREY,
                 ),
                 on_change=_on_start_page_change,  # type: ignore[arg-type]
@@ -200,12 +209,12 @@ def build_mark_tab(
                 padding=8,
             ))
 
-        # Parse button
+        # Parse button (+ cached-result hint on the same row, far right)
         can_parse = _get_ms_path() is not None and (
             paper_type_ref[0] == PaperType.MCQ
             or state.grader_config is not None
         )
-        controls.append(ft.Button(
+        parse_row: list[ft.Control] = [ft.Button(
             "解析评分标准",
             icon=ft.Icons.SEARCH,
             disabled=not can_parse,
@@ -213,6 +222,31 @@ def build_mark_tab(
                 bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
             ),
             on_click=_on_parse_click,  # type: ignore[arg-type]
+        )]
+        if state.paper_config and state.ms_from_cache:
+            parse_row.append(ft.Container(
+                ft.Row([
+                    ft.Icon(
+                        ft.Icons.HISTORY,
+                        color=ft.Colors.AMBER_800, size=16,
+                    ),
+                    ft.Text(
+                        "此结果来自缓存",
+                        size=12, color=ft.Colors.BLACK,
+                    ),
+                    ft.TextButton(
+                        "重新解析",
+                        disabled=not can_parse,
+                        on_click=_on_reparse_click,  # type: ignore[arg-type]
+                    ),
+                ], spacing=6, tight=True),
+                bgcolor=ft.Colors.AMBER_100,
+                border_radius=8,
+                padding=ft.Padding(left=10, right=4, top=2, bottom=2),
+            ))
+        controls.append(ft.Row(
+            parse_row,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ))
 
         # Parsed config preview
@@ -332,10 +366,14 @@ def build_mark_tab(
     def _on_start_page_change(
         e: ft.ControlEvent,  # noqa: ARG001
     ) -> None:
+        raw = str(e.data or "").strip()
+        if not raw:
+            start_page_ref[0] = None  # blank → auto-detect
+            return
         try:
-            start_page_ref[0] = int(e.data or 6)
+            start_page_ref[0] = int(raw)
         except ValueError:
-            start_page_ref[0] = 6
+            start_page_ref[0] = None
 
     def _on_syllabus_select(
         e: ft.ControlEvent,  # noqa: ARG001
@@ -361,7 +399,7 @@ def build_mark_tab(
             ms_upload_path_ref[0] = files[0].path
             _rebuild()
 
-    def _on_parse_click(_: ft.ControlEvent) -> None:
+    def _start_parse(force: bool) -> None:
         ms_path = _get_ms_path()
         if not ms_path:
             show_snack("请先选择评分标准文件", ft.Colors.RED)
@@ -386,17 +424,30 @@ def build_mark_tab(
                     )
                     page.update()
 
+                # Resolve the start page once up front (MCQ ignores it):
+                # both the cache-hit check and the parse itself need it,
+                # and passing the resolved number to parse_mark_scheme
+                # avoids running the page-detection scan a second time.
+                resolved_start = (
+                    resolve_ms_start_page(ms_path, start_page_ref[0])
+                    if pt == PaperType.MATH else None
+                )
+                from_cache = not force and ms_cache_exists(
+                    ms_path, pt, resolved_start,
+                )
                 pc = parse_mark_scheme(
                     ms_path,
                     paper_type=pt,
                     grader_config=state.grader_config,
-                    start_page=start_page_ref[0],
+                    start_page=resolved_start,
                     on_progress=_on_progress,
                     renderer=NativeRenderer(
                         state.pdf_renderer, page.session.connection.loop,
                     ),
+                    force=force,
                 )
                 state.paper_config = pc
+                state.ms_from_cache = from_cache
                 state.paper_type = pt.value
                 state.deleted_questions.clear()
                 state.grading_results.clear()
@@ -420,6 +471,12 @@ def build_mark_tab(
                 _rebuild()
 
         page.run_thread(_do_parse)
+
+    def _on_parse_click(_: ft.ControlEvent) -> None:
+        _start_parse(force=False)
+
+    def _on_reparse_click(_: ft.ControlEvent) -> None:
+        _start_parse(force=True)
 
     # ══════════════════════════════════════════════════════════════
     #  Step 2: Answer Paper + Segmentation

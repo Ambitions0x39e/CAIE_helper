@@ -618,6 +618,8 @@ def _match_boundaries(
             if letter and _extract_sub_roman(qid):
                 romans_by_letter.setdefault(letter, []).append(qid)
 
+        group_start = len(matches)
+
         for qid in qids:
             letter = _extract_sub_letter(qid)
             if not letter or letter not in letter_group:
@@ -648,6 +650,16 @@ def _match_boundaries(
                 matches.append((qid, ssb.page_idx, ssb.y))
             else:
                 matches.append((qid, sub_b.page_idx, sub_b.y))
+
+        # The question stem (intro text, diagrams) sits between the MAIN
+        # marker and the first sub-part's own (a)/(i) marker. Regions end
+        # where the next one starts, so anchoring the group's first
+        # sub-part at its own marker would push the stem into the
+        # PREVIOUS question's crop and lose it from this one. Pull the
+        # first match back to the MAIN boundary instead.
+        if len(matches) > group_start:
+            first_qid = matches[group_start][0]
+            matches[group_start] = (first_qid, main_b.page_idx, main_b.y)
 
     return matches
 

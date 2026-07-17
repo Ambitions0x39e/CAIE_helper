@@ -667,11 +667,13 @@ with tab_mark:
     if not is_mcq:
         start_page = st.number_input(
             "Mark scheme content starts at page",
-            min_value=1,
-            value=6,
+            min_value=0,
+            value=0,
             help=(
-                "CIE mark schemes typically have headers "
-                "on pages 1-5. Content starts on page 6."
+                "0 = auto-detect. How much front matter a mark scheme "
+                "has varies by syllabus — content has been seen starting "
+                "anywhere from page 3 to page 8. Set a page only to "
+                "override the detected one."
             ),
             key="ms_start_page",
         )
@@ -713,7 +715,7 @@ with tab_mark:
                     ms_pdf_path,
                     paper_type=paper_type,
                     grader_config=grader_config,
-                    start_page=start_page,
+                    start_page=int(start_page) or None,
                     on_progress=_on_progress,
                 )
                 progress_bar.progress(1.0, text="Done!")

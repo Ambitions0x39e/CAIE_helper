@@ -36,6 +36,9 @@ class AppState:
     # Mark tab — shared
     paper_config: PaperConfig | None = None
     paper_type: str | None = None
+    # True when paper_config was served from the on-disk MS cache
+    # (drives the "cached result — re-parse?" hint in Step 1).
+    ms_from_cache: bool = False
 
     # Mark tab — Math grading
     answer_pdf_path: str | None = None
