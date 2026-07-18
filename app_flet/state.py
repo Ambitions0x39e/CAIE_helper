@@ -39,6 +39,9 @@ class AppState:
     # True when paper_config was served from the on-disk MS cache
     # (drives the "cached result — re-parse?" hint in Step 1).
     ms_from_cache: bool = False
+    # Guard: at most one grading request (Math grade / MCQ detect) may be
+    # in flight at a time — both hit the grader API from a worker thread.
+    grading_in_progress: bool = False
 
     # Mark tab — Math grading
     answer_pdf_path: str | None = None

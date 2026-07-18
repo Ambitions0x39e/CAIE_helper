@@ -22,6 +22,17 @@ _CHART_TOP_PAD = 10
 _CHART_BOTTOM_PAD = 30
 _ACCENT_COLOR = "#1976D2"
 
+# Flexible chart/table layout. The tab has 20px padding each side and each
+# syllabus panel adds 16px each side → usable inner width ≈ page.width - 72.
+_INNER_PADDING = 72
+# Side-by-side (table left, chart right) needs the table (~520px with
+# column_spacing=28) plus a chart of at least _CHART_MIN_WIDTH; below this
+# page width, stack the chart full-width above the table instead.
+_SIDE_BY_SIDE_MIN_PAGE_W = 950
+_TABLE_EST_WIDTH = 520
+_LAYOUT_SPACING = 16
+_CHART_MIN_WIDTH = 320
+
 
 def _extract_syllabus_id(paper_id: str) -> str:
     return paper_id[:4]
@@ -177,6 +188,7 @@ def _score_table(df: pd.DataFrame) -> ft.DataTable:
             ),
         ],
         rows=rows,
+        column_spacing=28,  # keep the table near _TABLE_EST_WIDTH
         border=ft.Border.all(1, ft.Colors.GREY_300),
         border_radius=8,
         heading_row_color=ft.Colors.BLUE_50,
@@ -188,7 +200,6 @@ def _build_syllabus_section(
     syl_id: str,
     syl_entry: Mapping[str, object],
     syl_df: pd.DataFrame,
-    chart_width: int,
 ) -> ft.ExpansionTile:
     syl_name = syl_entry.get("name", syl_id)
 
@@ -233,17 +244,48 @@ def _build_syllabus_section(
 
         type_df["attempt"] = range(1, len(type_df) + 1)
 
-        type_content.controls.extend([
-            ft.Text(
-                type_title, size=16,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
-            ),
-            ft.Row(
-                [_trend_chart(type_df, width=chart_width)],
-                scroll=ft.ScrollMode.AUTO,
-            ),
-            ft.Row([_score_table(type_df)], scroll=ft.ScrollMode.AUTO),
-        ])
+        title = ft.Text(
+            type_title, size=16,
+            weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+        )
+
+        # Flexible layout, decided from the live window width each rebuild:
+        # wide enough → table left, chart fills the remaining width on the
+        # right; otherwise → chart full-width on top, table below. Both
+        # variants sit in horizontal scrollers so an estimate mismatch
+        # scrolls instead of throwing a RenderFlex overflow.
+        page_w = int(page.width or 390)
+        avail = page_w - _INNER_PADDING
+        if page_w >= _SIDE_BY_SIDE_MIN_PAGE_W:
+            chart_w = max(
+                _CHART_MIN_WIDTH,
+                avail - _TABLE_EST_WIDTH - _LAYOUT_SPACING,
+            )
+            type_content.controls.extend([
+                title,
+                ft.Row(
+                    [
+                        _score_table(type_df),
+                        _trend_chart(type_df, width=chart_w),
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    spacing=_LAYOUT_SPACING,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+            ])
+        else:
+            chart_w = max(_CHART_MIN_WIDTH, avail)
+            type_content.controls.extend([
+                title,
+                ft.Row(
+                    [_trend_chart(type_df, width=chart_w)],
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                ft.Row(
+                    [_score_table(type_df)],
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+            ])
 
     def _on_type_change(e: ft.ControlEvent) -> None:
         selected = e.control.selected  # type: ignore[attr-defined]
@@ -388,13 +430,6 @@ def build_analytics_tab(
         scroll=ft.ScrollMode.AUTO,
     )
 
-    # Per-syllabus sections. Size the trend chart to the current screen: the
-    # tab has 20px padding each side and each syllabus panel adds 16px each
-    # side, so the usable inner width is roughly page.width - 72. Clamp to a
-    # sane range; the chart is also wrapped in a horizontal scroller so any
-    # residual mismatch scrolls instead of throwing a RenderFlex overflow.
-    chart_width = int(max(280, min(600, (page.width or 390) - 72)))
-
     config_store = ConfigStore()
     syllabus_config = config_store.load_syllabus_config()
     syllabus_ids = sorted(df["syllabus_id"].unique())
@@ -403,7 +438,6 @@ def build_analytics_tab(
         _build_syllabus_section(
             page, syl_id, syllabus_config.get(syl_id, {}),
             df[df["syllabus_id"] == syl_id].copy().reset_index(drop=True),
-            chart_width,
         )
         for syl_id in syllabus_ids
     ]
