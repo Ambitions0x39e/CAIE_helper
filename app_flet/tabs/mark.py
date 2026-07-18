@@ -760,7 +760,10 @@ def build_mark_tab(
                 color=ft.Colors.ORANGE, size=12,
             ))
 
-        can_grade = bool(selected) and not missing
+        can_grade = (
+            bool(selected) and not missing
+            and not state.grading_in_progress
+        )
         controls.append(ft.Button(
             "开始批改",
             icon=ft.Icons.ROCKET_LAUNCH,
@@ -823,6 +826,9 @@ def build_mark_tab(
         return assignments
 
     def _on_grade_click(_: ft.ControlEvent) -> None:
+        if state.grading_in_progress:
+            show_snack("已有批改请求进行中，请等待完成", ft.Colors.ORANGE)
+            return
         gc = state.grader_config
         if gc is None:
             return
@@ -909,12 +915,14 @@ def build_mark_tab(
                     r.question: r.total for r in results
                 }
                 state.grading_confirmed = False
-                _rebuild()
 
             except Exception as exc:
                 show_snack(f"批改失败: {exc}", ft.Colors.RED)
+            finally:
+                state.grading_in_progress = False
                 _rebuild()
 
+        state.grading_in_progress = True
         page.run_thread(_do_grade)
 
     # ══════════════════════════════════════════════════════════════
@@ -1195,7 +1203,10 @@ def build_mark_tab(
         controls.append(ft.Button(
             "检测答案",
             icon=ft.Icons.SEARCH,
-            disabled=state.grader_config is None,
+            disabled=(
+                state.grader_config is None
+                or state.grading_in_progress
+            ),
             style=ft.ButtonStyle(
                 bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
             ),
@@ -1346,6 +1357,9 @@ def build_mark_tab(
         _rebuild()
 
     def _on_detect_click(_: ft.ControlEvent) -> None:
+        if state.grading_in_progress:
+            show_snack("已有批改请求进行中，请等待完成", ft.Colors.ORANGE)
+            return
         gc = state.grader_config
         pc = state.paper_config
         if gc is None or pc is None or state.mcq_qp_path is None:
@@ -1380,11 +1394,13 @@ def build_mark_tab(
                 state.mcq_detected = detected
                 state.mcq_undetected = undetected
                 manual_answer_values.clear()
-                _rebuild()
             except Exception as exc:
                 show_snack(f"检测失败: {exc}", ft.Colors.RED)
+            finally:
+                state.grading_in_progress = False
                 _rebuild()
 
+        state.grading_in_progress = True
         page.run_thread(_do_detect)
 
     def _on_mcq_confirm_click(_: ft.ControlEvent) -> None:
