@@ -286,6 +286,75 @@ def _detect_bracket_pair(
     return None
 
 
+def _accepted_garbled_subs(
+    per_page: list[
+        tuple[int, list[dict[str, Any]], list[dict[str, Any]],
+              list[dict[str, Any]], dict[float, list[dict[str, Any]]]]
+    ],
+    bracket_pair: tuple[int, int] | None,
+    lx: float,
+) -> dict[int, list[tuple[float, int]]]:
+    """Find garbled sub-part markers "(a)/(b)/(c)" at the sub-question column.
+
+    Independent of the left margin: a span already collected into
+    ``sub_q_spans`` (x ≈ sub_q_x) is accepted as a SUB when
+
+    1. it is bracket-shaped in the paper's own encoding — ``cps[0]`` is the
+       open glyph and ``cps[2]`` is the close glyph. The label often has a
+       trailing space/text glued on (measured on 9702: ``(a)`` is
+       ``[240, 35, 241, 5]``), so the marker is identified by the closing
+       bracket at index 2, not by the token length; and
+    2. nothing but the main-question number sits to its left on that line.
+       The first sub-part of each question shares its line with the number
+       (``2 (a)``) at the left-margin column ``lx``; that companion is
+       expected and ignored. Body text indented to this column with a real
+       word to its left is rejected; and
+    3. its middle codepoint (the letter glyph) occurs >= 2 times across the
+       document. A real "(a)/(b)/(c)" repeats once per question; a
+       coincidental bracket shape in body text does not.
+
+    Returns ``{page_idx: [(y0, middle_cp), ...]}`` ordered by (page, y).
+    Empty when the paper is readable-text (``bracket_pair is None``) —
+    the readable path handles those.
+    """
+    if bracket_pair is None:
+        return {}
+
+    open_cp, close_cp = bracket_pair
+
+    candidates: list[tuple[int, float, int]] = []  # (page, y, middle_cp)
+    for pg_idx, _left_spans, sub_q_spans, _ss, spans_at_y in per_page:
+        for span in sub_q_spans:
+            cps = span.get("cps") or _parse_codepoints(span["text"])
+            if len(cps) < 3 or cps[0] != open_cp or cps[2] != close_cp:
+                continue
+            # Reject only if a genuine word (not the left-margin question
+            # number) sits to the marker's left on the same line.
+            y0 = span["y0"]
+            preempted = any(
+                o["x0"] < span["x0"] - _X_TOLERANCE
+                and abs(o["x0"] - lx) > _X_TOLERANCE
+                for o in spans_at_y.get(y0, [])
+            )
+            if preempted:
+                continue
+            candidates.append((pg_idx, y0, cps[1]))
+
+    # Keep only middle glyphs seen >= 2 times — real letters recur once per
+    # question, a coincidental bracket shape in body text does not.
+    from collections import Counter, defaultdict
+    glyph_freq = Counter(mid for _p, _y, mid in candidates)
+    trusted = {g for g, n in glyph_freq.items() if n >= 2}
+
+    result: dict[int, list[tuple[float, int]]] = defaultdict(list)
+    for pg_idx, y0, mid in candidates:
+        if mid in trusted:
+            result[pg_idx].append((y0, mid))
+    for pg_idx in result:
+        result[pg_idx].sort()
+    return dict(result)
+
+
 # ── Character mapping (garbled font decoding) ────────────────────
 
 def _build_char_mapping(
@@ -429,11 +498,27 @@ def _extract_boundaries(
             (pg_idx, left_spans, sub_q_spans, subsub_q_spans, spans_at_y)
         )
 
-    # Auto-detect the bracket encoding for this paper (garbled format)
+    # Auto-detect the bracket encoding. On a READABLE paper the real
+    # parens are ASCII 40/41 and _detect_bracket_pair instead latches onto
+    # a noise pair of ordinary letter codepoints (measured on 9700:
+    # (70,103) = 'F','g'), which then injects phantom SUBs that displace
+    # the genuine readable-text ones. A garbled-font bracket glyph is
+    # always a non-ASCII custom-encoding byte, so require both codepoints
+    # to be >= 128 before trusting the pair for garbled-SUB detection.
     garbled_page_data = [
         (pg_idx, ls, sy) for pg_idx, ls, _, _, sy in per_page
     ]
     bracket_pair = _detect_bracket_pair(garbled_page_data, sqx)
+    if bracket_pair is not None and not (
+        bracket_pair[0] >= 128 and bracket_pair[1] >= 128
+    ):
+        bracket_pair = None
+
+    # Garbled sub-part markers, detected independently of the left margin.
+    # The original garbled path only ran for rows that also carried a
+    # 1-codepoint left-margin span, which in a real paper is only the row
+    # holding the main question number — so "(b)"/"(c)" were never seen.
+    accepted_subs = _accepted_garbled_subs(per_page, bracket_pair, lx)
 
     # Second pass: classify boundaries
     boundaries: list[_Boundary] = []
@@ -496,6 +581,12 @@ def _extract_boundaries(
                     kind=_BoundaryKind.SUB, page_idx=pg_idx, y=span["y0"],
                 ))
 
+        # --- Garbled SUB detection: bracket-shaped markers at x≈sub_q_x ---
+        for y0, _cp in accepted_subs.get(pg_idx, []):
+            boundaries.append(_Boundary(
+                kind=_BoundaryKind.SUB, page_idx=pg_idx, y=y0,
+            ))
+
         # --- Readable SUBSUB detection: "(i)", "(ii)", … at x≈subsub_q_x ---
         # Garbled-font papers aren't supported here (no bracket-pair-style
         # decoding exists for this tier yet) — only readable text is matched.
@@ -512,7 +603,27 @@ def _extract_boundaries(
                 ))
 
     boundaries.sort(key=lambda b: (b.page_idx, b.y, _KIND_RANK[b.kind]))
+    boundaries = _dedupe_boundaries(boundaries)
     return _reconcile_main_numbers(boundaries)
+
+
+def _dedupe_boundaries(boundaries: list[_Boundary]) -> list[_Boundary]:
+    """Collapse boundaries of the same kind at the same (page, ~y).
+
+    The garbled companion path and the new sub-column path can both emit a
+    SUB for the same marker; a MAIN and SUB at one coordinate must stay
+    distinct. Keys on kind + page + rounded y, keeping the first (already
+    sorted by kind rank).
+    """
+    seen: set[tuple[int, int, float]] = set()
+    out: list[_Boundary] = []
+    for b in boundaries:
+        key = (_KIND_RANK[b.kind], b.page_idx, round(b.y, 1))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(b)
+    return out
 
 
 def _reconcile_main_numbers(
