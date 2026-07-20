@@ -181,6 +181,17 @@ class _BoundaryKind(StrEnum):
     SUBSUB = "subsub"
 
 
+# Boundaries on the same line must sort outermost-first: an inline
+# "1 (a) (i)" row has to parent as MAIN → SUB → SUBSUB. This used to be an
+# accident of the order the classification loops appended in; making it
+# explicit keeps grouping correct no matter which loop emits what.
+_KIND_RANK: dict[_BoundaryKind, int] = {
+    _BoundaryKind.MAIN: 0,
+    _BoundaryKind.SUB: 1,
+    _BoundaryKind.SUBSUB: 2,
+}
+
+
 class _Boundary(BaseModel):
     kind: _BoundaryKind
     page_idx: int
@@ -500,8 +511,73 @@ def _extract_boundaries(
                     kind=_BoundaryKind.SUBSUB, page_idx=pg_idx, y=span["y0"],
                 ))
 
-    boundaries.sort(key=lambda b: (b.page_idx, b.y))
-    return boundaries
+    boundaries.sort(key=lambda b: (b.page_idx, b.y, _KIND_RANK[b.kind]))
+    return _reconcile_main_numbers(boundaries)
+
+
+def _reconcile_main_numbers(
+    boundaries: list[_Boundary],
+) -> list[_Boundary]:
+    """Resolve MAIN boundaries whose question number could not be decoded.
+
+    A 2-codepoint left-margin span is emitted as MAIN even when the char
+    map cannot decode it. Keeping it with ``question_num=None`` is worse
+    than dropping it: ``_match_boundaries`` can never look it up by number,
+    yet ``_group_boundaries`` still lets it adopt the SUB boundaries that
+    follow — stealing them from the real question. (Measured on 9702_s25:
+    one such phantom sat between Q1 and Q2 and took one of Q1's subs.)
+
+    Decoded numbers form a sparse increasing sequence, so an undecoded MAIN
+    is promoted only when it is the lone candidate in a gap of exactly one;
+    otherwise it is dropped rather than left to corrupt grouping.
+    """
+    mains = [
+        (i, b) for i, b in enumerate(boundaries)
+        if b.kind == _BoundaryKind.MAIN
+    ]
+    if not any(b.question_num is None for _, b in mains):
+        return boundaries
+    if not any(b.question_num is not None for _, b in mains):
+        # Nothing decoded at all (readable-text papers with no page-number
+        # char map, synthetic test PDFs). There is no sequence to reconcile
+        # against, and _match_boundaries falls back to positional matching
+        # in exactly this case — leave the boundaries alone.
+        return boundaries
+
+    def prev_decoded(pos: int) -> int:
+        for p in range(pos - 1, -1, -1):
+            num = mains[p][1].question_num
+            if num is not None:
+                return num
+        return 0
+
+    def next_decoded(pos: int) -> int | None:
+        for n in range(pos + 1, len(mains)):
+            num = mains[n][1].question_num
+            if num is not None:
+                return num
+        return None
+
+    drop: set[int] = set()
+    for pos, (idx, b) in enumerate(mains):
+        if b.question_num is not None:
+            continue
+
+        prev_num = prev_decoded(pos)
+        next_num = next_decoded(pos)
+        # Undecoded MAINs sharing this pair of decoded anchors.
+        run = sum(
+            1 for p, (_, ob) in enumerate(mains)
+            if ob.question_num is None and prev_decoded(p) == prev_num
+        )
+        gap = (next_num - prev_num - 1) if next_num is not None else 1
+
+        if run == 1 and gap == 1:
+            b.question_num = prev_num + 1
+        else:
+            drop.add(idx)
+
+    return [b for i, b in enumerate(boundaries) if i not in drop]
 
 
 # ── Match boundaries to question IDs ──────────────────────────────
