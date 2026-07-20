@@ -146,6 +146,33 @@ class QuestionRegion(BaseModel):
     clips: list[PageClip]
 
 
+class SegmentationReport(BaseModel):
+    """Why segmentation matched what it did.
+
+    Detection failures used to be invisible: a question whose boundaries
+    collapsed to a zero-height span still produced a ``QuestionRegion``
+    (with no clips) and still counted as "matched", so the UI reported
+    full success while nothing was actually croppable. This report makes
+    the shortfall explicit so callers can tell the user which questions
+    need manual page numbers.
+    """
+    matched: list[str] = []
+    unmatched: list[str] = []
+    # question_id → why it produced no usable region
+    reasons: dict[str, str] = {}
+    # Detection diagnostics, for debugging a paper that segments badly.
+    main_count: int = 0
+    sub_count: int = 0
+    subsub_count: int = 0
+    bracket_pair_found: bool = False
+    char_map_size: int = 0
+
+
+# Reasons recorded in SegmentationReport.reasons
+_REASON_DEGENERATE = "degenerate"      # boundaries collapsed to ~zero height
+_REASON_OUT_OF_ORDER = "out_of_order"  # next boundary sits above this one
+
+
 # ── Internal types ────────────────────────────────────────────────
 
 class _BoundaryKind(StrEnum):
@@ -690,8 +717,14 @@ def _build_regions(
     top_margin: float,
     *,
     last_content_page: int | None = None,
+    reasons: dict[str, str] | None = None,
 ) -> list[QuestionRegion]:
-    """Convert (qid, page, y) tuples into QuestionRegion with PageClips."""
+    """Convert (qid, page, y) tuples into QuestionRegion with PageClips.
+
+    Never returns a region with no clips: a question whose span collapses
+    is dropped and the reason recorded in ``reasons`` (when provided), so
+    callers report it as unmatched instead of silently croppable-but-empty.
+    """
     if not matches:
         return []
 
@@ -713,12 +746,17 @@ def _build_regions(
             # coordinate (e.g. a mis-detected duplicate boundary, or a
             # sub-question with no content of its own). Skip degenerate
             # clips rather than emitting a zero/negative-height crop.
-            if end_y - start_y >= _MIN_CLIP_HEIGHT:
+            delta = end_y - start_y
+            if delta >= _MIN_CLIP_HEIGHT:
                 clips.append(PageClip(
                     page_idx=start_page,
                     y_top=start_y,
                     y_bottom=end_y,
                 ))
+            elif reasons is not None:
+                reasons[qid] = (
+                    _REASON_OUT_OF_ORDER if delta < 0 else _REASON_DEGENERATE
+                )
         else:
             # First page: start_y → footer
             clips.append(PageClip(
@@ -741,7 +779,13 @@ def _build_regions(
                     y_bottom=end_y,
                 ))
 
-        regions.append(QuestionRegion(question_id=qid, clips=clips))
+        # A clip-less region is indistinguishable from "not found" for every
+        # consumer, so don't manufacture one — drop it and let the caller
+        # report the question as unmatched.
+        if clips:
+            regions.append(QuestionRegion(question_id=qid, clips=clips))
+        elif reasons is not None:
+            reasons.setdefault(qid, _REASON_DEGENERATE)
 
     return regions
 
@@ -767,14 +811,44 @@ def segment_questions(
         List of QuestionRegion, one per matched question.
         May be shorter than question_ids if detection is partial.
     """
+    regions, _report = segment_questions_report(
+        source, question_ids, skip_pages=skip_pages,
+    )
+    return regions
+
+
+def segment_questions_report(
+    source: str | bytes,
+    question_ids: list[str],
+    *,
+    skip_pages: set[int] | None = None,
+) -> tuple[list[QuestionRegion], SegmentationReport]:
+    """Same as :func:`segment_questions`, plus a report on what failed.
+
+    Use this when the caller needs to tell the user which questions could
+    not be located — ``segment_questions`` alone cannot distinguish "not
+    detected" from "detected but unusable".
+    """
     if skip_pages is None:
         skip_pages = {0}
 
     pages = _load_pages(source)
+    report = SegmentationReport(unmatched=list(question_ids))
 
     boundaries = _extract_boundaries(pages, skip_pages=skip_pages)
+    report.main_count = sum(
+        1 for b in boundaries if b.kind == _BoundaryKind.MAIN
+    )
+    report.sub_count = sum(
+        1 for b in boundaries if b.kind == _BoundaryKind.SUB
+    )
+    report.subsub_count = sum(
+        1 for b in boundaries if b.kind == _BoundaryKind.SUBSUB
+    )
+    char_map = _build_char_mapping(pages)
+    report.char_map_size = len(char_map) if char_map else 0
     if not boundaries:
-        return []
+        return [], report
 
     fmt = _detect_format(pages[0])
     params = _FORMAT_PARAMS[fmt]
@@ -783,10 +857,18 @@ def segment_questions(
     last_content = _find_last_content_page(pages, after=last_boundary_page)
 
     matches = _match_boundaries(boundaries, question_ids)
-    return _build_regions(
+    reasons: dict[str, str] = {}
+    regions = _build_regions(
         matches, len(pages), params["footer_y"], params["top_margin"],
         last_content_page=last_content,
+        reasons=reasons,
     )
+
+    matched, unmatched = validate_regions(regions, question_ids)
+    report.matched = matched
+    report.unmatched = unmatched
+    report.reasons = reasons
+    return regions, report
 
 
 def validate_regions(
@@ -795,10 +877,13 @@ def validate_regions(
 ) -> tuple[list[str], list[str]]:
     """Check which questions were matched.
 
+    A region with no clips is NOT a match: nothing can be cropped or sent
+    to the grader for it, so counting it as matched only hides the failure.
+
     Returns:
         (matched_ids, unmatched_ids)
     """
-    matched = {r.question_id for r in regions}
+    matched = {r.question_id for r in regions if r.clips}
     matched_list = [q for q in question_ids if q in matched]
     unmatched_list = [q for q in question_ids if q not in matched]
     return matched_list, unmatched_list

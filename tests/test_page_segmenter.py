@@ -374,6 +374,54 @@ class TestBuildRegions:
         regions = _build_regions([], page_count=1, footer_y=740.0, top_margin=45.0)
         assert regions == []
 
+    def test_collapsed_siblings_are_dropped_not_emitted_empty(self) -> None:
+        # Sub-questions whose boundaries were never detected all get
+        # anchored to the same coordinate. Such a region has nothing to
+        # crop, so it must not be returned at all.
+        matches = [("Q1a", 0, 60.0), ("Q1b", 0, 60.0), ("Q1c", 0, 400.0)]
+        reasons: dict[str, str] = {}
+        regions = _build_regions(
+            matches, page_count=1, footer_y=740.0, top_margin=45.0,
+            reasons=reasons,
+        )
+
+        assert [r.question_id for r in regions] == ["Q1b", "Q1c"]
+        assert all(r.clips for r in regions)
+        assert reasons == {"Q1a": "degenerate"}
+
+    def test_out_of_order_boundaries_reported_distinctly(self) -> None:
+        matches = [("Q1a", 0, 400.0), ("Q1b", 0, 100.0)]
+        reasons: dict[str, str] = {}
+        regions = _build_regions(
+            matches, page_count=1, footer_y=740.0, top_margin=45.0,
+            reasons=reasons,
+        )
+
+        assert [r.question_id for r in regions] == ["Q1b"]
+        assert reasons == {"Q1a": "out_of_order"}
+
+    def test_delta_at_min_clip_height_boundary(self) -> None:
+        # Exactly _MIN_CLIP_HEIGHT is kept; one point under is dropped.
+        keep = _build_regions(
+            [("Q1", 0, 100.0), ("Q2", 0, 120.0)],
+            page_count=1, footer_y=740.0, top_margin=45.0,
+        )
+        assert keep[0].question_id == "Q1"
+
+        drop = _build_regions(
+            [("Q1", 0, 100.0), ("Q2", 0, 119.0)],
+            page_count=1, footer_y=740.0, top_margin=45.0,
+        )
+        assert [r.question_id for r in drop] == ["Q2"]
+
+    def test_reasons_optional(self) -> None:
+        # Callers that don't pass `reasons` must still work.
+        regions = _build_regions(
+            [("Q1", 0, 60.0), ("Q2", 0, 60.0)],
+            page_count=1, footer_y=740.0, top_margin=45.0,
+        )
+        assert [r.question_id for r in regions] == ["Q2"]
+
 
 # ── Tests: format detection ───────────────────────────────────────
 
@@ -390,21 +438,38 @@ class TestDetectFormat:
 
 # ── Tests: validate_regions ───────────────────────────────────────
 
+def _clip(page: int = 0) -> PageClip:
+    """A clip tall enough to be usable, for match/unmatch assertions."""
+    return PageClip(page_idx=page, y_top=100.0, y_bottom=400.0)
+
+
 class TestValidateRegions:
     def test_all_matched(self) -> None:
         regions = [
-            QuestionRegion(question_id="Q1a", clips=[]),
-            QuestionRegion(question_id="Q1b", clips=[]),
+            QuestionRegion(question_id="Q1a", clips=[_clip()]),
+            QuestionRegion(question_id="Q1b", clips=[_clip()]),
         ]
         matched, unmatched = validate_regions(regions, ["Q1a", "Q1b"])
         assert matched == ["Q1a", "Q1b"]
         assert unmatched == []
 
     def test_partial_match(self) -> None:
-        regions = [QuestionRegion(question_id="Q1a", clips=[])]
+        regions = [QuestionRegion(question_id="Q1a", clips=[_clip()])]
         matched, unmatched = validate_regions(regions, ["Q1a", "Q1b", "Q2"])
         assert matched == ["Q1a"]
         assert unmatched == ["Q1b", "Q2"]
+
+    def test_clipless_region_is_not_a_match(self) -> None:
+        # A region with no clips cannot be cropped or graded — counting it
+        # as matched is what made the UI report "30/30" on a paper where
+        # two thirds of the questions were unusable.
+        regions = [
+            QuestionRegion(question_id="Q1a", clips=[_clip()]),
+            QuestionRegion(question_id="Q1b", clips=[]),
+        ]
+        matched, unmatched = validate_regions(regions, ["Q1a", "Q1b"])
+        assert matched == ["Q1a"]
+        assert unmatched == ["Q1b"]
 
 
 # ── Tests: full pipeline ──────────────────────────────────────────
