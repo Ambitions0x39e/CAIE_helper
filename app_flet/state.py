@@ -49,6 +49,10 @@ class AppState:
     auto_pages: dict[str, str] = field(default_factory=dict)
     auto_clips: dict[str, list[PageClip]] = field(default_factory=dict)
     auto_pages_done: bool = False
+    # Questions the segmenter could not locate — the user must type their
+    # page numbers by hand. Kept separate from auto_pages so the UI can
+    # report the real shortfall instead of counting phantom entries.
+    unmatched_questions: list[str] = field(default_factory=list)
     deleted_questions: set[str] = field(default_factory=set)
     grading_results: list[object] = field(default_factory=list)
     score_overrides: dict[str, float] = field(default_factory=dict)

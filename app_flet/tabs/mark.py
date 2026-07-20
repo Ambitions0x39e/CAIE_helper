@@ -23,7 +23,7 @@ from modules.ms_parser import (
     parse_mark_scheme,
     resolve_ms_start_page,
 )
-from modules.page_segmenter import PageClip, segment_questions, validate_regions
+from modules.page_segmenter import PageClip, segment_questions_report
 from modules.renderer import NativeRenderer, page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
@@ -531,12 +531,14 @@ def build_mark_tab(
             f"PDF 共 {state.answer_total_pages} 页",
             f"自动识别 {matched_count}/{total_q} 题",
         ]
-        no_matches = matched_count == 0
+        # Partial detection is the common failure, not an edge case — warn
+        # on any shortfall rather than only when nothing at all was found.
+        incomplete = matched_count < total_q
         controls.append(ft.Container(
             ft.Row([
                 ft.Icon(
-                    ft.Icons.WARNING if no_matches else ft.Icons.INFO,
-                    color=ft.Colors.ORANGE if no_matches else ft.Colors.BLUE,
+                    ft.Icons.WARNING if incomplete else ft.Icons.INFO,
+                    color=ft.Colors.ORANGE if incomplete else ft.Colors.BLUE,
                     size=18,
                 ),
                 ft.Text(
@@ -544,13 +546,17 @@ def build_mark_tab(
                     color=ft.Colors.BLACK, size=13,
                 ),
             ]),
-            bgcolor=ft.Colors.ORANGE_50 if no_matches else ft.Colors.BLUE_50,
+            bgcolor=ft.Colors.ORANGE_50 if incomplete else ft.Colors.BLUE_50,
             border_radius=8, padding=12,
         ))
-        if no_matches:
+        if incomplete:
+            missing = state.unmatched_questions
+            preview = "、".join(missing[:8])
+            if len(missing) > 8:
+                preview += f" 等 {len(missing)} 题"
             controls.append(ft.Text(
-                "未能自动匹配任何题目页码，请在下方为每题手动输入页码"
-                "（例如 2 或 2,3）。",
+                f"未自动识别：{preview}。"
+                "请在下方为这些题手动输入页码（例如 2 或 2,3）。",
                 color=ft.Colors.ORANGE, size=12,
             ))
 
@@ -574,11 +580,17 @@ def build_mark_tab(
         cells: list[ft.Control] = []
         for qid, qcfg in q_items:
             default_val = state.auto_pages.get(qid, "")
+            # An empty box here means detection failed for this question —
+            # colour it so it reads as "type a page number", not as a glitch.
+            needs_input = not default_val
             tf = ft.TextField(
                 label=f"{qid} ({qcfg.max_marks}m)",
-                label_style=ft.TextStyle(color=ft.Colors.BLACK),
+                label_style=ft.TextStyle(
+                    color=ft.Colors.ORANGE_800 if needs_input else ft.Colors.BLACK,
+                ),
                 value=default_val,
-                hint_text="例: 2,3",
+                hint_text="待填" if needs_input else "例: 2,3",
+                border_color=ft.Colors.ORANGE if needs_input else None,
                 expand=True,
                 color=ft.Colors.BLACK,
                 dense=True,
@@ -638,22 +650,22 @@ def build_mark_tab(
                 # Page count + segmentation both pdfminer-backed (iOS-safe).
                 state.answer_total_pages = page_count(path)
                 q_ids = list(pc.questions.keys())
-                regions = segment_questions(path, q_ids)
-                _matched, _unmatched = validate_regions(
-                    regions, q_ids,
-                )
+                regions, report = segment_questions_report(path, q_ids)
                 auto_pages: dict[str, str] = {}
                 auto_clips: dict[str, list[PageClip]] = {}
                 for r in regions:
                     page_nums = sorted(
                         {c.page_idx + 1 for c in r.clips}
                     )
+                    if not page_nums:
+                        continue  # never store a phantom (blank) entry
                     auto_pages[r.question_id] = ",".join(
                         str(p) for p in page_nums
                     )
                     auto_clips[r.question_id] = r.clips
                 state.auto_pages = auto_pages
                 state.auto_clips = auto_clips
+                state.unmatched_questions = report.unmatched
                 state.auto_pages_done = True
                 _rebuild()
             except Exception as exc:
