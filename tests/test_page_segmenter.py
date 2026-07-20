@@ -11,6 +11,7 @@ from fpdf import FPDF
 from modules.page_segmenter import (
     PageClip,
     QuestionRegion,
+    _accepted_garbled_subs,
     _Boundary,
     _BoundaryKind,
     _build_char_mapping,
@@ -434,6 +435,85 @@ class TestDetectFormat:
 
     def test_unknown_defaults_to_letter(self) -> None:
         assert _detect_format(SimpleNamespace(width=500)) == "letter"  # type: ignore[arg-type]
+
+
+# ── Tests: garbled sub-part acceptance (RC1) ──────────────────────
+
+def _sub_span(y: float, cps: list[int], x: float = 93.7) -> dict:
+    """A sub-column span dict as _extract_boundaries builds them."""
+    return {"x0": x, "y0": y, "text": "", "len": len(cps), "cps": cps}
+
+
+class TestAcceptedGarbledSubs:
+    """The RC1 fix: detect (a)/(b)/(c) without a left-margin companion.
+
+    Bracket pair is (240, 241); letter glyphs 35/37/248 = a/b/c. These
+    take span dicts directly, so no PDF is needed.
+    """
+
+    def _per_page(self, pages_spans: list[list[dict]]) -> list:
+        # (page_idx, left_spans, sub_q_spans, subsub_spans, spans_at_y)
+        out = []
+        for i, sub_spans in enumerate(pages_spans):
+            sat: dict[float, list[dict]] = {}
+            for s in sub_spans:
+                sat.setdefault(s["y0"], []).append(s)
+            out.append((i, [], sub_spans, [], sat))
+        return out
+
+    def test_subs_detected_without_companion(self) -> None:
+        # (a)/(b)/(c) on two pages, no left-margin span anywhere.
+        page = [
+            _sub_span(60.0, [240, 35, 241, 5]),   # (a) + trailing glue
+            _sub_span(300.0, [240, 37, 241, 5]),  # (b)
+            _sub_span(500.0, [240, 248, 241, 5]),  # (c)
+        ]
+        per_page = self._per_page([page, page])
+        acc = _accepted_garbled_subs(per_page, (240, 241), lx=72.4)
+        assert [m for _y, m in acc[0]] == [35, 37, 248]
+
+    def test_readable_paper_gets_nothing(self) -> None:
+        # bracket_pair None (readable) → never emit garbled subs.
+        page = [_sub_span(60.0, [40, ord("a"), 41])]
+        acc = _accepted_garbled_subs(self._per_page([page]), None, lx=72.4)
+        assert acc == {}
+
+    def test_body_text_left_of_marker_rejected(self) -> None:
+        # A bracketed token with a real word to its left is a phrase, not a
+        # marker. Companion word sits between the margin and the marker.
+        y = 60.0
+        marker = _sub_span(y, [240, 35, 241, 5])
+        body = {"x0": 80.0, "y0": y, "text": "", "len": 4, "cps": [1, 2, 3, 4]}
+        per_page = [(0, [], [marker], [], {y: [body, marker]})]
+        # Two clean occurrences on later pages so glyph 35 clears the
+        # recurrence filter on its own — isolating the left-of-marker test
+        # from the singleton filter.
+        for i, cy in ((1, 90.0), (2, 120.0)):
+            clean = _sub_span(cy, [240, 35, 241, 5])
+            per_page.append((i, [], [clean], [], {cy: [clean]}))
+        acc = _accepted_garbled_subs(per_page, (240, 241), lx=72.4)
+        # page 0's marker is preempted by body text; the others are clean.
+        assert 0 not in acc
+        assert acc[1] == [(90.0, 35)]
+        assert acc[2] == [(120.0, 35)]
+
+    def test_left_margin_number_is_not_preemption(self) -> None:
+        # The question number shares the first sub-part's line at x≈lx —
+        # that companion is expected and must NOT reject the marker.
+        y = 60.0
+        qnum = {"x0": 72.4, "y0": y, "text": "", "len": 2, "cps": [61, 5]}
+        marker = _sub_span(y, [240, 35, 241, 5])
+        p0 = (0, [], [marker], [], {y: [qnum, marker]})
+        m2 = _sub_span(90.0, [240, 35, 241, 5])
+        p1 = (1, [], [m2], [], {90.0: [m2]})
+        acc = _accepted_garbled_subs([p0, p1], (240, 241), lx=72.4)
+        assert acc[0] == [(60.0, 35)]
+
+    def test_singleton_glyph_filtered_out(self) -> None:
+        # A glyph seen only once is likely a coincidental bracket shape.
+        page = [_sub_span(60.0, [240, 99, 241, 5])]
+        acc = _accepted_garbled_subs(self._per_page([page]), (240, 241), lx=72.4)
+        assert acc == {}
 
 
 # ── Tests: validate_regions ───────────────────────────────────────
