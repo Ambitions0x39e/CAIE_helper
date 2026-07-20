@@ -8,6 +8,12 @@ A local app to download CIE past papers, mark them with AI, and track your score
 2. Run `uv sync` to install the dependencies.
 3. Build the app with `uv run flet build <target>`, where `<target>` is `windows`, `macos`, `ipa` (iOS device), or `ios-simulator`.
 
+### Installers for distribution
+- **Windows**: compile `packaging/windows/cie-helper.iss` with Inno Setup 6 → `dist/cie-helper-<version>-setup.exe`.
+- **macOS**: run `./packaging/macos/build-pkg.sh` after `flet build macos` → `dist/cie-helper-<version>.pkg`. The app inside a .pkg installs without Gatekeeper's quarantine flag, so it launches cleanly; only the unsigned .pkg itself needs a one-time bypass — right-click → Open (macOS 15+: System Settings → Privacy & Security → "Open Anyway").
+
+Both installers ship unsigned, so expect the usual first-open warnings (SmartScreen on Windows, Gatekeeper on macOS).
+
 ---
 
 ## Marking
