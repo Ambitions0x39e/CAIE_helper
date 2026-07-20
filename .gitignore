@@ -21,3 +21,6 @@ in_dev/
 
 # Local dev spikes (not part of the shipped project)
 spikes/
+
+# Local release helper (personal workflow, not shipped)
+release.ps1
