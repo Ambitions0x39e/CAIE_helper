@@ -57,6 +57,9 @@ class AppState:
     grading_results: list[object] = field(default_factory=list)
     score_overrides: dict[str, float] = field(default_factory=dict)
     grading_confirmed: bool = False
+    # Last grading failure, shown as a persistent banner (a snackbar toast
+    # auto-dismisses and is easy to miss on a long-running grade).
+    grading_error: str | None = None
 
     # Mark tab — MCQ grading
     mcq_qp_path: str | None = None

@@ -6,13 +6,18 @@ app-independent logic.
 """
 from __future__ import annotations
 
+import asyncio
 import tempfile
+import threading
 from pathlib import Path
 
+import pytest
 from fpdf import FPDF
 
+from modules import renderer as renderer_mod
 from modules.page_segmenter import PageClip
 from modules.renderer import (
+    NativeRenderer,
     _extract_pages,
     full_page_clips,
     page_count,
@@ -75,6 +80,54 @@ def test_extract_pages_shrinks_large_source() -> None:
     assert remap == {0: 0}
     assert page_count(sub) == 1
     assert len(sub) < len(pdf)
+
+
+def test_local_render_produces_png_per_clip() -> None:
+    # In-process rendering (pypdfium2) is the desktop path that sidesteps the
+    # RPC. Each clip must yield one PNG, regardless of the native service.
+    pdf = _make_pdf_bytes(2)
+    clips = [
+        PageClip(page_idx=0, y_top=0.0, y_bottom=792.0),
+        PageClip(page_idx=1, y_top=50.0, y_bottom=400.0),
+    ]
+    out = NativeRenderer(None, None).render_regions(pdf, clips)  # type: ignore[arg-type]
+    assert len(out) == 2
+    assert all(b[:8] == b"\x89PNG\r\n\x1a\n" for b in out)
+
+
+class _StallingService:
+    """A PdfRenderer stand-in whose render never completes."""
+
+    async def render_regions(
+        self, pdf: bytes, clips: list, dpi: int,
+    ) -> list[bytes]:
+        await asyncio.Event().wait()  # never set → hangs forever
+        return []
+
+
+def test_render_regions_times_out_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A stalled native render must raise (surfacing an error the grading loop
+    # can show) rather than block future.result() forever — the root cause of
+    # "grading never returns" on an oversized scanned PDF.
+    # Force the native path (as on iOS, where pypdfium2 is absent) so this
+    # exercises the RPC fallback rather than the in-process renderer.
+    monkeypatch.setattr(renderer_mod, "_try_local_render", lambda *a: None)
+    monkeypatch.setattr(renderer_mod, "_RENDER_TIMEOUT_S", 0.3)
+
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    try:
+        r = NativeRenderer(_StallingService(), loop)  # type: ignore[arg-type]
+        pdf = _make_pdf_bytes(2)
+        clips = [PageClip(page_idx=0, y_top=0.0, y_bottom=100.0)]
+        with pytest.raises(TimeoutError, match="渲染超时"):
+            r.render_regions(pdf, clips)
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        t.join(timeout=2)
 
 
 def test_full_page_clips_one_per_page() -> None:

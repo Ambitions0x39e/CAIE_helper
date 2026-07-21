@@ -221,7 +221,7 @@ wheels = [
 
 [[package]]
 name = "cie-helper"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "flet" },
@@ -229,9 +229,11 @@ dependencies = [
     { name = "openai" },
     { name = "pandas" },
     { name = "pdfminer-six" },
+    { name = "pillow", marker = "sys_platform != 'ios'" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-settings" },
     { name = "pypdf" },
+    { name = "pypdfium2", marker = "sys_platform != 'ios'" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -269,9 +271,11 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "pdfminer-six", specifier = ">=20240706" },
     { name = "pdfplumber", marker = "extra == 'legacy'", specifier = ">=0.11.0" },
+    { name = "pillow", marker = "sys_platform != 'ios'", specifier = ">=10.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.7.0" },
     { name = "pydantic-settings", specifier = ">=2.3.0" },
     { name = "pypdf", specifier = ">=6.14.2" },
+    { name = "pypdfium2", marker = "sys_platform != 'ios'", specifier = ">=4.30" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },

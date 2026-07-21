@@ -2,6 +2,74 @@
 
 ---
 
+## 2026-07-21 — 批改卡死根治（进程内渲染）+ 解析进度条位置修复
+
+**改动文件：** `modules/renderer.py`, `modules/grader.py`, `app_flet/main.py`, `app_flet/tabs/mark.py`, `app_flet/state.py`, `tests/test_renderer.py`, `pyproject.toml`, `uv.lock`
+
+### 功能说明
+
+用户在 9700 生物卷（35.6MB 扫描件）上批改 Q4 全部小题时「卡住、拿不到结果、也无报错」。系统化调试定位：批改逻辑/API/clip 数据全部无辜（headless 复现 27 秒跑通全 Q4），故障在**原生 pdfrx 渲染器经 Python↔Dart RPC 传大 payload 时挂起**——扫描件单页子 PDF 就 4.5MB，`future.result()` 又无超时，于是永久死锁。根治办法是绕开 RPC：桌面改用进程内 pypdfium2 渲染。
+
+- **进程内渲染（根治）**：`modules/renderer.py` 新增 `_try_local_render`，用 pypdfium2 在进程内栅格化 + 裁剪 clip 区域，完全不过 RPC，那份损坏 xref 的 35MB 扫描件也 0.8 秒渲完全部 Q4。`render_regions` 优先走本地路径，pypdfium2 缺失时（iOS）回退原生 pdfrx。同为 PDFium 引擎，输出一致。
+- **依赖**：`pyproject.toml` 加 `pypdfium2` + `pillow`，带 `sys_platform != 'ios'` marker——桌面打包含之、`flet build ipa` 排除之，不破坏 iOS 构建。更新了 flet 版本锁定注释里「大 PDF RPC 靠 pypdf 预抽页解决」的过时说法。
+- **渲染超时**（防御纵深）：`render_regions` 的原生回退路径给 `future.result()` 加 120s 超时，超时抛中文错误（含子 PDF 大小）而非无限挂起。
+- **API 超时**：`modules/grader.py` 的 OpenAI 客户端加超时（普通 120s / 思考模式 300s）+ `max_retries=1`，取代默认约 10 分钟。
+- **持久错误横幅**：`app_flet/tabs/mark.py` 批改失败改为在 Step 3 顶部持久红色横幅显示（原来只有几秒自动消失的 snackbar，长时批改容易错过），并 `_log.exception` 记完整堆栈；`AppState` 加 `grading_error` 字段。
+- **作用域日志**：`app_flet/main.py` 加 `_setup_logging`，只开 `cie_helper` 命名空间到 INFO，控制台能看到渲染 payload 大小/计时，方便调试卡顿。
+- **测试**：`tests/test_renderer.py` 加进程内渲染 happy-path（每 clip 出一张 PNG）与原生回退超时用例（monkeypatch 模拟 iOS 无 pypdfium2）。
+
+### 解析进度条位置修复
+
+**改动文件：** `app_flet/tabs/mark.py`
+
+在最后一步（选题/批改）重新选新 MS 解析时，加载条原本 append 在旧选题界面**下方**、埋在页面底部看不见。改为：解析期间用 `parsing_ref` 标志让 `_rebuild` 收起「已解析预览 + Step 2/3/4 选题」整块，只显示 Step 1 选择器 + 进度条；解析结束（成功或失败）在 `finally` 复位标志并重建。
+
+---
+
+## 2026-07-21 — 分割器乱码卷子题检测修复 + v0.3.0 打包/发布/落地页
+
+**改动文件：** `modules/page_segmenter.py`, `tests/test_page_segmenter.py`, `app_flet/tabs/mark.py`, `app_flet/state.py`, `app_flet/tabs/analytics.py`, `packaging/windows/cie-helper.iss`, `packaging/macos/build-pkg.sh`（新增）, `pyproject.toml`, `README.md`, `.gitattributes`（新增）, `.gitignore`, `site/index.html`（新增）, `release.ps1`（新增，gitignored）
+
+### 分割器：CID 乱码卷子题/子子题检测修复（核心）
+
+**改动文件：** `modules/page_segmenter.py`, `tests/test_page_segmenter.py`, `app_flet/tabs/mark.py`, `app_flet/state.py`
+
+用户在 9702 物理 Paper 2 上「页码大量缺失、压根得不到批改结果」。根因是分割器对 CID 乱码卷的子题检测严重漏检，且 UI 假报成功掩盖了失败。分五步修复（S1–S5），每步独立提交、真实卷卡关验证，数学卷零回退。
+
+- **S1 诚实层**（`3529f11`）：`validate_regions` 不再把无 clips 的 region 算作匹配；`_build_regions` 丢弃退化 region 并记 `reasons`（degenerate / out_of_order）；新增 `SegmentationReport` + `segment_questions_report()`，`segment_questions` 变薄包装保持向后兼容。Mark 标签页据实显示识别数、点名未识别题号、未匹配题的页码框标橙色「待填」。9702 从假报 30/30 变为如实 13/30。
+- **S2 假 MAIN 清除**（`e36cdd6`）：`_reconcile_main_numbers` 丢弃无法解码题号的幽灵 MAIN 边界（它会偷走后续 SUB）；边界排序键加入 `_KIND_RANK`（MAIN<SUB<SUBSUB）使同行 `1 (a) (i)` 正确父子化。9702 → 15/30。
+- **S3 乱码 SUB 检测**（`5522d5d`）：`_accepted_garbled_subs` 改由 sub_q_x 列驱动，脱离左边距依赖——原逻辑只有与主题号同行的 `(a)` 能被检出，`(b)/(c)` 左边距为空永远漏掉。判据：括号形状用卷子自身编码 + 非正文占据左侧 + 字母字形跨文档复现≥2 次。守卫：括号对两码点须≥128（非 ASCII）才信任，避免可读卷噪声对注入幻影 SUB。9702 → 18/30。
+- **S5 乱码罗马子子题检测**（`34306cf`）：`_accepted_garbled_subsubs` 检测 `(i)/(ii)/(iii)`——CID 罗马数字是单字形重复（实测 38='i'）。闭括号按值查找（尾部粘连空格 glyph），内部码点须全属罗马字形集。不解码数值，`_match_boundaries` 按位置配对。加 overdetect 护栏：检出数超过评分标准罗马数时回退到 SUB 锚点，防止错位裁剪。**9702 → 30/30 全匹配**，clip 全部有效、页码单调、无薄裁剪。
+- **验证结果**：9702 物理 13→30/30；9231 数学 21/21、9700 生物 27/27 全程零回退。新增 12 个纯数据测试覆盖接受规则与护栏。
+
+### v0.3.0 功能：单请求批改 + 弹性统计布局
+
+**改动文件：** `app_flet/tabs/mark.py`, `app_flet/state.py`, `app_flet/tabs/analytics.py`（commit `f6522d6`）
+
+- **批改请求互斥**：`AppState.grading_in_progress` 锁，数学「开始批改」与 MCQ「检测答案」共用；进行中按钮置灰、重复点击提示，`finally` 复位不卡死。
+- **统计页弹性布局**：窗口宽 ≥950px 时表格在左、折线图占满右侧剩余宽度；更窄时折线图全宽在上、表格在下。按实时窗口宽度判定。
+
+### macOS .pkg 打包 + 发布基建
+
+**改动文件：** `packaging/macos/build-pkg.sh`（新增）, `pyproject.toml`, `README.md`, `.gitattributes`（新增）, `release.ps1`（新增）
+
+- **macOS 安装器**：`build-pkg.sh` 用 `pkgbuild` 包装 `flet build macos` 产物，版本号从 pyproject 单一来源读取、自动探测 .app 名。选 .pkg 而非 .dmg：Installer 装入的文件不带 quarantine 标记，安装后可直接打开、免 Gatekeeper 绕过。
+- **版本同步**：pyproject 版本升到 0.3.0（与 .iss 对齐）。
+- **`.gitattributes`**：强制 `*.sh`/`*.command` 用 LF，防 CRLF 破坏 macOS/Linux 上的 bash。
+- **`release.ps1`**（本地 gitignored）：一条命令改 pyproject + .iss + changelog 三处版本号、`-Build` 直接跑 flet build + ISCC 出安装器。注意：含中文的 .ps1 须存 UTF-8 with BOM，否则 PS5.1 按 GBK 解码乱码。
+
+### 落地页
+
+**改动文件：** `site/index.html`（新增）
+
+- 单页落地页（Neumorphism 拟物风格 + Koodo 式留白），首屏 CIE HELPER 字标、点击下载锚点滚动到下载区，提供 macOS/Windows 两个下载按钮指向 GitHub Release 直链，含首次打开的 Gatekeeper/SmartScreen 放行提示、功能介绍与 FAQ。图标以 data URI 内嵌自包含。
+
+### 发布状态
+
+v0.3.0 GitHub Release 已建为**草稿**（含 `cie-helper-0.3.0.pkg` 91MB + 重新编译含分割修复的 `cie-helper-0.3.0-setup.exe` 48MB），待用户确认后手动发布。分割器 S1–S5 共 4 个 commit 尚未推送。
+
+---
+
 ## 2026-07-16 — Windows 安装包 + 图标 + 白屏根因修复（flet 版本锁定 0.85.3）
 
 **改动文件：** `pyproject.toml`, `packaging/windows/cie-helper.iss`（新增）, `packaging/windows/app.ico`（新增）, `assets/icon.png`（新增）, `extensions/flet_pdf_render/src/flutter/flet_pdf_render/pubspec.yaml`, `CLAUDE.md`, `uv.lock`
