@@ -355,6 +355,68 @@ def _accepted_garbled_subs(
     return dict(result)
 
 
+def _accepted_garbled_subsubs(
+    per_page: list[
+        tuple[int, list[dict[str, Any]], list[dict[str, Any]],
+              list[dict[str, Any]], dict[float, list[dict[str, Any]]]]
+    ],
+    bracket_pair: tuple[int, int] | None,
+) -> dict[int, list[float]]:
+    """Find garbled roman sub-sub markers "(i)/(ii)/(iii)" at subsub_q_x.
+
+    Roman numerals in a CID font are built by repeating one glyph: on 9702
+    "(i)" is ``[240, 38, 241, 5]`` and "(ii)"/"(iii)" repeat glyph 38.
+    A marker is accepted when
+
+    1. it opens and closes with the paper's bracket pair, and
+    2. every interior codepoint belongs to the roman-glyph set — the few
+       most frequent interior glyphs of the bare 3-codepoint "(x)" tokens.
+       Body text indented to this column (e.g. a wrapped line) has interior
+       glyphs outside that tiny set and is rejected.
+
+    The numeral value is never decoded: _match_boundaries pairs romans to
+    their sub-sub IDs positionally, so only the ordered y-positions matter.
+    Returns ``{page_idx: [y0, ...]}``; empty for readable papers.
+    """
+    if bracket_pair is None:
+        return {}
+
+    open_cp, close_cp = bracket_pair
+
+    # Pass 1: collect bracket-shaped candidates at the sub-sub column.
+    # Like the sub markers, a trailing space/text glyph is often glued on
+    # ("(i)" is [240, 38, 241, 5]), so the closing bracket is found by
+    # value, not at the last index; interior is between the two brackets.
+    raw: list[tuple[int, float, list[int]]] = []  # (page, y, interior cps)
+    for pg_idx, _ls, _sq, subsub_spans, _sat in per_page:
+        for span in subsub_spans:
+            cps = span.get("cps") or _parse_codepoints(span["text"])
+            if len(cps) < 3 or cps[0] != open_cp or close_cp not in cps[1:]:
+                continue
+            close_i = cps.index(close_cp, 1)
+            interior = cps[1:close_i]
+            if interior:
+                raw.append((pg_idx, span["y0"], interior))
+
+    # Pass 2: the roman-glyph set = most frequent single interior glyph of
+    # the length-3 "(x)" tokens. Real romans reuse it; noise doesn't.
+    from collections import Counter, defaultdict
+    singles = Counter(
+        interior[0] for _p, _y, interior in raw if len(interior) == 1
+    )
+    roman_glyphs = {g for g, _n in singles.most_common(3)}
+    if not roman_glyphs:
+        return {}
+
+    result: dict[int, list[float]] = defaultdict(list)
+    for pg_idx, y0, interior in raw:
+        if interior and all(cp in roman_glyphs for cp in interior):
+            result[pg_idx].append(y0)
+    for pg_idx in result:
+        result[pg_idx].sort()
+    return dict(result)
+
+
 # ── Character mapping (garbled font decoding) ────────────────────
 
 def _build_char_mapping(
@@ -519,6 +581,10 @@ def _extract_boundaries(
     # 1-codepoint left-margin span, which in a real paper is only the row
     # holding the main question number — so "(b)"/"(c)" were never seen.
     accepted_subs = _accepted_garbled_subs(per_page, bracket_pair, lx)
+    # Roman sub-sub markers "(i)/(ii)/(iii)" in the garbled font — the
+    # readable-text SUBSUB path below can't decode them (raw text is
+    # "(cid:..)" not "(i)").
+    accepted_subsubs = _accepted_garbled_subsubs(per_page, bracket_pair)
 
     # Second pass: classify boundaries
     boundaries: list[_Boundary] = []
@@ -587,9 +653,15 @@ def _extract_boundaries(
                 kind=_BoundaryKind.SUB, page_idx=pg_idx, y=y0,
             ))
 
+        # --- Garbled SUBSUB detection: "(i)/(ii)/(iii)" at x≈subsub_q_x ---
+        for y0 in accepted_subsubs.get(pg_idx, []):
+            boundaries.append(_Boundary(
+                kind=_BoundaryKind.SUBSUB, page_idx=pg_idx, y=y0,
+            ))
+
         # --- Readable SUBSUB detection: "(i)", "(ii)", … at x≈subsub_q_x ---
-        # Garbled-font papers aren't supported here (no bracket-pair-style
-        # decoding exists for this tier yet) — only readable text is matched.
+        # Only fires on readable-text papers; the garbled path above covers
+        # CID-encoded ones.
         for span in subsub_q_spans:
             text = span["text"]
             if (
@@ -845,6 +917,15 @@ def _match_boundaries(
             romans = romans_by_letter.get(letter, [])
 
             if not roman or not subsub_bs or qid not in romans:
+                matches.append((qid, sub_b.page_idx, sub_b.y))
+                continue
+
+            # More SUBSUBs than the mark scheme has romans for this letter
+            # means the detector over-fired. Blind positional indexing would
+            # then shift every roman crop by one — a wrong crop, worse than a
+            # coarse one. Distrust the tier for this letter and fall back to
+            # the letter's own boundary.
+            if len(subsub_bs) > len(romans):
                 matches.append((qid, sub_b.page_idx, sub_b.y))
                 continue
 
