@@ -109,6 +109,25 @@ def test_parse_image_ms_response_empty() -> None:
     assert result == {}
 
 
+def test_parse_image_ms_response_non_integer_marks() -> None:
+    # The VL model returns "N/A" (or floats / blanks) for rows without a
+    # clean integer mark. A single such row must not crash the whole parse
+    # — this is what made the 9701 chemistry mark scheme fail entirely.
+    raw = json.dumps({
+        "questions": [
+            {"id": "2(a)", "max_marks": "N/A", "mark_scheme": "note"},
+            {"id": "2(b)", "max_marks": "", "mark_scheme": "note"},
+            {"id": "2(c)", "max_marks": 2.0, "mark_scheme": "B2"},
+            {"id": "3", "max_marks": "3", "mark_scheme": "M3"},
+        ]
+    })
+    result = _parse_image_ms_response(raw)
+    assert result["Q2a"].max_marks == 0
+    assert result["Q2b"].max_marks == 0
+    assert result["Q2c"].max_marks == 2
+    assert result["Q3"].max_marks == 3
+
+
 # ── detect_ms_start_page ─────────────────────────────────────
 
 _COVER_PAGE = [

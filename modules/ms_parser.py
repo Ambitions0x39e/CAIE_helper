@@ -248,6 +248,23 @@ def _call_vl(
     return str(response.choices[0].message.content)
 
 
+def _coerce_marks(value: object) -> int:
+    """Best-effort int for a VL ``max_marks`` field.
+
+    The model sometimes returns ``"N/A"``, ``""`` or a float for a row
+    without a clean integer mark (a header, a "no marks" note, or a part it
+    couldn't score). Fall back to 0 rather than crashing — one odd row must
+    not throw away every question in the batch (this is what made the whole
+    9701 chemistry mark scheme fail to parse).
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    match = re.match(r"\d+", str(value).strip())
+    return int(match.group()) if match else 0
+
+
 def _parse_image_ms_response(
     raw: str,
 ) -> dict[str, QuestionConfig]:
@@ -271,7 +288,7 @@ def _parse_image_ms_response(
     for entry in data.get("questions", []):
         raw_id = str(entry.get("id", ""))
         qid = normalize_question_id(raw_id)
-        max_marks = int(entry.get("max_marks", 0))
+        max_marks = _coerce_marks(entry.get("max_marks", 0))
         ms_text = str(entry.get("mark_scheme", ""))
         if not ms_text:
             ms_text = "# No mark scheme extracted"
