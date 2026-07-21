@@ -12,6 +12,7 @@ from modules.page_segmenter import (
     PageClip,
     QuestionRegion,
     _accepted_garbled_subs,
+    _accepted_garbled_subsubs,
     _Boundary,
     _BoundaryKind,
     _build_char_mapping,
@@ -342,6 +343,25 @@ class TestMatchBoundaries:
             [_Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50)], []
         ) == []
 
+    def test_subsub_overdetection_falls_back_to_sub(self) -> None:
+        # Two romans in the mark scheme, but three SUBSUBs detected. Blind
+        # indexing would shift crops; the guard anchors all romans to the
+        # letter's SUB boundary instead.
+        boundaries = [
+            _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
+            _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=90),
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=120),
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=200),
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=300),
+        ]
+        question_ids = ["Q1(a)(i)", "Q1(a)(ii)"]
+        matches = _match_boundaries(boundaries, question_ids)
+
+        # First qid is pulled back to MAIN (stem); the second anchors to the
+        # SUB, NOT to some mis-indexed SUBSUB.
+        assert matches[0] == ("Q1(a)(i)", 0, 50)
+        assert matches[1] == ("Q1(a)(ii)", 0, 90)
+
 
 # ── Tests: region building ────────────────────────────────────────
 
@@ -513,6 +533,46 @@ class TestAcceptedGarbledSubs:
         # A glyph seen only once is likely a coincidental bracket shape.
         page = [_sub_span(60.0, [240, 99, 241, 5])]
         acc = _accepted_garbled_subs(self._per_page([page]), (240, 241), lx=72.4)
+        assert acc == {}
+
+
+def _ss_span(y: float, cps: list[int]) -> dict:
+    """A subsub-column span dict (x ≈ 112.0)."""
+    return {"x0": 112.0, "y0": y, "text": "", "len": len(cps), "cps": cps}
+
+
+class TestAcceptedGarbledSubsubs:
+    """The RC2 fix: detect roman sub-subs "(i)/(ii)/(iii)" in a CID font.
+
+    Roman glyph is 38; "(ii)"/"(iii)" repeat it. A trailing glue glyph (5)
+    follows the closing bracket, so the close is found by value, not index.
+    """
+
+    def _per_page(self, pages_spans: list[list[dict]]) -> list:
+        return [(i, [], [], spans, {}) for i, spans in enumerate(pages_spans)]
+
+    def test_roman_markers_detected(self) -> None:
+        page = [
+            _ss_span(100.0, [240, 38, 241, 5]),       # (i)
+            _ss_span(300.0, [240, 38, 38, 241, 5]),   # (ii)
+            _ss_span(500.0, [240, 38, 38, 38, 241, 5]),  # (iii)
+        ]
+        acc = _accepted_garbled_subsubs(self._per_page([page]), (240, 241))
+        assert acc[0] == [100.0, 300.0, 500.0]
+
+    def test_body_text_at_column_rejected(self) -> None:
+        # A wrapped body line indented to the subsub column: bracket-shaped
+        # by coincidence but its interior glyph isn't the roman glyph.
+        page = [
+            _ss_span(100.0, [240, 38, 241, 5]),        # (i) — real
+            _ss_span(200.0, [240, 77, 78, 79, 241, 5]),  # body: mixed glyphs
+        ]
+        acc = _accepted_garbled_subsubs(self._per_page([page]), (240, 241))
+        assert acc[0] == [100.0]
+
+    def test_readable_paper_gets_nothing(self) -> None:
+        page = [_ss_span(100.0, [40, ord("i"), 41])]
+        acc = _accepted_garbled_subsubs(self._per_page([page]), None)
         assert acc == {}
 
 
