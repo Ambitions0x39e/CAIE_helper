@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -22,6 +23,14 @@ if TYPE_CHECKING:
     from asyncio import AbstractEventLoop
 
     from flet_pdf_render import PdfRenderer
+
+_log = logging.getLogger("cie_helper.renderer")
+
+# Upper bound on a single question's native render over the Python↔Dart RPC.
+# Without it, a stalled RPC (e.g. an oversized payload from a scanned PDF)
+# left future.result() blocking forever, hanging the whole grading run with
+# no error — the exact "grading never returns" symptom on a 35MB scan.
+_RENDER_TIMEOUT_S = 120.0
 
 
 def to_pdf_bytes(source: str | bytes | Path) -> bytes:
@@ -65,6 +74,48 @@ def _extract_pages(pdf: bytes, pages: list[int]) -> tuple[bytes, dict[int, int]]
     return buf.getvalue(), remap
 
 
+def _try_local_render(
+    pdf: bytes, clips: list[PageClip], dpi: int,
+) -> list[bytes] | None:
+    """Render clips in-process with pypdfium2, or None if it's unavailable.
+
+    The native pdfrx path ships the source PDF over the Python↔Dart RPC,
+    which stalls on a large/oversized page (a 35MB scanned answer hangs the
+    transport, with no result). pypdfium2 rasterizes in-process — no RPC, no
+    payload limit — and is the same PDFium engine pdfrx uses, so the output
+    matches. It has desktop wheels but no iOS wheel; on iOS the import fails
+    and the caller falls back to the native renderer.
+    """
+    try:
+        import pypdfium2 as pdfium  # type: ignore[import-untyped]
+    except ImportError:
+        return None
+
+    from PIL import Image
+
+    scale = dpi / 72.0
+    doc = pdfium.PdfDocument(pdf)
+    try:
+        page_cache: dict[int, Image.Image] = {}
+        out: list[bytes] = []
+        for c in clips:
+            full = page_cache.get(c.page_idx)
+            if full is None:
+                page = doc[c.page_idx]
+                _, h_pt = page.get_size()
+                full = page.render(scale=scale).to_pil()
+                page_cache[c.page_idx] = full
+            top = max(0, int(c.y_top * scale))
+            bottom = min(full.height, int(c.y_bottom * scale))
+            crop = full.crop((0, top, full.width, bottom))
+            buf = io.BytesIO()
+            crop.save(buf, format="PNG")
+            out.append(buf.getvalue())
+        return out
+    finally:
+        doc.close()
+
+
 def full_page_clips(source: str | bytes | Path) -> list[PageClip]:
     """One full-page clip per page (page sizes read via pdfminer — iOS-safe)."""
     pages = _load_pages(to_pdf_bytes(source))
@@ -92,12 +143,21 @@ class NativeRenderer:
         dpi: int = 200,
     ) -> list[bytes]:
         """Render each clip (full-width vertical slice) to a PNG."""
-        from flet_pdf_render import RenderClip
-
         if not clips:
             return []
 
         pdf = to_pdf_bytes(source)
+
+        # Prefer in-process rendering (pypdfium2) — it avoids the RPC entirely,
+        # so a large/oversized answer PDF renders instead of hanging the
+        # transport. Falls back to the native renderer on iOS (no pypdfium2).
+        local = _try_local_render(pdf, clips, dpi)
+        if local is not None:
+            _log.info("render_regions(local): %d image(s)", len(local))
+            return local
+
+        from flet_pdf_render import RenderClip
+
         # Ship only the pages these clips touch over the RPC (see _extract_pages)
         # — a full GoodNotes export can be 30MB+ and hang the transport.
         needed = sorted({c.page_idx for c in clips})
@@ -106,9 +166,25 @@ class NativeRenderer:
             RenderClip(page=remap[c.page_idx], y_top=c.y_top, y_bottom=c.y_bottom)
             for c in clips
         ]
+        _log.info(
+            "render_regions: %d clip(s) on page(s) %s, sub-PDF %.1f MB, dpi=%d",
+            len(clips), [p + 1 for p in needed], len(sub_pdf) / 1e6, dpi,
+        )
         coro = self._service.render_regions(sub_pdf, rclips, dpi)
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return cast("list[bytes]", future.result())
+        try:
+            result = cast("list[bytes]", future.result(
+                timeout=_RENDER_TIMEOUT_S,
+            ))
+        except TimeoutError:
+            future.cancel()
+            raise TimeoutError(
+                f"原生渲染超时（>{_RENDER_TIMEOUT_S:.0f}s）："
+                f"第 {[p + 1 for p in needed]} 页子 PDF {len(sub_pdf) / 1e6:.1f} MB"
+                "，可能是答卷 PDF 过大/扫描件。请换用更小的答卷或降低 DPI。"
+            ) from None
+        _log.info("render_regions: got %d image(s)", len(result))
+        return result
 
     def render_pages(
         self,

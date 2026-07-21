@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,8 @@ from modules.renderer import NativeRenderer, page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
+
+_log = logging.getLogger("cie_helper.mark")
 
 
 def build_mark_tab(
@@ -58,6 +61,12 @@ def build_mark_tab(
     page_inputs: dict[str, ft.TextField] = {}
     mcq_manual_inputs: dict[str, ft.TextField] = {}
     manual_answer_values: dict[str, str] = {}
+    # While a mark-scheme parse is running, the whole tab collapses to just
+    # Step 1 + this progress bar — otherwise re-parsing from the last step
+    # would append the bar below the stale question list, buried off-screen.
+    parsing_ref: list[bool] = [False]
+    parse_bar_ref: list[ft.ProgressBar | None] = [None]
+    parse_text_ref: list[ft.Text | None] = [None]
 
     # ── Rebuild the entire tab ─────────────────────────────────────
     def _sync_page_inputs_to_state() -> None:
@@ -74,6 +83,14 @@ def build_mark_tab(
         _sync_page_inputs_to_state()
         content.controls.clear()
         content.controls.extend(_build_step1())
+        if parsing_ref[0]:
+            # Parsing in progress: show only the progress bar, nothing below.
+            if parse_bar_ref[0] is not None:
+                content.controls.append(parse_bar_ref[0])
+            if parse_text_ref[0] is not None:
+                content.controls.append(parse_text_ref[0])
+            page.update()
+            return
         if state.paper_config and state.paper_type == PaperType.MATH.value:
             content.controls.extend(_build_step2())
             if state.answer_pdf_path and state.auto_pages_done:
@@ -210,9 +227,13 @@ def build_mark_tab(
             ))
 
         # Parse button (+ cached-result hint on the same row, far right)
-        can_parse = _get_ms_path() is not None and (
-            paper_type_ref[0] == PaperType.MCQ
-            or state.grader_config is not None
+        can_parse = (
+            not parsing_ref[0]
+            and _get_ms_path() is not None
+            and (
+                paper_type_ref[0] == PaperType.MCQ
+                or state.grader_config is not None
+            )
         )
         parse_row: list[ft.Control] = [ft.Button(
             "解析评分标准",
@@ -249,8 +270,8 @@ def build_mark_tab(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ))
 
-        # Parsed config preview
-        if state.paper_config:
+        # Parsed config preview (hidden while a new parse is running)
+        if state.paper_config and not parsing_ref[0]:
             pc = state.paper_config
             q_controls: list[ft.Control] = []
             for qid, qcfg in pc.questions.items():
@@ -411,9 +432,12 @@ def build_mark_tab(
         progress_text = ft.Text(
             "正在解析评分标准…", size=12, color=ft.Colors.GREY,
         )
-        content.controls.append(progress_bar)
-        content.controls.append(progress_text)
-        page.update()
+        # Collapse the tab to Step 1 + this bar so a re-parse from the last
+        # step doesn't bury the bar under the previous question list.
+        parse_bar_ref[0] = progress_bar
+        parse_text_ref[0] = progress_text
+        parsing_ref[0] = True
+        _rebuild()
 
         def _do_parse() -> None:
             try:
@@ -465,9 +489,12 @@ def build_mark_tab(
                     f"{pc.total_marks} 总分",
                     ft.Colors.GREEN,
                 )
-                _rebuild()
             except Exception as exc:
                 show_snack(f"解析失败: {exc}", ft.Colors.RED)
+            finally:
+                parsing_ref[0] = False
+                parse_bar_ref[0] = None
+                parse_text_ref[0] = None
                 _rebuild()
 
         page.run_thread(_do_parse)
@@ -689,6 +716,20 @@ def build_mark_tab(
             ),
         ]
 
+        # Persistent failure banner — a grade that stalls/errors on one
+        # question would otherwise only flash a toast and vanish.
+        if state.grading_error:
+            controls.append(ft.Container(
+                ft.Row([
+                    ft.Icon(ft.Icons.ERROR, color=ft.Colors.RED, size=18),
+                    ft.Text(
+                        state.grading_error,
+                        color=ft.Colors.RED, size=13, expand=True,
+                    ),
+                ], vertical_alignment=ft.CrossAxisAlignment.START, spacing=8),
+                bgcolor=ft.Colors.RED_50, border_radius=8, padding=12,
+            ))
+
         if state.grader_config is None:
             controls.append(ft.Container(
                 ft.Row([
@@ -864,6 +905,7 @@ def build_mark_tab(
             enable_thinking=thinking_ref[0],
         )
 
+        state.grading_error = None  # clear any prior failure banner
         progress_bar = ft.ProgressBar(value=0, visible=True)
         progress_text = ft.Text(
             "正在批改…", size=12, color=ft.Colors.GREY,
@@ -877,6 +919,7 @@ def build_mark_tab(
             results: list[QuestionResult] = []
             total_score = 0
             total_max = 0
+            qid = "?"  # set in the loop; guards the except before it starts
 
             try:
                 renderer = NativeRenderer(
@@ -929,6 +972,11 @@ def build_mark_tab(
                 state.grading_confirmed = False
 
             except Exception as exc:
+                # Log the full traceback (a toast auto-dismisses and the
+                # stack is what pins down a render/API stall) and keep the
+                # message on screen as a banner until the next grade.
+                _log.exception("grading failed on question %s", qid)
+                state.grading_error = f"批改失败（{qid}）: {exc}"
                 show_snack(f"批改失败: {exc}", ft.Colors.RED)
             finally:
                 state.grading_in_progress = False

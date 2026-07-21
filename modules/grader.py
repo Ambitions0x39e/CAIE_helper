@@ -112,9 +112,15 @@ def grade_question(
     if template is None:
         raise NotImplementedError(f"No grading prompt for {paper_type.value}")
 
+    # Cap the request: the SDK default is 600s × retries (~30 min), which
+    # reads as an indefinite hang. Thinking mode legitimately runs longer,
+    # so give it a wider budget.
+    timeout = 300.0 if config.enable_thinking else 120.0
     client = OpenAI(
         api_key=config.api_key.get_secret_value(),
         base_url=config.base_url,
+        timeout=timeout,
+        max_retries=1,
     )
 
     content = []

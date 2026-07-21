@@ -4,44 +4,86 @@ Run with:  uv run flet run app_flet
 """
 from __future__ import annotations
 
+import logging
+
 import flet as ft
 from flet_pdf_render import PdfRenderer
 
-from app_flet.components.dialogs import show_settings_dialog
+from app_flet.components.dialogs import show_score_dialog
 from app_flet.state import AppState
 from app_flet.tabs.analytics import build_analytics_tab
 from app_flet.tabs.download import build_download_tab
 from app_flet.tabs.manage import build_manage_tab
 from app_flet.tabs.mark import build_mark_tab
+from app_flet.tabs.settings import build_settings_tab
 from core.settings import GraderConfig, MailConfig, app_settings
 
 
+def _setup_logging() -> None:
+    """Route the app's own loggers to the console at INFO.
+
+    Scoped to the ``cie_helper`` namespace so render payload sizes / timing
+    show up when debugging a stuck grading run, without turning on every
+    third-party library's chatter.
+    """
+    logger = logging.getLogger("cie_helper")
+    if logger.handlers:  # already configured (hot reload)
+        return
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    logger.addHandler(handler)
+
+
 def main(page: ft.Page) -> None:
+    _setup_logging()
     page.title = "CIE Helper"
     page.theme_mode = ft.ThemeMode.LIGHT
     _color_scheme = ft.ColorScheme(
         on_surface=ft.Colors.BLACK,
         primary=ft.Colors.BLUE,
     )
+    # Pick a Simplified-Chinese font that actually exists on this platform.
+    # "PingFang SC" is Apple-only; on Windows it's missing, so Flutter fell
+    # back to a Japanese-preferring CJK font and rendered Han characters with
+    # the wrong (JP/KR) glyph forms. Lead with each platform's native zh-CN
+    # font; the fallback chain covers the rest. No bundled font needed —
+    # every target ships a Simplified-Chinese system font.
+    _zh_fallback = [
+        "Microsoft YaHei", "PingFang SC",
+        "Noto Sans SC", "Noto Sans CJK SC", "sans-serif",
+    ]
+    if page.platform == ft.PagePlatform.WINDOWS:
+        _zh_font = "Microsoft YaHei"
+    elif page.platform in (ft.PagePlatform.MACOS, ft.PagePlatform.IOS):
+        _zh_font = "PingFang SC"
+    else:  # Linux / Android
+        _zh_font = "Noto Sans CJK SC"
+
+    def _zh_style(**kw: object) -> ft.TextStyle:
+        return ft.TextStyle(
+            font_family=_zh_font,
+            font_family_fallback=_zh_fallback,
+            color=ft.Colors.BLACK,
+            **kw,  # type: ignore[arg-type]
+        )
+
     page.theme = ft.Theme(
-        font_family="PingFang SC",
+        font_family=_zh_font,
         color_scheme=_color_scheme,
         text_theme=ft.TextTheme(
-            body_medium=ft.TextStyle(
-                font_family="PingFang SC",
-                color=ft.Colors.BLACK,
-                font_family_fallback=[
-                    "Microsoft YaHei",
-                    "Noto Sans SC",
-                    "sans-serif",
-                ],
-            ),
-            body_large=ft.TextStyle(color=ft.Colors.BLACK),
-            body_small=ft.TextStyle(color=ft.Colors.BLACK),
-            label_large=ft.TextStyle(color=ft.Colors.BLACK),
-            label_medium=ft.TextStyle(color=ft.Colors.BLACK),
-            label_small=ft.TextStyle(color=ft.Colors.BLACK),
-            title_medium=ft.TextStyle(color=ft.Colors.BLACK),
+            body_medium=_zh_style(),
+            body_large=_zh_style(),
+            body_small=_zh_style(),
+            label_large=_zh_style(),
+            label_medium=_zh_style(),
+            label_small=_zh_style(),
+            title_medium=_zh_style(),
+            title_large=_zh_style(),
+            title_small=_zh_style(),
         ),
     )
     page.padding = 0
@@ -104,6 +146,10 @@ def main(page: ft.Page) -> None:
                     refresh_cb=refresh_current_tab,
                 )
             )
+        elif idx == 4:
+            content_area.controls.append(
+                build_settings_tab(page, state)
+            )
         page.update()
 
     def on_nav_change(e: ft.ControlEvent) -> None:
@@ -115,6 +161,7 @@ def main(page: ft.Page) -> None:
             ft.NavigationBarDestination(icon=ft.Icons.LIST_ALT, label="管理"),
             ft.NavigationBarDestination(icon=ft.Icons.BAR_CHART, label="统计"),
             ft.NavigationBarDestination(icon=ft.Icons.EDIT, label="批改"),
+            ft.NavigationBarDestination(icon=ft.Icons.SETTINGS, label="设置"),
         ],
         selected_index=0,
         on_change=on_nav_change,  # type: ignore[arg-type]
@@ -132,10 +179,16 @@ def main(page: ft.Page) -> None:
                     color=ft.Colors.BLACK,
                 ),
                 ft.Container(expand=True),
-                ft.IconButton(
-                    ft.Icons.SETTINGS,
-                    tooltip="设置",
-                    on_click=lambda _: show_settings_dialog(page, state),
+                ft.Button(
+                    "登记成绩",
+                    icon=ft.Icons.PLAYLIST_ADD_CHECK,
+                    tooltip="为待完成的试卷登记分数",
+                    on_click=lambda _: show_score_dialog(
+                        page, state, refresh_cb=refresh_current_tab,
+                    ),
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
+                    ),
                 ),
             ],
             spacing=8,

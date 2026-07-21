@@ -20,8 +20,9 @@ dependencies = [
     # 0.86.0 is broken on Chinese-codepage Windows (flet#6686 C4819/C2220
     # compile failure + serious_python 4.3.2 pip-install hangs forever during
     # packaging), and this app no longer needs anything from 0.86: the large-PDF
-    # RPC issue is solved locally via pypdf page pre-extraction in
-    # modules/renderer.py. If an upgrade is ever attempted anyway, bump flet,
+    # RPC hang is sidestepped by rendering in-process with pypdfium2 (see
+    # _try_local_render in modules/renderer.py) instead of shipping the PDF to
+    # the Dart side. If an upgrade is ever attempted anyway, bump flet,
     # flet-cli, flet-desktop AND the extension pubspec's flet range in lockstep.
     "flet>=0.85.3,<0.86",
     "flet-pdf-render",  # local native pdfrx render extension
@@ -34,6 +35,12 @@ dependencies = [
     "openai>=1.30.0",
     "pyyaml>=6.0",
     "pypdf>=6.14.2",
+    # In-process PDF rasterizer for grading — avoids shipping the answer PDF
+    # over the Python↔Dart RPC, which hangs on large/scanned pages. Same
+    # PDFium engine as the native pdfrx renderer. Desktop only: no iOS wheel
+    # (the marker keeps `flet build ipa` working; iOS falls back to pdfrx).
+    "pypdfium2>=4.30 ; sys_platform != 'ios'",
+    "pillow>=10.0 ; sys_platform != 'ios'",
 ]
 
 [project.optional-dependencies]
