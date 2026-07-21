@@ -76,8 +76,16 @@ dev = [
 #  tree isn't needed — and a stale nested build/ there overflows the filesystem
 #  name-length limit during the copy.)
 exclude = [
+    # Not part of the shipped app — and packaging them is actively dangerous.
+    # `flet build` copies the app-source tree with a symlink-FOLLOWING copy.
+    # A leftover `staging/Applications -> /Applications` (from an old dmg
+    # attempt) made the macOS "Packaging Python app" step recursively copy all
+    # of /Applications into the bundle — a runaway that ate ~200 GB and filled
+    # the disk (invisible to du: the growing files were already unlinked).
+    # Keep build output and any staging/asset dirs out of the payload.
+    "build", "staging", "test_papers", "site",
     # dev-only dirs
-    "extensions", "spikes", "tests", "dev", "in_dev", "docs", "packaging", "packaging",
+    "extensions", "spikes", "tests", "dev", "in_dev", "docs", "packaging",
     # environments / vcs / tool caches
     ".venv", ".git", ".claude", ".mypy_cache", ".pytest_cache",
     ".ruff_cache", ".codegraph", ".cursor", "__pycache__", "dist",
