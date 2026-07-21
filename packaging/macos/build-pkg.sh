@@ -35,9 +35,25 @@ fi
 IDENTIFIER="com.ambitions0x39e.cie-helper"
 OUT="$DIST_DIR/cie-helper-$VERSION.pkg"
 
+# Stage just the .app in a clean root so the payload is exactly one bundle
+# mapped to /Applications (no stray build artifacts).
+STAGING="$(mktemp -d)"
+PLIST="$(mktemp -t cie-helper-component).plist"
+trap 'rm -rf "$STAGING" "$PLIST"' EXIT
+cp -R "$APP_PATH" "$STAGING/"
+
+# THE FIX: a component package defaults to BundleIsRelocatable=true, which
+# makes the Installer search for an existing copy of this bundle id anywhere
+# on disk (e.g. build/macos/…app) and install the update THERE instead of
+# /Applications — so /Applications stays empty and the app "vanishes". Force
+# it false so the install always lands at --install-location.
+pkgbuild --analyze --root "$STAGING" "$PLIST"
+plutil -replace 0.BundleIsRelocatable -bool false "$PLIST"
+
 mkdir -p "$DIST_DIR"
 pkgbuild \
-  --component "$APP_PATH" \
+  --root "$STAGING" \
+  --component-plist "$PLIST" \
   --install-location /Applications \
   --identifier "$IDENTIFIER" \
   --version "$VERSION" \
@@ -45,5 +61,6 @@ pkgbuild \
 
 echo ""
 echo "Built: $OUT"
+echo "Installs to: /Applications/$(basename "$APP_PATH")"
 echo "Reminder for recipients: first open needs right-click → Open"
 echo "(macOS 15+: System Settings → Privacy & Security → Open Anyway)."
