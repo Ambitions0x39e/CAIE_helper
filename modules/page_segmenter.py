@@ -251,6 +251,33 @@ def _detect_format(page: _SegPage) -> str:
     return "letter"
 
 
+# A paper is either CID-encoded throughout or readable throughout; measured
+# ratios cluster at the extremes (9701 92.8%, 9702 72.6-100%, 9231 100% vs
+# 9700 2.3%, 9618 0.2%, 9231/s23 0%), so any mid-range cut works.
+_CID_RATIO_THRESHOLD = 0.5
+
+
+def _is_cid_encoded(pages: list[_SegPage], skip: set[int]) -> bool:
+    """Whether the paper's text is in a custom CID font rather than readable.
+
+    This is what decides whether the garbled-marker detection path applies at
+    all, so it is measured over the pages the segmenter actually scans — a
+    readable cover page in front of a garbled body must not sway the verdict.
+    """
+    total = 0
+    cid = 0
+    for pg_idx, page in enumerate(pages):
+        if pg_idx in skip:
+            continue
+        for w in page.words:
+            if not w.text.strip():
+                continue
+            total += 1
+            if _CID_RE.search(w.text):
+                cid += 1
+    return total > 0 and cid / total >= _CID_RATIO_THRESHOLD
+
+
 # ── Bracket-pair auto-detection ──────────────────────────────────
 
 def _detect_bracket_pair(
@@ -398,13 +425,25 @@ def _accepted_garbled_subsubs(
             if interior:
                 raw.append((pg_idx, span["y0"], interior))
 
-    # Pass 2: the roman-glyph set = most frequent single interior glyph of
-    # the length-3 "(x)" tokens. Real romans reuse it; noise doesn't.
+    # Pass 2: learn the roman alphabet. Roman numerals in the range CIE uses
+    # are spelled from at most three glyphs — i, v, x — so the alphabet is
+    # tiny, and a glyph earns its place two ways:
+    #
+    #   * it IS a whole single-glyph interior — that is the "i" glyph, named
+    #     unambiguously by the bare "(i)" marker; or
+    #   * it recurs across markers — "v" only ever shows up inside "(iv)" /
+    #     "(vi)", never alone, so it cannot be learned from singles (on 9701
+    #     that lost every "(iv)" in the paper). Requiring recurrence still
+    #     rejects one-off body-text glyphs, which do not repeat.
     from collections import Counter, defaultdict
     singles = Counter(
         interior[0] for _p, _y, interior in raw if len(interior) == 1
     )
-    roman_glyphs = {g for g, _n in singles.most_common(3)}
+    glyph_freq = Counter(g for _p, _y, interior in raw for g in interior)
+    candidates = set(singles) | {g for g, n in glyph_freq.items() if n >= 2}
+    roman_glyphs = set(
+        sorted(candidates, key=lambda g: -glyph_freq[g])[:3]
+    )
     if not roman_glyphs:
         return {}
 
@@ -564,16 +603,16 @@ def _extract_boundaries(
     # parens are ASCII 40/41 and _detect_bracket_pair instead latches onto
     # a noise pair of ordinary letter codepoints (measured on 9700:
     # (70,103) = 'F','g'), which then injects phantom SUBs that displace
-    # the genuine readable-text ones. A garbled-font bracket glyph is
-    # always a non-ASCII custom-encoding byte, so require both codepoints
-    # to be >= 128 before trusting the pair for garbled-SUB detection.
+    # the genuine readable-text ones. So the pair must be gated — but on
+    # whether the PAPER is garbled, not on the pair's codepoint values: a
+    # custom encoding is free to place its bracket glyphs in low bytes, and
+    # 9701 chemistry does exactly that ((113,114)). Gating on magnitude threw
+    # the real pair away and with it every sub-part boundary on the paper.
     garbled_page_data = [
         (pg_idx, ls, sy) for pg_idx, ls, _, _, sy in per_page
     ]
     bracket_pair = _detect_bracket_pair(garbled_page_data, sqx)
-    if bracket_pair is not None and not (
-        bracket_pair[0] >= 128 and bracket_pair[1] >= 128
-    ):
+    if bracket_pair is not None and not _is_cid_encoded(pages, skip):
         bracket_pair = None
 
     # Garbled sub-part markers, detected independently of the left margin.
@@ -940,7 +979,15 @@ def _match_boundaries(
                 positions = [sub_b, *subsub_bs]
 
             idx = romans.index(qid)
-            if idx < len(positions):
+            # The letter carries its own stem between its (b) marker and its
+            # first roman — the same relationship a MAIN has with its first
+            # sub-part (see the pull-back below). Anchoring the first roman
+            # at its own marker would push that stem into the PREVIOUS
+            # question's crop, so anchor it at the letter's marker instead.
+            # (When the prepend above fired, positions[0] is already sub_b.)
+            if idx == 0:
+                matches.append((qid, sub_b.page_idx, sub_b.y))
+            elif idx < len(positions):
                 ssb = positions[idx]
                 matches.append((qid, ssb.page_idx, ssb.y))
             else:
