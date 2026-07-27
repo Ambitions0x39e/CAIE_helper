@@ -19,9 +19,11 @@ from modules.page_segmenter import (
     _build_regions,
     _detect_format,
     _extract_boundaries,
+    _is_cid_encoded,
     _load_pages,
     _match_boundaries,
     _SegPage,
+    _SegWord,
     segment_questions,
     validate_regions,
 )
@@ -87,9 +89,39 @@ def _make_cie_page(
     return spans
 
 
-def _sub_label(letter: str) -> str:
-    """Create a garbled sub-question label starting with 0xa8."""
-    return chr(0xA8) + letter + chr(0xAA) + " text"
+def _readable_sub_label(letter: str) -> str:
+    """A sub-question marker as a READABLE paper prints it: "(a)"."""
+    return f"({letter})"
+
+
+# ── Helpers: genuinely CID-encoded (garbled) pages ─────────────────
+#
+# FPDF can only emit readable text, so a garbled paper cannot be built
+# through _make_doc. These construct the neutral page model directly.
+# Bracket glyphs are (113, 114) — the low-byte pair 9701 chemistry uses,
+# which a magnitude-based gate would wrongly reject.
+
+_OPEN_CP, _CLOSE_CP = 113, 114
+
+
+def _cid(cps: list[int]) -> str:
+    """Render code points the way pdfminer renders a CID-encoded word."""
+    return "".join(f"(cid:{c})" for c in cps)
+
+
+def _cid_sub_label(letter_cp: int) -> str:
+    """A garbled "(a)"-style marker, with the usual trailing glue glyph."""
+    return _cid([_OPEN_CP, letter_cp, _CLOSE_CP, 5])
+
+
+def _page_of(words: list[tuple[float, float, str]]) -> _SegPage:
+    """A _SegPage built straight from (x0, top, text) — no PDF needed."""
+    return _SegPage(
+        width=612.0,
+        height=792.0,
+        words=[_SegWord(text=t, x0=x, top=y) for x, y, t in words],
+        has_curves=False,
+    )
 
 
 # ── Tests: pdfminer neutral loader ────────────────────────────────
@@ -133,19 +165,23 @@ class TestExtractBoundaries:
         when it has a genuine bracket-pair companion at sub_q_x — a
         char-map collision is not proof the span is a MAIN question number.
         """
-        page0 = [(306.0, 30.0, "}")]
-        page1 = [
-            (306.0, 30.0, "~"),
-            (72.4, 200.0, "}"),
-            (93.7, 200.0, _sub_label("a")),
-        ]
-        page2 = [
-            (306.0, 30.0, "!"),
-            (72.4, 400.0, "}"),
-            (93.7, 400.0, _sub_label("b")),
-        ]
-        pdf = _make_doc([page0, page1, page2])
-        boundaries = _extract_boundaries(pdf, skip_pages=set())
+        # Page numbers 1/2/3 encoded as glyphs 125/126/33, so the char map
+        # decodes glyph 125 to "1" — the left-margin span on page 1 reuses
+        # that glyph and would otherwise be read as question number 1.
+        page0 = _page_of([(306.0, 30.0, _cid([125]))])
+        page1 = _page_of([
+            (306.0, 30.0, _cid([126])),
+            (72.4, 200.0, _cid([125])),
+            (93.7, 200.0, _cid_sub_label(44)),
+        ])
+        page2 = _page_of([
+            (306.0, 30.0, _cid([33])),
+            (72.4, 400.0, _cid([125])),
+            (93.7, 400.0, _cid_sub_label(46)),
+        ])
+        boundaries = _extract_boundaries(
+            [page0, page1, page2], skip_pages=set()
+        )
 
         mains = [b for b in boundaries if b.kind == _BoundaryKind.MAIN]
         subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
@@ -162,12 +198,15 @@ class TestExtractBoundaries:
         assert mains[0].page_idx == 0
 
     def test_detect_sub_question(self) -> None:
-        page_spans = _make_cie_page(
-            main_q="Q1",
-            subs=[(100.0, _sub_label("a")), (350.0, _sub_label("b"))],
-        )
-        pdf = _make_doc([page_spans])
-        boundaries = _extract_boundaries(pdf, skip_pages=set())
+        page = _page_of([
+            (72.4, 53.0, _cid([15, 5])),          # main question number
+            (72.4, 100.0, _cid([5])),             # (a) row's margin glyph
+            (93.7, 100.0, _cid_sub_label(44)),
+            (72.4, 350.0, _cid([5])),             # (b) row's margin glyph
+            (93.7, 350.0, _cid_sub_label(46)),
+            (72.4, 746.0, _cid([106, 5, 84])),    # footer
+        ])
+        boundaries = _extract_boundaries([page], skip_pages=set())
 
         subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
         assert len(subs) == 2
@@ -263,6 +302,39 @@ class TestMatchBoundaries:
         # included in Q1a's crop rather than lost above it.
         assert matches[0] == ("Q1a", 0, 50)
         assert matches[1] == ("Q1b", 0, 350)
+
+    def test_first_roman_anchors_at_its_letter_marker(self) -> None:
+        """The letter's own stem sits between the (b) marker and (b)(i).
+
+        Anchoring (b)(i) at its own roman marker leaves that stem above the
+        region, so it lands in the PREVIOUS question's crop instead — on
+        9701 the "(b) The shorthand electronic configuration ..." line was
+        cropped into Q1(a)(iv). Same rule as the MAIN-group stem: the first
+        child anchors at its parent's marker.
+        """
+        boundaries = [
+            _Boundary(kind=_BoundaryKind.MAIN, page_idx=0, y=50),
+            _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=90),     # (a)
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=120),  # (a)(i)
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=200),  # (a)(ii)
+            _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=300),     # (b) + stem
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=340),  # (b)(i)
+            _Boundary(kind=_BoundaryKind.SUBSUB, page_idx=0, y=420),  # (b)(ii)
+        ]
+        question_ids = [
+            "Q1(a)(i)", "Q1(a)(ii)", "Q1(b)(i)", "Q1(b)(ii)",
+        ]
+        matches = _match_boundaries(boundaries, question_ids)
+
+        assert len(matches) == 4
+        # Group's first child still pulls all the way back to MAIN.
+        assert matches[0] == ("Q1(a)(i)", 0, 50)
+        assert matches[1] == ("Q1(a)(ii)", 0, 200)
+        # (b)(i) anchors at the (b) marker, not at its own roman marker, so
+        # the letter stem at y=300..340 is inside (b)(i) and NOT inside
+        # (a)(ii)'s region (which now ends at 300).
+        assert matches[2] == ("Q1(b)(i)", 0, 300)
+        assert matches[3] == ("Q1(b)(ii)", 0, 420)
 
     def test_first_sub_of_next_main_does_not_leave_stem_behind(self) -> None:
         """Q2's stem text sits between the MAIN "2" marker and its (a)
@@ -560,6 +632,22 @@ class TestAcceptedGarbledSubsubs:
         acc = _accepted_garbled_subsubs(self._per_page([page]), (240, 241))
         assert acc[0] == [100.0, 300.0, 500.0]
 
+    def test_iv_detected_despite_new_v_glyph(self) -> None:
+        # "(iv)" introduces a SECOND roman glyph (32 = 'v'), which never
+        # appears as a bare "(v)" marker. Learning the alphabet only from
+        # single-glyph interiors therefore never sees it and drops every
+        # "(iv)" in the paper — on 9701 that cost Q1(a)(iv) its boundary and
+        # shifted every roman crop under (a) by one.
+        page = [
+            _ss_span(100.0, [240, 38, 241, 5]),          # (i)
+            _ss_span(200.0, [240, 38, 38, 241, 5]),      # (ii)
+            _ss_span(300.0, [240, 38, 38, 38, 241, 5]),  # (iii)
+            _ss_span(400.0, [240, 38, 32, 241, 5]),      # (iv)
+        ]
+        # Two pages so the 'v' glyph recurs, as it does in a real paper.
+        acc = _accepted_garbled_subsubs(self._per_page([page, page]), (240, 241))
+        assert acc[0] == [100.0, 200.0, 300.0, 400.0]
+
     def test_body_text_at_column_rejected(self) -> None:
         # A wrapped body line indented to the subsub column: bracket-shaped
         # by coincidence but its interior glyph isn't the roman glyph.
@@ -574,6 +662,81 @@ class TestAcceptedGarbledSubsubs:
         page = [_ss_span(100.0, [40, ord("i"), 41])]
         acc = _accepted_garbled_subsubs(self._per_page([page]), None)
         assert acc == {}
+
+
+# ── Tests: CID-encoding detection ─────────────────────────────────
+
+class TestIsCidEncoded:
+    def test_garbled_paper_detected(self) -> None:
+        page = _page_of([
+            (72.4, 100.0, _cid([15, 5])),
+            (93.7, 100.0, _cid_sub_label(44)),
+        ])
+        assert _is_cid_encoded([page, page], skip=set()) is True
+
+    def test_readable_paper_not_detected(self) -> None:
+        page = _page_of([(72.4, 100.0, "1"), (93.7, 100.0, "Fig")])
+        assert _is_cid_encoded([page, page], skip=set()) is False
+
+    def test_readable_cover_does_not_mask_garbled_body(self) -> None:
+        # Cover pages are skipped by the segmenter; a readable cover in front
+        # of a garbled body must not drag the ratio below the threshold.
+        cover = _page_of([(x, 100.0, f"word{x}") for x in range(60, 200, 10)])
+        body = _page_of([
+            (72.4, 100.0, _cid([15, 5])),
+            (93.7, 100.0, _cid_sub_label(44)),
+        ])
+        assert _is_cid_encoded([cover, body, body], skip={0}) is True
+
+    def test_empty_document_is_not_cid(self) -> None:
+        assert _is_cid_encoded([], skip=set()) is False
+
+
+class TestBracketPairTrust:
+    """The bracket pair must be gated on whether the PDF is CID-encoded.
+
+    The previous gate required both bracket code points to be >= 128, on the
+    assumption that a garbled font's bracket glyph is always a high byte.
+    9701 chemistry encodes them as (113, 114) — low bytes — so the real pair
+    was thrown away and every sub-part boundary with it (4/42 questions
+    matched). Code-point magnitude says nothing about whether the font is
+    garbled; whether the document uses CID encoding says it directly.
+    """
+
+    def _garbled_pages(self) -> list[_SegPage]:
+        # Two pages, each: a 1-cp left-margin span sharing its line with a
+        # bracket-shaped sub-column marker "(a)". Two occurrences clear both
+        # the pair-count and glyph-recurrence filters, so the only thing that
+        # can reject them is the gate.
+        return [
+            _page_of([
+                (72.4, 100.0, _cid([5])),
+                (93.7, 100.0, _cid_sub_label(44)),
+                (136.4, 120.0, _cid([98, 25, 11, 13])),
+            ])
+            for _ in range(2)
+        ]
+
+    def test_low_byte_bracket_pair_is_trusted_when_cid_encoded(self) -> None:
+        boundaries = _extract_boundaries(self._garbled_pages(), skip_pages=set())
+        subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
+        assert len(subs) == 2, f"expected both (a) markers, got {boundaries}"
+
+    def test_readable_paper_noise_pair_still_rejected(self) -> None:
+        # "Fig" is (F=70, i=105, g=103) → cps[0], cps[2] = (70, 103), the exact
+        # noise pair measured on readable 9700. Trusting it injects phantom
+        # SUBs that displace the genuine readable-text ones.
+        pages = [
+            _page_of([
+                (72.4, 100.0, "x"),
+                (93.7, 100.0, "Fig"),
+                (136.4, 120.0, "body text"),
+            ])
+            for _ in range(2)
+        ]
+        boundaries = _extract_boundaries(pages, skip_pages=set())
+        subs = [b for b in boundaries if b.kind == _BoundaryKind.SUB]
+        assert subs == [], f"phantom SUBs from readable text: {boundaries}"
 
 
 # ── Tests: validate_regions ───────────────────────────────────────
@@ -616,10 +779,18 @@ class TestValidateRegions:
 
 class TestSegmentQuestions:
     def test_full_pipeline(self) -> None:
-        """Multi-page synthetic PDF with CIE-like layout."""
+        """Multi-page synthetic PDF with CIE-like layout (readable text).
+
+        Garbled papers cannot be synthesised through FPDF, so the bytes-in
+        pipeline is exercised on the readable path; the garbled path is
+        covered from _extract_boundaries down (see TestBracketPairTrust).
+        """
         page0 = _make_cie_page(
             main_q="Q1",
-            subs=[(90.0, _sub_label("a")), (400.0, _sub_label("b"))],
+            subs=[
+                (90.0, _readable_sub_label("a")),
+                (400.0, _readable_sub_label("b")),
+            ],
         )
         page1 = _make_cie_page(
             main_q="Q2",
