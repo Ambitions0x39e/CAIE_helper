@@ -12,12 +12,15 @@ from modules.ms_parser import (
     PaperConfig,
     QuestionConfig,
     _cache_path_for,
+    _load_cached,
     _merge_questions,
+    _paper_info_from_text,
     _parse_image_ms_response,
     _save_cache,
     detect_ms_start_page,
     ms_cache_exists,
     normalize_question_id,
+    parse_mark_scheme,
     resolve_ms_start_page,
 )
 
@@ -126,6 +129,58 @@ def test_parse_image_ms_response_non_integer_marks() -> None:
     assert result["Q2b"].max_marks == 0
     assert result["Q2c"].max_marks == 2
     assert result["Q3"].max_marks == 3
+
+
+# ── _paper_info_from_text ─────────────────────────────────────
+
+_READABLE_COVER = (
+    "Cambridge International AS & A Level\n"
+    "CHEMISTRY 9701/23\n"
+    "Paper 2 AS Structured Questions October/November 2025\n"
+    "MARK SCHEME\n"
+    "Maximum Mark: 60\n"
+)
+
+
+# A cover carrying every field the parser reads, for the cache-repair tests.
+_FULL_COVER_PAGE = [
+    "Cambridge International AS & A Level",
+    "COMPUTER SCIENCE 9618/11",
+    "Paper 1 Theory May/June 2024",
+    "MARK SCHEME",
+    "Maximum Mark: 75",
+]
+
+
+def _garble(text: str) -> str:
+    """Mimic how a CID-font cover page actually extracts.
+
+    pdfminer emits one glyph per line and drops the glyphs it cannot map
+    (on 9701 the "i" is missing throughout), so "Maximum Mark: 60" arrives
+    as a column of characters spelling "MaxmumMark:60".
+    """
+    return "\n".join(c for c in text if c != "i")
+
+
+def test_paper_info_from_readable_cover() -> None:
+    paper_id, total = _paper_info_from_text(_READABLE_COVER)
+    assert paper_id == "9701/23/O/N/25"
+    assert total == 60
+
+
+def test_paper_info_from_garbled_cover() -> None:
+    # The 9701 chemistry case: every field is present but shredded across
+    # lines with glyphs missing, so the plain regexes matched nothing and
+    # the UI showed "已解析: (42 题), 0 总分".
+    paper_id, total = _paper_info_from_text(_garble(_READABLE_COVER))
+    assert paper_id == "9701/23/O/N/25"
+    assert total == 60
+
+
+def test_paper_info_missing_fields_are_empty() -> None:
+    paper_id, total = _paper_info_from_text("nothing useful here")
+    assert paper_id == ""
+    assert total == 0
 
 
 # ── detect_ms_start_page ─────────────────────────────────────
@@ -279,3 +334,45 @@ def test_ms_cache_exists_mcq_uses_plain_key(cache_env: Path) -> None:
     assert not ms_cache_exists(pdf_path, PaperType.MCQ)
     _save_cache(pdf_path, config)
     assert ms_cache_exists(pdf_path, PaperType.MCQ)
+
+
+def test_cache_hit_backfills_missing_cover_info(cache_env: Path) -> None:
+    # Papers parsed before the cover-text fix cached an empty paper_id and 0
+    # total marks. Re-deriving those two fields is local and free, so a hit
+    # repairs them in place rather than forcing a paid VL re-parse.
+    pdf_path = cache_env / "9618_s24_ms_11.pdf"
+    pdf_path.write_bytes(
+        _make_ms_pdf([_FULL_COVER_PAGE, _GENERIC_PAGE, _content_page("1(a)")])
+    )
+    stale = PaperConfig(
+        paper_id="",
+        total_marks=0,
+        questions={"Q1a": QuestionConfig(max_marks=3, mark_scheme="B1")},
+    )
+    _save_cache(pdf_path, stale, 3)
+
+    result = parse_mark_scheme(pdf_path, paper_type=PaperType.MATH)
+
+    assert result.total_marks == 75
+    assert result.paper_id == "9618/11/M/J/24"
+    assert "Q1a" in result.questions  # questions survive untouched
+    # The repair is persisted, not recomputed on every hit.
+    assert _load_cached(pdf_path, 3).total_marks == 75  # type: ignore[union-attr]
+
+
+def test_cache_hit_keeps_good_cover_info(cache_env: Path) -> None:
+    pdf_path = cache_env / "9618_s24_ms_11.pdf"
+    pdf_path.write_bytes(
+        _make_ms_pdf([_COVER_PAGE, _GENERIC_PAGE, _content_page("1(a)")])
+    )
+    good = PaperConfig(
+        paper_id="9618/11/M/J/24",
+        total_marks=75,
+        questions={"Q1a": QuestionConfig(max_marks=3, mark_scheme="B1")},
+    )
+    _save_cache(pdf_path, good, 3)
+
+    result = parse_mark_scheme(pdf_path, paper_type=PaperType.MATH)
+
+    assert result.paper_id == "9618/11/M/J/24"
+    assert result.total_marks == 75
