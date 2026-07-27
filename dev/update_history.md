@@ -2,6 +2,202 @@
 
 ---
 
+## 2026-07-27 — 设置页改版落地：行式布局 + 新页取代旧页
+
+**改动文件：** `app_flet/tabs/settings.py`（由 `settings_dev.py` 顶替，后者删除）, `app_flet/main.py`（改动已全部撤回）, `.claude/launch.json`, `dev/version_log.md`
+
+### 功能说明
+
+承接同日上一条：`settings_dev.py` 的报错修完后，用户觉得排版「总是差强人意」，给了一张 Claude 设置页截图作为目标 —— **左侧标签、右侧输入，行间细分隔线**。按这个样式重做了整页布局，随后用户确认效果可用，遂用新页面**替换掉老的 `settings.py`**，`settings_dev.py` 与临时的双标签接线一并删除。
+
+### 行式布局：四个原语统一整页
+
+**改动文件：** `app_flet/tabs/settings.py`
+
+抽出四个排版原语，三个子页面 + 主菜单全部改用它们，避免每处各写一套 Row/Column：
+
+| 原语 | 作用 |
+|---|---|
+| `_section(title)` | 分组标题（对应参考设计里的 Profile / Preferences） |
+| `_row(label, control, description=, narrow=)` | 左标签（可带灰色小字说明）+ 右控件，垂直居中 |
+| `_divided(*rows)` | 行间插发丝分隔线，**首尾不插** |
+| `_actions(*controls)` | 底部操作条，右对齐到控件列 |
+
+- **输入框去掉浮动 label**：行左侧那一列就是标签，框内再写一遍等于同一件事说两遍。`_tf()` 签名改为 `_tf(value, *, password, number, hint)`，`hint_text` 改放示例值（`smtp.gmail.com` / `465` / `sk-…` / `qwen3-vl-flash`），宽度固定 320 使右侧对齐成一条竖线，配 8px 圆角、灰色描边、聚焦转蓝。
+- **分组重排**：邮件子页拆成「邮件服务器」（SMTP 四项）+「GoodNotes」（导入地址）；批改子页为「模型凭证」。给 App Password、Import Email、API Key、Model 补了灰色说明小字（如「邮箱服务商生成的应用专用密码，非登录密码」「保存在本地 ~/.cie_helper/.env，不会上传」）。
+- **主菜单同语言**：`_menu_row` 去掉白色卡片底色与 `bgcolor`，改为扁平行 + 分隔线列表，图标缩到 20px，与设置行的节奏一致。
+- **关于页对齐修复**：原来整列 `horizontal_alignment=CENTER`，会让「反馈」行按内容宽度缩成居中的一小条。改为 `STRETCH`，图标/应用名/版本号各自靠 `Alignment.CENTER` 与 `text_align` 居中，行则正常撑满。
+
+### 窄屏断点（未被要求，但会踩）
+
+**改动文件：** `app_flet/tabs/settings.py`
+
+320px 固定宽输入框 + 左侧标签，在 375px 宽的手机上左右 24px 内边距吃掉后只剩 ~7px 留给标签，会挤爆 —— 而这个 app 是要打 iOS 的。
+
+- 加 `_NARROW_WIDTH = 560` 与 `_is_narrow(page)`；窗口窄于该值时 `_row` 改为**上下堆叠**（标签在上、输入框 `width=None` 占满整行），宽屏才用左右分栏。判定在 build 时读 `page.width`，与 `mark.py` 的 `_responsive_grid` 同一套做法。
+- 构造测试两种模式实测：`narrow=False → Row / width=320`，`narrow=True → Column / width=None`。
+
+### 新页面取代旧页面
+
+**改动文件：** `app_flet/tabs/settings.py`, `app_flet/main.py`
+
+- **先做功能对账再删**：旧 `settings.py` 的 8 个字段（SMTP 五项 + Grader 三项）新页面全部覆盖，另多出「关于」页；唯一行为差异是旧版一个「保存」同时写两套凭证，新版各子页各存各的 —— 属改版意图，非遗漏。确认无回退后才替换。
+- `settings_dev.py` 内容顶替 `settings.py`，前者删除；模块 docstring 重写（去掉「your main.py」这类改写期的自述口吻，补上行式布局与窄屏断点的说明）。
+- `main.py` 的临时接线**全部撤回**：删掉别名导入 `build_settings_tab_dev`、`idx == 5` 分支、以及「设置(Dev)」导航项。撤回后 `git status` 里 `main.py` 已不再显示为修改，与 HEAD 完全一致。
+- 全局 grep 确认除 `main.py` 外无其他引用，删除安全。
+
+### 其他
+
+- `.claude/launch.json` 的 flet 启动参数改为 `flet run --web --port 8550 main.py`（原为 `flet run app_flet`），以便用浏览器预览而非弹出桌面窗口。
+- `dev/version_log.md` 的 v1.1.2 条目重写：原先按「新旧设置页并存」描述的两条（双标签互相覆盖、开发版顶栏失效）在老页面删除后已不成立，改为面向发布的「设置页改版」「关于页」两条新增 + 排版与保存行为两条行为变更。
+
+### 注意事项
+
+- **UI 效果由用户确认，不是我验证的**：Flet 走 Flutter canvas 渲染，读 DOM 拿不到任何布局信息；而截图工具报「Browser pane is not displayed」—— 预览面板未展开时页面不合成帧，截不到图。本次我这边的验证只到「类型正确 + 原语构造行为正确 + 应用无异常启动」，视觉效果是用户自己跑起来看过说没问题。后续若要我参与调间距/字号，需要先把 Browser 面板打开。
+- **`settings_dev.py` 已不存在**：同日上一条日志里提到的该文件是这次改版的中间产物，内容已并入 `settings.py`，勿再按旧路径查找。
+- 预览服务已停止；本次未打包（用户要求开发完再打）。
+
+---
+
+## 2026-07-27 — 罗马小题裁剪错位 + 题干归位 + 设置页重写修错（v1.1.1 / v1.1.2）
+
+**改动文件：** `modules/page_segmenter.py`, `tests/test_page_segmenter.py`, `app_flet/tabs/settings_dev.py`, `app_flet/main.py`, `release.ps1`（gitignored）, `dev/version_log.md`, `pyproject.toml`, `packaging/windows/cie-helper.iss`, `uv.lock`
+
+### 功能说明
+
+承接同日上一条：9701 页码识别修好后，用户实跑批改发现**分数仍然全错** —— 截图显示 Q1(a)(ii) 被按 (i) 的答案评分、(iii) 被按 (ii) 的答案评分，是裁剪区整体前移一位。定位并修复了这个错位，随后又修了同一族的字母题干归位问题，以及用户并行在写的设置页重写（`settings_dev.py`）的报错。期间还修了 `release.ps1` 的一处守卫缺陷。全程未打包（用户要求开发完再打）。
+
+### 罗马小题裁剪整体错位（v1.1.1，核心）
+
+**改动文件：** `modules/page_segmenter.py`, `tests/test_page_segmenter.py`
+
+`_accepted_garbled_subsubs` 学习罗马字形集时**只统计单字形 interior**（`len(interior)==1`），也就是只从裸的 `(i)` 里学，因此字形表永远只有 `{i}`：
+
+| 标记 | interior 码点 | 结果 |
+|---|---|---|
+| `(i)` `(ii)` `(iii)` | `(45,)` `(45,45)` `(45,45,45)` | ✅ 纯 `i` 重复 |
+| `(iv)` | `(45, 32)` | ❌ 含 `v`(32)，从未被学到 → 判为噪声丢弃 |
+
+全卷 4 处 `(iv)` 标记被丢。丢标记本身只少一个边界，真正把范围搞乱的是下一步：`_match_boundaries` 里 `len(subsub_bs) == len(romans) - 1` 分支**假定缺的是第一个**（因为首个罗马常与字母标记同行），于是在头部补上 `sub_b`，把后面每个罗马都挤后一位 —— `(a)→Q1(a)(i)`、`(i)→Q1(a)(ii)`、`(ii)→Q1(a)(iii)`。这正是截图里的现象。`(iv)` 反而蒙对，是因为它的范围一路延伸到 `(b)(i)`，把 (iii)(iv) 的作答全裹进去了。
+
+- **修法**：字形表改为「裸单字形（结构上就是 `i`）∪ 全局出现 ≥2 次的字形」，上限 3 个。上限有依据 —— CIE 用到的罗马数字只由 `i`/`v`/`x` 三个字形拼成。噪声字形不重复，仍被拒。
+- **实测支撑**：各卷 interior 字母表极小且零噪声（9701 仅 `{45, 32}`，9702 仅 `{38}`），说明「括号对 + 列位置 + 长度」三重约束已把正文滤干净，放宽字形学习是安全的。
+- **验证**：9701 的 subsub 边界 35 → 39（正好补回 4 个 `(iv)`），Q1(a) 四个裁剪区起点精确落在各自标记（109.8 / 207.6 / 293.2 / 378.8），逐个渲染出图肉眼核对内容各归各位。
+
+### 字母层题干归位（v1.1.2）
+
+**改动文件：** `modules/page_segmenter.py`, `tests/test_page_segmenter.py`
+
+修完错位后发现同族的次级问题：挂在字母层的题干（如「(b) The shorthand electronic configuration of chromium is [Ar] 3d⁵4s¹」）会落进**上一小题**的裁剪区，轮到 `(b)(i)` 时反而看不到 —— 而这句正是答「补全完整电子排布」的前提。9701 上影响 4 处（Q1(b)(i)、Q2(d)(i)、Q3(c)(i)、Q3(e)(i)）。
+
+- **修法**：`_match_boundaries` 中每个字母的首个罗马（`idx == 0`）改为锚定到字母自己的 SUB 边界，而不是它的罗马标记。与 `389048f`（v0.2.0）修大题题干是同一条规则，只是下沉一层。prepend 分支触发时 `positions[0]` 本就是 `sub_b`，行为自洽。
+- **验证**：Q1(a)(iv) 终点 501.1 → 476.6（不再多裹 (b) 的题干），Q1(b)(i) 起点 501.1 → 476.6（拿回题干），两图渲染确认。
+- **注意**：这会让**所有卷子**的裁剪范围都略有变化，是本次 blast radius 最大的改动；5 份卷子识别率实测全部不变。
+
+### 设置页重写（settings_dev.py）报错修复
+
+**改动文件：** `app_flet/tabs/settings_dev.py`, `app_flet/main.py`
+
+用户并行在写新版设置页，6 个 mypy 报错里**两个是真 bug 而非类型问题**：
+
+- **`ft.View` 参数位置错误**：flet 0.85.3 的签名是 `View(controls, route, appbar, ...)`。原代码把 route 当第一个位置参数传，又把 `ft.AppBar` 塞进 controls 列表 —— AppBar 会被当普通 body 控件渲染，**根本不成为页面顶栏**，返回按钮和 iOS 滑动返回都失效。改为 `route=` / `appbar=` / `controls=` 具名传参。
+- **`ft.padding.symmetric` 不存在**：`ft.padding` 模块只导出 `Padding`/`PaddingValue`/`Number`/`value`，`symmetric` 是 `ft.Padding` 类上的方法。改为 `ft.Padding.symmetric`。
+- **类型补齐**：`icon` 由 `str` 改为 `ft.IconData`；`on_click` 补标注为 `Callable[[ft.Event[ft.Container]], None]`，两个 handler 签名同步对齐 —— 这样**不需要 `# type: ignore`**（mark.py / settings.py 里都是靠 ignore 压住的，既然目标是规范化就做到类型正确）。
+- **图标恢复**：`_menu_row` 里 `ft.Icon(icon, ...)` 原被注释掉，导致 `icon` 参数完全没用上，而两个调用点都传了真实图标 —— 判断是被那个类型报错逼注释的，类型修好后取消注释。
+- **`main.py` 同名导入覆盖**（ruff F811）：`build_settings_tab` 被 `settings` 和 `settings_dev` 两次导入，后者覆盖前者，导致「设置」和 dev 两个标签**都进 dev 版、原设置页无法访问**（SIM114 报的两分支相同正是症状）。给 dev 版加 `as build_settings_tab_dev` 别名，`idx == 5` 改用它；顺带修了 E501 超长行（标签改为「设置(Dev)」）。
+- **运行时冒烟**：直接构造 `ft.View(route=..., appbar=..., controls=[...])`、`_menu_row(...)`、`ft.Padding.symmetric(...)` 确认三处 API 真的可用，不只是类型过关。
+
+### release.ps1：同版本重跑打包被守卫拦死
+
+**改动文件：** `release.ps1`（gitignored）
+
+用户跑 `.\release.ps1 1.1.0 -Build` 报「New version equals current version」。原因是之前已单独跑过一次不带 `-Build` 的 bump，版本号早已是 1.1.0，而那道相等检查位于**参数校验段**、在第 4 步打包之前就 `throw` —— 脚本第 3 步本身能优雅处理「changelog stub 已存在」，说明设计上本就预期可重复运行，只是被守卫堵死。
+
+- **修法**：版本相同且带 `-Build` 时视为「已 bump，只需打包」，正常往下走并打印 `Re-packaging X (already bumped)`；版本相同但不带 `-Build` 仍报错（那种情况确实无事可做，更可能是打错版本号），错误信息补上 `- pass -Build to re-package it`。
+- **编码注意**：该 `.ps1` 含 13 处中文且带 UTF-8 BOM，编辑后专门校验了 BOM（`efbbbf`）与中文未被破坏 —— 丢 BOM 会让 PS 5.1 按 GBK 解码乱码（见 memory `reference_release_script`）。
+
+### 版本与发布记录
+
+**改动文件：** `dev/version_log.md`, `pyproject.toml`, `packaging/windows/cie-helper.iss`, `uv.lock`
+
+- 补全了 v1.1.0 的 changelog（原为 TODO stub），随后按用户要求把改动拆成两版：**v1.1.1** = 罗马小题裁剪错位；**v1.1.2** = 题干归位 + 设置页两处可用性修复 + 类型/图标。
+- 版本号经 `release.ps1` 依次 bump 到 1.1.2（`pyproject.toml` + `cie-helper.iss`），`uv.lock` 随之同步。
+- **未打包**：用户明确要求开发完再打，`dist/` 下无任何 1.1.x 产物。三条记录的「对应 commit」均待提交后补。
+- 清理了排查期间产生的 4 个 `scratch_*` 临时文件（它们不在 `[tool.flet.app].exclude` 里，否则会被打进 `app.zip`）。
+
+### 注意事项
+
+- **`test_paper_type.py::test_grader_config_try_load_returns_none_when_missing` 仍失败，与本次改动无关**：该测试断言无配置时 `try_load()` 返回 `None`，但实际读到了 `~/.cie_helper/.env` 里的真实凭证。stash 掉全部改动后同样失败，属未隔离环境的既有问题，待单独处理。
+- **`(iv)` 之后仍可能欠检测**：若某卷只出现一次 `(iv)` 且无其他含 `v` 的罗马，`v` 字形因不满足「≥2 次」仍会被拒，进而触发那条 prepend 分支造成错位。该分支**至今没有测试覆盖**，其「缺的一定是第一个」假设无法从边界数量本身证伪。若再遇到错位，根治方向是让 `_extract_boundaries` 直接检出与字母标记同行的内联罗马，从源头消除数量不匹配，而不是靠推断补位。
+- **验证口径**：全程用 `~/.cie_helper/` 里的真实 9701 卷子实跑，关键裁剪区渲染成 PNG 逐张肉眼核对 —— 单看匹配率（42/42）无法发现错位，因为错位时匹配率同样是满的。
+
+---
+
+## 2026-07-27 — Chemistry 9701 页码识别失效 + 封面元数据提取修复
+
+**改动文件：** `modules/page_segmenter.py`, `modules/ms_parser.py`, `tests/test_page_segmenter.py`, `tests/test_ms_parser.py`
+
+### 功能说明
+
+用户反馈演示时用 chemistry 9701 卷子批改出问题。用本地已下载的 9701_w25 MS + QP 实跑复现，确认是**两个独立于 `70c9299`（max_marks N/A 崩溃修复）的新缺陷**：Step 2 页码自动识别 42 题只中 4 题，以及 MS 封面 `paper_id`/`total_marks` 提取全空。两个都已修复，并顺带处理了会挡住修复效果的陈旧缓存。
+
+### 问题 1：页码自动识别几乎全灭（严重）
+
+**改动文件：** `modules/page_segmenter.py`, `tests/test_page_segmenter.py`
+
+9701 的 42 道小题只自动识别出 4 道（每道大题的第一个小题），其余 38 道要手工填页码，批改流程实际废掉。
+
+根因在 S3（`5522d5d`）引入的那道括号对守卫：`_detect_bracket_pair` 能正确反推出该卷字体的 `(` / `)` 编码，但守卫要求两个码点都 ≥128 才信任，依据是「乱码字体的括号字形总是非 ASCII 高位字节」。**这个假设错了** —— 自定义编码完全可以把括号放在低位字节，9701 就是 `(113, 114)`。正确的编码对被丢弃后 `bracket_pair` 变 `None`，`_accepted_garbled_subs` / `_accepted_garbled_subsubs` 整条乱码识别链路停摆，只剩大题编号能匹配。数学、物理卷凑巧满足 ≥128，所以问题只在化学卷暴露。
+
+- **换判据**：新增 `_is_cid_encoded(pages, skip)`，用「这份文档本身是否 CID 编码」直接回答守卫真正想问的问题（该走乱码链路还是可读链路），取代与之无关的码点大小。实测两类卷分离极干净、中间无模糊地带：9701 92.8% / 9702 72.6–100% / 9231 100%（乱码）对 9700 2.3% / 9618 0.2% / 9231_s23 0%（可读），阈值取 0.5。
+- **守卫不能简单删掉**：单纯移除会让可读卷 9700 从 27/27 掉到 22/27（噪声对 `(70,103)` = `'F','g'` 注入幻影 SUB）。这次是**换判据，不是去掉保护**。
+- **按跳过后的页面统计**：可读封面页在前、乱码正文在后时不能被封面拉低比例，故只统计分割器实际扫描的页。
+- **修正 3 个既有测试 fixture**：`_sub_label` 用高位可读字符（`0xA8`/`0xAA`）假装乱码卷 —— 正是导致本 bug 的错误心智模型，换判据后必然失效。两个 `_extract_boundaries` 测试改用直接构造的**真 CID 编码** `_SegPage`（新增 `_cid` / `_cid_sub_label` / `_page_of` 辅助，括号对刻意取低位的 `(113,114)`）；全流程测试因 FPDF 造不出 CID 编码 PDF，改走可读路径（`_readable_sub_label`）。
+- **新增测试**：`TestIsCidEncoded`（乱码/可读/封面不干扰/空文档）、`TestBracketPairTrust`（低位括号对在 CID 卷被接受、可读卷噪声对仍被拒绝）。
+
+### 问题 2：MS 封面元数据提取失败
+
+**改动文件：** `modules/ms_parser.py`, `tests/test_ms_parser.py`
+
+化学卷封面是逐字符断行、且部分字形丢失（9701 全篇 `i` 缺失，`Maximum Mark: 60` 抽出来是一列字符拼成 `MaxmumMark:60`）的文本，`_extract_paper_info` 的正则完全匹配不上，结果 `paper_id=""`、`total_marks=0`，UI 显示成「已解析: (42 题), 0 总分」。
+
+- **抽出纯函数** `_paper_info_from_text(text)`，`_extract_paper_info` 变薄包装，逻辑可单测。
+- **原文优先、折叠兜底**：每个字段先按原文匹配，匹配不到才回退到折叠全部空白后的文本。`Maximum` 的正则放宽为 `Max\w{0,6}\s*Mark\s*:?\s*(\d+)` 以吸收丢失字形。**中途返工**：最初无条件折叠空白，结果把 `Maximum Mark: 75` 和下一行的科目代码粘成 `759618`，打坏了 9618/9702 全线满分值；改成原文优先后可读封面根本走不到兜底分支，零回退。
+- **实测**：本地 68 份 MS 全部提取正确，9701 现为 `9701/23/O/N/25` / 60 分。
+
+### 顺带：缓存陈旧值就地修复
+
+**改动文件：** `modules/ms_parser.py`, `tests/test_ms_parser.py`
+
+MS 解析结果按「文件名 + 起始页」缓存，与解析器版本无关，修好后本地旧缓存仍带着空 `paper_id`。原计划给缓存键加版本号，但那会强制所有已缓存卷子重跑 VL 解析（真实 API 花费），只为修两个显示字段 —— 不划算。
+
+- 改为新增 `_repair_cover_info`：缓存命中时，若 `paper_id`/`total_marks` 为空则从封面重新提取并回填、写回缓存。这两个字段来自本地文本提取、不花钱，且**只填空值不覆盖已有数据**，题目内容原样保留。
+- 缓存不可写时用 `contextlib.suppress` 吞掉，不让写缓存失败连累解析本身。
+- MCQ 路径的 `paper_id` 来自文件名，不受影响，故只改 MATH 路径。
+
+### 验证结果
+
+| 卷子 | 改前 | 改后 |
+|---|---|---|
+| 9701 chemistry | 4/42 | **42/42** |
+| 9700 chemistry | 27/27 | 27/27 |
+| 9618 | 26/26 | 26/26 |
+| 9231_s25 | 21/21 | 21/21 |
+| 9702_s25 | 30/30 | 30/30 |
+
+- `uv run pytest`：122 通过（新增 9 个测试）。
+- `uv run ruff check`：源码干净（`in_dev/t1.py` 的 import 排序问题为既有）。
+- `uv run mypy modules core app_flet`：无问题；剩余 13 个 test 目录报错为既有辅助函数缺类型参数，数量与改动前一致。
+- 端到端：沙箱缓存目录里跑完整流程（缓存命中修复 → 分段），42 题全部产出有效 clip。
+
+### 注意事项
+
+- **既有测试失败（非本次引入）**：`tests/test_paper_type.py::test_grader_config_try_load_returns_none_when_missing` 断言无配置时 `try_load()` 返回 `None`，但实际读到了 `~/.cie_helper/.env` 里的真实凭证。stash 掉全部改动后同样失败 —— 该测试没有隔离环境变量，属既有问题，待单独处理。
+- **`mypy .` 无法直接运行**：仓库里的 `build/` 目录（flet build 产物）含 `python/Lib/typing.py`，会 shadow 标准库。跑 `uv run mypy modules core app_flet` 指定包名即可。
+- **打包后 UI 手测未做**：需 GUI + API 凭证，本次只验证到库层面端到端。
+
+---
+
 ## 2026-07-21 — 批改卡死根治（进程内渲染）+ 解析进度条位置修复
 
 **改动文件：** `modules/renderer.py`, `modules/grader.py`, `app_flet/main.py`, `app_flet/tabs/mark.py`, `app_flet/state.py`, `tests/test_renderer.py`, `pyproject.toml`, `uv.lock`
