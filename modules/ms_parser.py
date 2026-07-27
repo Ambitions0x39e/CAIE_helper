@@ -8,6 +8,7 @@ vision-language model, and parses the structured JSON response into
 from __future__ import annotations
 
 import base64
+import contextlib
 import io
 import json
 import re
@@ -148,37 +149,59 @@ def resolve_ms_start_page(
     return detect_ms_start_page(pdf_path) or _MS_START_PAGE_FALLBACK
 
 
+def _paper_info_from_text(text: str) -> tuple[str, int]:
+    """Pull paper_id and total_marks out of cover-page text.
+
+    Mark schemes in a custom CID font extract one glyph per line, with the
+    glyphs pdfminer cannot map dropped entirely (on 9701 chemistry every
+    "i" is missing), so "Maximum Mark: 60" arrives as a column of characters
+    spelling "MaxmumMark:60". Matching against the text as-extracted found
+    nothing and the paper reported an empty id and 0 total marks.
+
+    Collapsing all whitespace puts a shredded cover back into a matchable
+    shape, but it also destroys the line break that separates "Maximum Mark:
+    75" from the syllabus code beneath it (9618 read as 759618). So each
+    field is looked up in the text as-extracted FIRST and only falls back to
+    the collapsed form — a readable cover never reaches the fallback, and a
+    shredded one has no boundaries left to lose.
+    """
+    squashed = re.sub(r"\s+", "", text)
+
+    def find(pattern: str) -> str | None:
+        m = re.search(pattern, text) or re.search(pattern, squashed)
+        return m.group(1) if m else None
+
+    def present(token: str) -> bool:
+        return token in text or token in squashed
+
+    paper_id = find(r"(\d{4}/\d{2})") or ""
+
+    session = ""
+    if present("October/November"):
+        session = "O/N"
+    elif present("May/June"):
+        session = "M/J"
+    elif present("February/March"):
+        session = "F/M"
+
+    year = (find(r"(20\d{2})") or "")[-2:]
+    if paper_id and session and year:
+        paper_id = f"{paper_id}/{session}/{year}"
+
+    # \w{0,6} absorbs the glyphs dropped from "Maximum" (9701 yields "Maxmum").
+    raw_marks = find(r"Max\w{0,6}\s*Mark\s*:?\s*(\d+)")
+    total_marks = int(raw_marks) if raw_marks else 0
+
+    return paper_id, total_marks
+
+
 def _extract_paper_info(pdf_path: str | Path) -> tuple[str, int]:
     """Extract paper_id and total_marks from the cover page via text.
 
     Uses pdfminer.six (pure Python, iOS-safe) on the first page only.
     """
     text = extract_text(io.BytesIO(to_pdf_bytes(pdf_path)), page_numbers=[0]) or ""
-    paper_id = ""
-    total_marks = 0
-
-    m = re.search(r"(\d{4}/\d{2})", text)
-    if m:
-        paper_id = m.group(1)
-
-    session = ""
-    if "October/November" in text:
-        session = "O/N"
-    elif "May/June" in text:
-        session = "M/J"
-    elif "February/March" in text:
-        session = "F/M"
-
-    year_m = re.search(r"(20\d{2})", text)
-    year = year_m.group(1)[-2:] if year_m else ""
-    if paper_id and session and year:
-        paper_id = f"{paper_id}/{session}/{year}"
-
-    m = re.search(r"Maximum Mark:\s*(\d+)", text)
-    if m:
-        total_marks = int(m.group(1))
-
-    return paper_id, total_marks
+    return _paper_info_from_text(text)
 
 
 # ── VL extraction ────────────────────────────────────────────────
@@ -416,6 +439,36 @@ def _save_cache(
     cp.write_text(config.model_dump_json(indent=2), "utf-8")
 
 
+def _repair_cover_info(
+    pdf_path: Path, config: PaperConfig, start_page: int | None
+) -> PaperConfig:
+    """Backfill paper_id / total_marks on a cache entry that lacks them.
+
+    Papers parsed before ``_paper_info_from_text`` learned to read shredded
+    cover pages cached an empty id and 0 total marks. Those two fields come
+    from local text extraction, not the VL model, so a stale entry can be
+    repaired for free — invalidating the cache instead would force a paid
+    re-parse of every question just to fix two display fields.
+    """
+    if config.paper_id and config.total_marks:
+        return config
+    try:
+        paper_id, total_marks = _extract_paper_info(pdf_path)
+    except Exception:
+        return config
+    if not paper_id and not total_marks:
+        return config
+
+    repaired = config.model_copy(update={
+        "paper_id": config.paper_id or paper_id,
+        "total_marks": config.total_marks or total_marks,
+    })
+    # An unwritable cache must not fail the parse.
+    with contextlib.suppress(Exception):
+        _save_cache(pdf_path, repaired, start_page)
+    return repaired
+
+
 def ms_cache_exists(
     pdf_path: str | Path,
     paper_type: PaperType,
@@ -484,7 +537,7 @@ def parse_mark_scheme(
     resolved_start = resolve_ms_start_page(pdf_path, start_page)
     cached = None if force else _load_cached(path, resolved_start)
     if cached is not None:
-        return cached
+        return _repair_cover_info(path, cached, resolved_start)
 
     if grader_config is None:
         raise ValueError(
