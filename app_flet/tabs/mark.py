@@ -188,7 +188,7 @@ def build_mark_tab(
         # Start page (MATH only)
         if paper_type_ref[0] == PaperType.MATH:
             start_page_field = ft.TextField(
-                label=" MS 内容起始页",
+                label="MS 内容起始页",
                 label_style=ft.TextStyle(color=ft.Colors.BLACK),
                 value=(
                     "" if start_page_ref[0] is None
@@ -301,7 +301,7 @@ def build_mark_tab(
         ms_records = [r for r in all_records if r.ms_path]
         if not ms_records:
             return [ft.Text(
-                "没有包含 Mark Scheme的已下载试卷。请先下载或直接上传。",
+                "没有包含 Mark Scheme 的已下载试卷。请先下载或直接上传。",
                 color=ft.Colors.GREY, size=13,
             )]
 
@@ -419,7 +419,7 @@ def build_mark_tab(
     def _start_parse(force: bool) -> None:
         ms_path = _get_ms_path()
         if not ms_path:
-            show_snack("请先选择 Mark Scheme文件", ft.Colors.RED)
+            show_snack("请先选择 Mark Scheme 文件", ft.Colors.RED)
             return
 
         pt = paper_type_ref[0]
@@ -537,7 +537,7 @@ def build_mark_tab(
             controls.append(ft.Row([
                 ft.ProgressRing(width=20, height=20, stroke_width=2),
                 ft.Text(
-                    "正在解析QP…",
+                    "正在解析 QP…",
                     size=12, color=ft.Colors.GREY,
                 ),
             ], spacing=8))

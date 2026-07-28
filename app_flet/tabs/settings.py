@@ -262,7 +262,10 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
                             _row("Sender Email", sender_email, narrow=narrow),
                             _row(
                                 "App Password", sender_password,
-                                description="邮箱服务商生成的IMAP/SMTP专用密码，非邮箱密码",
+                                description=(
+                                    "邮箱服务商生成的 IMAP/SMTP 专用密码，"
+                                    "非邮箱密码"
+                                ),
                                 narrow=narrow,
                             ),
                         ),

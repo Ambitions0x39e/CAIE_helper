@@ -2,6 +2,71 @@
 
 ---
 
+## 2026-07-28 — 下载进度显示 + 安装后自动重开 + 文案精简（v1.2.0）
+
+**改动文件：** `modules/updater.py`, `tests/test_updater.py`, `app_flet/tabs/settings.py`, `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `packaging/windows/cie-helper.iss`, `.gitignore`, `dev/developer_notes.md`（新建，gitignored）, `pyproject.toml`, `dev/version_log.md`
+
+### 功能说明
+
+承接同日上一条。自动更新已经能查、能下、能装，但下载那几十秒只有一行「下载中…」，装完还得用户自己去开应用。这次补上下载进度（速度 + 已下载/总量 + 百分比）和安装后自动重开，另外按新的版本号规则把这一版定为 **1.2.0**（新功能走第二位；上一版误用的 1.1.3 未正式发布，由 1.2.0 取代）。
+
+同时用户做了一轮文案精简，删掉几条不起作用的提示。
+
+### 下载进度
+
+**改动文件：** `modules/updater.py`, `app_flet/tabs/settings.py`
+
+- `download()` 多接一个 `on_progress` 回调，报 `DownloadProgress(downloaded, total, speed_bps)`；`format_progress()` 渲染成 `12.3 / 53.7 MB (23%) · 2.4 MB/s`，直接写进「更新」那行的副标题（这行本来就是进度读数）。
+- **节流到约 3 次/秒**。56 MB 安装包按 8 KB 一块是约 7000 块，每块都推一次 `page.update()` 会让 UI 而不是网络成为瓶颈。
+- **速度取当前窗口而非全程平均** —— 用户问「现在多快」问的是现在。但结尾必定补一次报告、用全程平均、且显示文件已满，否则快尾巴会把读数永远卡在 98%。
+- **没有 Content-Length 就不报总量**，读数退化成只显示已下载字节，不拿 `downloaded` 回填一个我们并没有依据宣称的 100%。
+- **尺寸按 MiB 计算但标 MB**，与 GitHub 发布页显示的一致（56,356,909 字节 → `53.7 MB`）。数字和用户在发布页看到的不一样，会让人以为下错了文件。
+- 回调抛异常一律吞掉：读数坏了不该把一个正在正常进行的 56 MB 下载扔掉。
+
+### 安装后自动重开：两条路走不通，第三条才成
+
+**改动文件：** `modules/updater.py`, `packaging/windows/cie-helper.iss`
+
+应用必须先退出，Inno 才能覆盖它自己的 exe —— 所以它没法自己重开。三次尝试：
+
+1. **`.iss` 里加 `[Run]`，用 `/RELAUNCH=1` 门控。** Inno 日志确认 `[Run]` 真的执行了（`Run as: Original user` / `Type: Exec`），应用也真的跑起来并把 app.zip 解包了，但在 Setup deinitialize 后几秒内就死了 —— 最可能是被 Setup 的 Restart Manager 会话一起带走。**`.iss` 已还原成原来那一条 `[Run]`**，只留注释记下原因（原有那条带 `skipifsilent`，静默安装时本来就不执行，所以当初必须新加一条）。
+2. **改由应用侧写 `.cmd`，用 `start` 启动。** 安装器确实跑完了（Inno 每次安装都会重写 `unins000.dat`，时间戳能对上），但应用始终没出现，且没留下任何痕迹。
+3. **最终方案**：`install()` 写一个 `.cmd`，先把安装器跑到结束，再直接调用应用（不经 `start`），用 `CREATE_NO_WINDOW` 脱钩启动。
+
+排查中挖出的三个真问题（测试都抓不到，全靠真机）：
+
+| 问题 | 现象 | 原因 |
+|---|---|---|
+| `\r\r\n` | 应用怎么都起不来，无痕迹 | `write_text` 文本模式把显式写的 `\r\n` 又翻译一遍，**带引号的 exe 路径后粘了个游离 CR**，那就不是要执行的路径了。加 `newline=""`。这很可能也是 `start` 那版失败的真凶。 |
+| 日志 0 字节 | 加了日志却什么都没写 | `echo x=%ERRORLEVEL%>"f"` —— `%ERRORLEVEL%` 展开成数字后，`0>` 被 cmd 当成**重定向 stdin 的文件句柄**，文本没进文件。改成重定向写在命令前面。 |
+| 装完立刻启动会退出 | 日志显示 `app exit=0`（干净退出，不是崩溃） | 逐一排除：cmd 启动没问题、工作目录被删也没问题、重新解包也没问题、工作目录设成仓库根目录也没问题 —— 手动隔一分钟启动每次都好。唯一剩下的差别就是「紧接着 225 MB 文件替换完就启动」。加了 5 秒 settle 延迟。 |
+
+其它决策：
+- **`ping -n 6` 而不是 `timeout /t 5`** —— stdin 不是真控制台时 `timeout` 会以「input redirection is not supported」直接失败，而这个脚本运行的正是那种环境。
+- 用**写文件**而不是拼命令行：这些路径带空格（`CIE Helper`、`Your Company`），`&&` 拼接正是引号 bug 的产地；自己写的文件引号完全可控，测试还能读回来断言。
+- 编码用 **`mbcs`**：cmd 按本地代码页读批处理，而路径要穿过用户 profile 名，在中文 Windows 上不保证是 ASCII。
+- **留一份 `relaunch.log`**：静默更新出了问题，这是用户唯一能提供的证据。
+- **`CREATE_NO_WINDOW` 而非 `DETACHED_PROCESS`**：两者都能活过父进程退出，但后者让子进程完全没有控制台。
+- 脚本写不出来就退回「只装不重开」——丢掉重开远好过拒绝更新。
+
+### 文案精简（用户改动）
+
+**改动文件：** `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `app_flet/tabs/settings.py`
+
+- Mark 页把「评分标准」统一改成 **Mark Scheme**（标签、文件选择框标题、进度文字、snackbar、按钮、步骤标题）。
+- 删掉四段式流程说明「解析评分标准 → 上传答卷 → AI 批改 → 查看结果」—— 界面上步骤本来就编了号，这句在重复排版已经说清的事。
+- 页码提示缩成「默认留空，自动检测」，原来那句解释各科起始页差异，是用户无法据此行动的信息。
+- Analytics 删掉「最新变化」那一行。**背后的 `delta` / `delta_text` 一并注释掉而非删除**，要恢复就两处同时取消注释；留着不用会是 ruff 的 F841（`latest` 第 425 行还在用、`_MIN_FOR_TREND` 第 50 行还在用，都保留）。
+- 补了中英之间缺的空格：`Mark Scheme 的已下载试卷`、`Mark Scheme 文件`、`正在解析 QP…`、`IMAP/SMTP 专用密码`；`" MS 内容起始页"` 去掉了行首多余空格。
+
+### 其它
+
+- **`dev/developer_notes.md`**（新建）记下版本号规则：第一位＝重构/推翻性/巨大发布，第二位＝新功能，第三位＝小修小补，附判断口径与已发布版本对照。已进 `.gitignore`；**打包不需要改** —— `[tool.flet.app].exclude` 早就含 `dev`，整个目录都不打包（exclude 匹配顶层名字，写成路径反而是死配置）。
+- `BLOCKED.md` / `PROGRESS.md` 加进 `.gitignore` 后还需 `git rm --cached` 才真的取消跟踪（只改 `.gitignore` 对已跟踪文件无效），文件仍在磁盘上。
+- 测试从 179 增到 **196 通过 / 0 失败**（新增 17 个：进度格式化、节流、无 Content-Length、回调抛异常、relaunch 脚本内容与 argv、`current_executable()` 从源码运行时返回 None）。ruff（含 `tests`）与 mypy 全程 0 issues。
+
+---
+
 ## 2026-07-28 — 应用内自动更新 + v1.1.3 发版打包
 
 **改动文件：** `modules/updater.py`（新建）, `tests/test_updater.py`（新建）, `core/settings.py`, `app_flet/tabs/settings.py`, `tests/test_paper_type.py`, `tests/test_renderer.py`, `modules/downloader.py`, `pyproject.toml`, `packaging/windows/cie-helper.iss`, `dev/version_log.md`, `uv.lock`, `PROGRESS.md`（新建）, `BLOCKED.md`（新建）
