@@ -27,7 +27,6 @@ def _build_url(source: DownloadSource, filename: str) -> str:
     if source == "CIEFrank":
         return f"{_URL_CIEFRANK}/{filename}.pdf"
     return f"{_URL_PAPACAMBRIDGE}/{filename}.pdf"
-    
 
 
 # ---------------------------------------------------------------------------

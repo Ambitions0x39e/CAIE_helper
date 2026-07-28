@@ -126,8 +126,27 @@ def test_render_regions_times_out_instead_of_hanging(
         with pytest.raises(TimeoutError, match="渲染超时"):
             r.render_regions(pdf, clips)
     finally:
+        # render_regions' future.cancel() only *schedules* the task
+        # cancellation; the loop needs another turn to deliver CancelledError
+        # into the stalled coroutine. Stopping the loop in the same batch left
+        # the task pending forever, so asyncio printed "Task was destroyed but
+        # it is pending!" from the GC on every run of the suite. Drain from
+        # inside the loop (where all_tasks() is safe) before stopping it.
+        async def _cancel_pending() -> None:
+            others = [
+                task for task in asyncio.all_tasks()
+                if task is not asyncio.current_task()
+            ]
+            for task in others:
+                task.cancel()
+            await asyncio.gather(*others, return_exceptions=True)
+
+        asyncio.run_coroutine_threadsafe(_cancel_pending(), loop).result(
+            timeout=2,
+        )
         loop.call_soon_threadsafe(loop.stop)
         t.join(timeout=2)
+        loop.close()
 
 
 def test_full_page_clips_one_per_page() -> None:
