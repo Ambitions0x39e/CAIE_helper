@@ -93,6 +93,13 @@ exclude = [
     # ships inside app.zip even though the runtime only reads ~/.cie_helper/.env,
     # so packaging it is a pure credential leak with zero functional need.
     ".env", ".env.example",
+    # dev-only top-level FILES. The runtime never reads any of these, but they
+    # were shipping inside app.zip because exclude is the only filter (flet
+    # ignores .gitignore) and it matches top-level NAMES — dirs and files
+    # alike. release.ps1 is the local, gitignored build script; the three .md
+    # files are notes for whoever is working on the repo, not for users.
+    "release.ps1", "CLAUDE.md", "PROGRESS.md", "BLOCKED.md",
+    ".gitignore", ".gitattributes",
 ]
 
 [tool.flet.dev_packages]
