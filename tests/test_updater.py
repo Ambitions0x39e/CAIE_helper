@@ -22,13 +22,33 @@ from modules import updater as updater_mod
 from modules.updater import (
     RELEASES_PAGE_URL,
     AppUpdater,
+    DownloadProgress,
     UpdateCheckResult,
     UpdateDownloadResult,
     UpdateInstallResult,
     _parse_version,
     current_app_version,
+    format_progress,
     platform_asset_suffix,
 )
+
+_MIB = 1024 * 1024
+
+
+class _Clock:
+    """Controllable stand-in for time.monotonic.
+
+    Advances by ``step`` on every call, so a test can decide whether the
+    progress throttle window elapses between chunks or never does.
+    """
+
+    def __init__(self, step: float) -> None:
+        self.step = step
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -46,12 +66,17 @@ class _FakeResponse:
         status_code: int = 200,
         chunks: list[bytes] | None = None,
         raise_on_json: bool = False,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self._payload = payload
         self.ok = ok
         self.status_code = status_code
         self._chunks = chunks if chunks is not None else [b"installer-bytes"]
         self._raise_on_json = raise_on_json
+        # Real responses always have headers; Content-Length is what drives
+        # the "downloaded / total" readout and is legitimately absent for
+        # chunked responses.
+        self.headers = headers if headers is not None else {}
 
     def json(self) -> object:
         if self._raise_on_json:
@@ -546,6 +571,177 @@ def test_download_returns_failure_on_http_error_status(
 
 
 # ---------------------------------------------------------------------------
+# download() progress reporting
+# ---------------------------------------------------------------------------
+
+
+def test_format_progress_shows_size_percent_and_speed() -> None:
+    p = DownloadProgress(
+        downloaded=3 * _MIB // 2, total=3 * _MIB, speed_bps=float(_MIB),
+    )
+    assert format_progress(p) == "1.5 / 3.0 MB (50%) · 1.0 MB/s"
+
+
+def test_format_progress_omits_the_total_when_unknown() -> None:
+    p = DownloadProgress(
+        downloaded=3 * _MIB // 2, total=None, speed_bps=float(_MIB),
+    )
+    assert format_progress(p) == "1.5 MB · 1.0 MB/s"
+
+
+def test_format_progress_omits_speed_before_there_is_one() -> None:
+    p = DownloadProgress(downloaded=3 * _MIB // 2, total=3 * _MIB)
+    assert format_progress(p) == "1.5 / 3.0 MB (50%)"
+
+
+def test_format_progress_matches_the_size_github_displays() -> None:
+    """GitHub shows our 56,356,909-byte installer as "53.7 MB" (MiB maths).
+
+    Counting up to a different number than the release page showed would read
+    as the wrong file being downloaded.
+    """
+    p = DownloadProgress(downloaded=56_356_909, total=56_356_909)
+    assert format_progress(p).startswith("53.7 / 53.7 MB (100%)")
+
+
+def test_download_reports_progress_with_total_and_speed(
+    monkeypatch: pytest.MonkeyPatch, updates_dir: Path,
+) -> None:
+    monkeypatch.setattr(updater_mod.time, "monotonic", _Clock(step=0.5))
+    _patch_get(
+        monkeypatch,
+        _FakeResponse(
+            chunks=[b"a" * 10, b"b" * 10, b"c" * 10],
+            headers={"Content-Length": "30"},
+        ),
+    )
+    seen: list[DownloadProgress] = []
+
+    result = AppUpdater(current_version="1.1.2").download(
+        "https://example.test/x.exe", on_progress=seen.append,
+    )
+
+    assert result.success is True
+    assert [p.downloaded for p in seen] == [10, 20, 30, 30]
+    assert all(p.total == 30 for p in seen)
+    assert all(p.speed_bps > 0 for p in seen)
+
+
+def test_download_always_ends_on_a_final_full_report(
+    monkeypatch: pytest.MonkeyPatch, updates_dir: Path,
+) -> None:
+    """A fast tail must not leave the readout frozen short of the total."""
+    # Time never advances, so the in-loop throttle never fires at all.
+    monkeypatch.setattr(updater_mod.time, "monotonic", _Clock(step=0.0))
+    _patch_get(
+        monkeypatch,
+        _FakeResponse(
+            chunks=[b"x" * 10] * 5, headers={"Content-Length": "50"},
+        ),
+    )
+    seen: list[DownloadProgress] = []
+
+    AppUpdater(current_version="1.1.2").download(
+        "https://example.test/x.exe", on_progress=seen.append,
+    )
+
+    assert len(seen) == 1
+    assert seen[-1].downloaded == 50
+    assert seen[-1].total == 50
+
+
+def test_download_throttles_progress_instead_of_reporting_every_chunk(
+    monkeypatch: pytest.MonkeyPatch, updates_dir: Path,
+) -> None:
+    """200 chunks must not become 200 page.update() calls."""
+    # 0.1s per call, well under the 0.3s window, so most chunks are skipped.
+    monkeypatch.setattr(updater_mod.time, "monotonic", _Clock(step=0.1))
+    _patch_get(monkeypatch, _FakeResponse(chunks=[b"x" * 10] * 200))
+    seen: list[DownloadProgress] = []
+
+    AppUpdater(current_version="1.1.2").download(
+        "https://example.test/x.exe", on_progress=seen.append,
+    )
+
+    assert 1 < len(seen) < 200
+    assert seen[-1].downloaded == 2000
+
+
+def test_download_reports_progress_without_a_content_length(
+    monkeypatch: pytest.MonkeyPatch, updates_dir: Path,
+) -> None:
+    """No Content-Length: still report bytes, but never invent a total."""
+    monkeypatch.setattr(updater_mod.time, "monotonic", _Clock(step=0.5))
+    _patch_get(monkeypatch, _FakeResponse(chunks=[b"a" * 10, b"b" * 10]))
+    seen: list[DownloadProgress] = []
+
+    result = AppUpdater(current_version="1.1.2").download(
+        "https://example.test/x.exe", on_progress=seen.append,
+    )
+
+    assert result.success is True
+    assert all(p.total is None for p in seen)
+    assert seen[-1].downloaded == 20
+
+
+@pytest.mark.parametrize("bad_length", ["", "not-a-number", "0", "-5"])
+def test_download_ignores_an_unusable_content_length(
+    monkeypatch: pytest.MonkeyPatch, updates_dir: Path, bad_length: str,
+) -> None:
+    monkeypatch.setattr(updater_mod.time, "monotonic", _Clock(step=0.5))
+    _patch_get(
+        monkeypatch,
+        _FakeResponse(
+            chunks=[b"a" * 10], headers={"Content-Length": bad_length},
+        ),
+    )
+    seen: list[DownloadProgress] = []
+
+    result = AppUpdater(current_version="1.1.2").download(
+        "https://example.test/x.exe", on_progress=seen.append,
+    )
+
+    assert result.success is True
+    assert all(p.total is None for p in seen)
+
+
+def test_download_survives_a_progress_callback_that_raises(
+    monkeypatch: pytest.MonkeyPatch, updates_dir: Path,
+) -> None:
+    """A broken readout must not throw away a download that is working."""
+    monkeypatch.setattr(updater_mod.time, "monotonic", _Clock(step=0.5))
+    _patch_get(
+        monkeypatch,
+        _FakeResponse(
+            chunks=[b"a" * 10, b"b" * 10], headers={"Content-Length": "20"},
+        ),
+    )
+
+    def _explode(_progress: DownloadProgress) -> None:
+        raise RuntimeError("UI blew up")
+
+    result = AppUpdater(current_version="1.1.2").download(
+        "https://example.test/x.exe", on_progress=_explode,
+    )
+
+    assert result.success is True
+    assert result.local_path is not None
+    assert Path(result.local_path).read_bytes() == b"a" * 10 + b"b" * 10
+
+
+def test_download_works_with_no_progress_callback_at_all(
+    monkeypatch: pytest.MonkeyPatch, updates_dir: Path,
+) -> None:
+    _patch_get(monkeypatch, _FakeResponse(chunks=[b"abc"]))
+
+    result = AppUpdater(current_version="1.1.2").download(
+        "https://example.test/x.exe"
+    )
+
+    assert result.success is True
+
+
+# ---------------------------------------------------------------------------
 # install()
 # ---------------------------------------------------------------------------
 
@@ -570,7 +766,9 @@ def _installer(tmp_path: Path, name: str) -> Path:
 
 def test_install_runs_inno_setup_silently_on_windows(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
+    updates_dir: Path,
 ) -> None:
+    """With nothing to reopen, the installer is spawned directly."""
     calls = _spy_popen(monkeypatch)
     exe = _installer(tmp_path, "cie-helper-9.9.9-setup.exe")
 
@@ -585,17 +783,87 @@ def test_install_runs_inno_setup_silently_on_windows(
     ]
 
 
+def test_install_chains_installer_then_relaunch_in_a_detached_cmd(
+    monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
+    updates_dir: Path,
+) -> None:
+    """The app can't reopen itself — it must be gone for the overwrite.
+
+    So a detached cmd runs the installer to completion and only then starts the
+    app. Launching from the installer's own [Run] section was tried first and
+    the app did not survive Setup exiting.
+    """
+    calls = _spy_popen(monkeypatch)
+    exe = _installer(tmp_path, "cie-helper-9.9.9-setup.exe")
+    app_exe = tmp_path / "CIE Helper" / "cie-helper.exe"
+
+    result = AppUpdater(current_version="1.1.2").install(
+        exe, relaunch_exe=app_exe,
+    )
+
+    assert result.success is True
+    assert len(calls) == 1
+    script = updates_dir / "relaunch.cmd"
+    assert calls[0]["argv"] == ["cmd", "/c", str(script)]
+
+    # newline="" so the CRLF line endings cmd needs survive the read.
+    body = script.read_text(encoding="mbcs", newline="")
+    assert "\r\n" in body, "cmd scripts need CRLF endings"
+    # Paths are quoted (both of these contain spaces) and the installer line
+    # comes before the launch line — the ordering IS the fix.
+    assert f'"{exe}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART' in body
+    assert f'"{app_exe}"\r\n' in body
+    assert body.index(str(exe)) < body.index(str(app_exe))
+    # Not via `start`, which launched nothing at all here and left no trace.
+    assert "start " not in body
+
+
+def test_install_still_installs_when_the_relaunch_script_cannot_be_written(
+    monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
+    updates_dir: Path,
+) -> None:
+    """Losing the reopen is a far smaller failure than refusing to update."""
+    calls = _spy_popen(monkeypatch)
+    exe = _installer(tmp_path, "cie-helper-9.9.9-setup.exe")
+
+    def _no_write(*args: object, **kwargs: object) -> None:
+        raise OSError("read-only volume")
+
+    monkeypatch.setattr(Path, "write_text", _no_write)
+
+    result = AppUpdater(current_version="1.1.2").install(
+        exe, relaunch_exe=tmp_path / "cie-helper.exe",
+    )
+
+    assert result.success is True
+    assert calls[0]["argv"] == [
+        str(exe), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+    ]
+
+
+def test_current_executable_is_none_when_running_from_source() -> None:
+    """Never relaunch python.exe — there is no packaged app to reopen."""
+    assert updater_mod.current_executable() is None
+
+
 def test_install_detaches_the_windows_installer_from_this_process(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
+    updates_dir: Path,
 ) -> None:
-    """Without DETACHED_PROCESS the installer dies with the app we're closing."""
+    """The spawned cmd must outlive the app we are about to close.
+
+    CREATE_NO_WINDOW rather than DETACHED_PROCESS: the app would not stay
+    alive when started from a parent with no console at all.
+    """
     calls = _spy_popen(monkeypatch)
     exe = _installer(tmp_path, "setup.exe")
 
-    AppUpdater(current_version="1.1.2").install(exe)
+    AppUpdater(current_version="1.1.2").install(
+        exe, relaunch_exe=tmp_path / "cie-helper.exe",
+    )
 
     assert calls[0]["creationflags"] == (
-        subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     )
 
 
@@ -710,8 +978,12 @@ def test_check_download_install_round_trip_never_raises(
     assert download.success is True
     assert download.local_path is not None
 
-    install = up.install(Path(download.local_path))
+    app_exe = updates_dir.parent / "CIE Helper" / "cie-helper.exe"
+    install = up.install(Path(download.local_path), relaunch_exe=app_exe)
     assert install.success is True
-    assert popen_calls[0]["argv"][1:] == [
-        "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+    assert popen_calls[0]["argv"] == [
+        "cmd", "/c", str(updates_dir / "relaunch.cmd"),
     ]
+    body = (updates_dir / "relaunch.cmd").read_text(encoding="mbcs")
+    assert download.local_path in body
+    assert str(app_exe) in body

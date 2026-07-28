@@ -1,6 +1,5 @@
 """Settings tab — entry list that drills down into sub-pages.
 
-Was a single flat inline form listing every credential at once; now it's a
 Settings-app-style menu: tapping "SMTP / GoodNotes", "Grader API" or "关于"
 pushes a full ``ft.View`` onto ``page.views``, which gives a native
 slide-in transition and AppBar back button on every platform (including
@@ -210,7 +209,7 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
     )
     goodnotes_email = _tf(
         str(saved_mail.goodnotes_email) if saved_mail else "",
-        hint="xxxx@goodnotes.com",
+        hint="me.xxxx@goodnotes.com",
     )
 
     status_text = ft.Text("", size=13)
@@ -263,7 +262,7 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
                             _row("Sender Email", sender_email, narrow=narrow),
                             _row(
                                 "App Password", sender_password,
-                                description="邮箱服务商生成的应用专用密码，非登录密码",
+                                description="邮箱服务商生成的IMAP/SMTP专用密码，非邮箱密码",
                                 narrow=narrow,
                             ),
                         ),
@@ -271,7 +270,7 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
                         *_divided(
                             _row(
                                 "Import Email", goodnotes_email,
-                                description="试卷会发送到这个地址导入 GoodNotes",
+                                description="试卷会发送到这个邮箱对应账户",
                                 narrow=narrow,
                             ),
                         ),
@@ -348,7 +347,7 @@ def _build_grader_view(page: ft.Page, state: AppState) -> ft.View:
     return ft.View(
         route="/settings/grader",
         appbar=ft.AppBar(
-            title=ft.Text("Grader API (Qwen-VL)"),
+            title=ft.Text("Grader API 设置"),
             leading=ft.IconButton(
                 ft.Icons.ARROW_BACK, on_click=lambda e: _pop(page),
             ),
@@ -361,13 +360,13 @@ def _build_grader_view(page: ft.Page, state: AppState) -> ft.View:
                         *_divided(
                             _row(
                                 "API Key", grader_api_key,
-                                description="保存在本地 ~/.cie_helper/.env，不会上传",
+                                # description="",
                                 narrow=narrow,
                             ),
                             _row("Base URL", grader_base_url, narrow=narrow),
                             _row(
                                 "Model", grader_model,
-                                description="需支持图片输入的多模态模型",
+                                description="需支持图片输入的视觉/多模态模型",
                                 narrow=narrow,
                             ),
                         ),
@@ -443,7 +442,9 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
     from modules.updater import (
         RELEASES_PAGE_URL,
         AppUpdater,
+        DownloadProgress,
         UpdateCheckResult,
+        format_progress,
         platform_asset_suffix,
     )
 
@@ -507,9 +508,16 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
         os._exit(0)
 
     def _run_download(url: str) -> None:
+        def _on_progress(progress: DownloadProgress) -> None:
+            # The row's subtitle is the progress bar: size, percent and speed.
+            # updater throttles these to ~3/second, so this is safe to push
+            # straight to the page.
+            _set_update_subtitle(f"下载中… {format_progress(progress)}")
+            page.update()
+
         def _work() -> None:
             updater = AppUpdater()
-            download = updater.download(url)
+            download = updater.download(url, on_progress=_on_progress)
             if not download.success or download.local_path is None:
                 _set_update_busy(False, update_idle_subtitle)
                 _alert("下载失败", f"下载更新失败：{download.error}")
@@ -553,7 +561,8 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
                         color=ft.Colors.BLACK,
                     ),
                     ft.Text(
-                        "下载完成后会自动安装，安装开始时应用会自动退出。",
+                        "下载完成后会自动安装。安装时应用会自动退出，"
+                        "装好后会自己重新打开。",
                         size=12,
                         color=ft.Colors.GREY,
                     ),
@@ -717,10 +726,10 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
                 "设置", size=24,
                 weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
             ),
-            ft.Text(
-                "邮件与批改 API 凭证，保存到本地 ~/.cie_helper/.env",
-                size=13, color=ft.Colors.GREY,
-            ),
+            # ft.Text(
+            #     "邮件与批改 API 凭证，保存到本地 ~/.cie_helper/.env",
+            #     size=13, color=ft.Colors.GREY,
+            # ),
             ft.Container(height=10),
             *_divided(
                 _menu_row(
@@ -728,7 +737,7 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
                     ft.Icons.MAIL_OUTLINE, open_mail,
                 ),
                 _menu_row(
-                    "Grader API (Qwen-VL)", "批改用的多模态模型凭证",
+                    "Grader API 设置", "批改用的多模态模型凭证",
                     ft.Icons.SMART_TOY_OUTLINED, open_grader,
                 ),
                 _menu_row(

@@ -76,4 +76,12 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; Interactive install only ("Launch CIE Helper" checkbox on the Finished page).
+; `skipifsilent` means this does nothing during an auto-update — reopening the
+; app after a silent update is handled by the app itself, not from here: an
+; entry added here DID launch the app (the Inno log confirmed the Exec), but
+; the app died within seconds of Setup deinitializing, most likely taken down
+; with Setup's Restart Manager session. modules/updater.py instead chains
+; installer-then-launch in a detached cmd, so the launch happens once Setup has
+; fully exited. See _windows_relaunch_script there.
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
