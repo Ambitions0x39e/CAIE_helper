@@ -143,11 +143,17 @@ class AppSettings(BaseSettings):
     def ms_cache_dir(self) -> Path:
         return self.base_dir / ".cache" / "ms"
 
+    @property
+    def updates_dir(self) -> Path:
+        """Where downloaded app installers land before being handed to the OS."""
+        return self.base_dir / "updates"
+
     def init_dirs(self) -> None:
         """Create required directories if they don't exist."""
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.pdfs_dir.mkdir(parents=True, exist_ok=True)
         self.ms_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.updates_dir.mkdir(parents=True, exist_ok=True)
 
 
 # Module-level singleton — import this directly in other modules
