@@ -568,6 +568,16 @@ def _windows_relaunch_script(installer: Path, app_exe: Path, log: Path) -> str:
         f'>"{log}" echo starting installer\r\n'
         f'"{installer}" {" ".join(_INNO_SILENT_ARGS)}\r\n'
         f'>>"{log}" echo installer exit=%ERRORLEVEL%\r\n'
+        # Let the install settle before starting the app. Launched immediately
+        # after Setup finished replacing ~225 MB of files, the app started and
+        # exited 0 straight away; launched by hand a minute later, or via cmd,
+        # or with a freshly deleted extraction dir, it ran fine every time — so
+        # the difference was how soon after the install it began.
+        #
+        # `ping`, not `timeout`: timeout aborts with "input redirection is not
+        # supported" whenever stdin is not a real console, which is exactly the
+        # situation this script runs in.
+        'ping -n 6 127.0.0.1 >nul\r\n'
         # Launch regardless of the installer's exit code: if the update failed
         # the previous version is still installed, and leaving the user with no
         # app at all is the worst outcome available.
