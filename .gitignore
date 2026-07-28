@@ -24,3 +24,10 @@ spikes/
 
 # Local release helper (personal workflow, not shipped)
 release.ps1
+
+# Personal developer notes (conventions, reminders — not part of the project)
+dev/developer_notes.md
+
+# Dev Files
+BLOCKED.md
+PROGRESS.md

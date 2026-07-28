@@ -23,9 +23,12 @@ a working install rather than merely failing to update it:
 """
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
+import time
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
@@ -52,6 +55,22 @@ _API_HEADERS: Final[dict[str, str]] = {
 # to be generous because these installers are 50–100 MB.
 _REQUEST_TIMEOUT: Final[tuple[int, int]] = (10, 30)
 _CHUNK_SIZE: Final[int] = 8192
+
+# Progress callbacks are throttled to this interval. At 8 KB a chunk a 56 MB
+# installer is ~7000 chunks; reporting every chunk would mean thousands of
+# page.update() calls and make the UI, not the network, the bottleneck.
+_PROGRESS_MIN_INTERVAL_S: Final[float] = 0.3
+
+# GitHub's release page labels sizes in MB but computes them in MiB (it shows
+# our 56,356,909-byte installer as "53.7 MB"). Match that so the number the
+# user watched on the release page is the number the app counts up to.
+_MIB: Final[float] = 1024.0 * 1024.0
+
+_INNO_SILENT_ARGS: Final[tuple[str, ...]] = (
+    "/VERYSILENT",
+    "/SUPPRESSMSGBOXES",
+    "/NORESTART",
+)
 
 #: Which release asset belongs to which platform. A platform absent from this
 #: map has no installer we know how to run — the UI sends those users to the
@@ -124,6 +143,38 @@ class UpdateDownloadResult(BaseModel):
     success: bool
     error: str | None = None
     local_path: str | None = None
+
+
+class DownloadProgress(BaseModel):
+    """How far the installer download has got, and how fast it is going.
+
+    ``total`` is None when the server sends no usable Content-Length — the
+    download still works, there is just nothing to count towards.
+    """
+
+    model_config = {"strict": False}
+
+    downloaded: int
+    total: int | None = None
+    speed_bps: float = 0.0
+
+
+#: What a caller passes to ``download`` to watch progress. It must not raise;
+#: ``download`` ignores exceptions from it rather than abandoning the download.
+ProgressCallback = Callable[[DownloadProgress], None]
+
+
+def format_progress(progress: DownloadProgress) -> str:
+    """``'12.3 / 53.7 MB (23%) · 2.4 MB/s'`` — for display next to a label."""
+    done = progress.downloaded / _MIB
+    if progress.total:
+        percent = round(progress.downloaded / progress.total * 100)
+        head = f"{done:.1f} / {progress.total / _MIB:.1f} MB ({percent}%)"
+    else:
+        head = f"{done:.1f} MB"
+    if progress.speed_bps <= 0:
+        return head
+    return f"{head} · {progress.speed_bps / _MIB:.1f} MB/s"
 
 
 class UpdateInstallResult(BaseModel):
@@ -226,21 +277,39 @@ class AppUpdater:
 
     # -- download ------------------------------------------------------------
 
-    def download(self, url: str) -> UpdateDownloadResult:
-        """Stream the installer into ``updates_dir``. Never raises."""
+    def download(
+        self, url: str, on_progress: ProgressCallback | None = None,
+    ) -> UpdateDownloadResult:
+        """Stream the installer into ``updates_dir``. Never raises.
+
+        ``on_progress`` is called at most every 0.3 s with bytes-so-far, the
+        total when known, and the speed over that window, plus once more when
+        the download finishes. Exceptions from it are swallowed: a broken
+        progress readout must not abandon a download that is working.
+        """
         try:
-            path = self._fetch_installer(url)
+            path = self._fetch_installer(url, on_progress)
         except _UpdateError as exc:
             return UpdateDownloadResult(success=False, error=str(exc))
         return UpdateDownloadResult(success=True, local_path=str(path))
 
     # -- install -------------------------------------------------------------
 
-    def install(self, installer_path: Path) -> UpdateInstallResult:
+    def install(
+        self, installer_path: Path, relaunch_exe: Path | None = None,
+    ) -> UpdateInstallResult:
         """Hand the installer to the OS, detached from this process.
 
         The caller MUST exit the app right after a successful return on
         Windows: Inno Setup cannot overwrite the .exe while it is running.
+
+        Which is also why reopening it afterwards cannot be done here — by then
+        this process is gone. On Windows we instead spawn a detached ``cmd``
+        running a generated .cmd that waits for the installer to finish and
+        *then* starts the app, so the new instance begins life after Setup has
+        exited. ``relaunch_exe`` defaults to this process's own .exe; pass it
+        explicitly to test, or pass nothing when running from source (there is
+        no app to reopen, and the install still happens).
 
         macOS gets ``open`` rather than the ``installer`` CLI on purpose —
         installing into /Applications needs an admin password, and
@@ -270,20 +339,40 @@ class AppUpdater:
                 error=f"Installer not found: {installer_path}",
             )
 
+        app_exe = relaunch_exe if relaunch_exe is not None else (
+            current_executable()
+        )
+
         try:
             if sys.platform == "win32":
-                subprocess.Popen(
-                    [
-                        str(installer_path),
-                        "/VERYSILENT",
-                        "/SUPPRESSMSGBOXES",
-                        "/NORESTART",
-                    ],
-                    creationflags=(
-                        subprocess.DETACHED_PROCESS
-                        | subprocess.CREATE_NEW_PROCESS_GROUP
-                    ),
+                # CREATE_NO_WINDOW, not DETACHED_PROCESS. Both survive this
+                # process exiting, but DETACHED_PROCESS leaves the child with no
+                # console at all, and every attempt to start the app from a
+                # console-less parent produced a process that died immediately
+                # (or never appeared); every attempt from a parent with a
+                # console worked. CREATE_NO_WINDOW gives cmd its own console and
+                # simply never shows it, so nothing flashes on screen.
+                detached = (
+                    subprocess.CREATE_NO_WINDOW
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
                 )
+                script = (
+                    None if app_exe is None
+                    else self._write_relaunch_script(installer_path, app_exe)
+                )
+                if script is None:
+                    # Nothing to reopen, or the script could not be written:
+                    # install anyway. Losing the reopen is a much smaller
+                    # failure than refusing to update.
+                    subprocess.Popen(
+                        [str(installer_path), *_INNO_SILENT_ARGS],
+                        creationflags=detached,
+                    )
+                else:
+                    subprocess.Popen(
+                        ["cmd", "/c", str(script)],
+                        creationflags=detached,
+                    )
             else:
                 subprocess.Popen(["open", str(installer_path)])
         except OSError as exc:
@@ -296,6 +385,35 @@ class AppUpdater:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _write_relaunch_script(
+        self, installer_path: Path, app_exe: Path,
+    ) -> Path | None:
+        """Write the installer-then-relaunch .cmd. None if it cannot be written.
+
+        Encoded in the system codepage, not ASCII or UTF-8: cmd.exe reads batch
+        files in the local codepage, and these paths run through the user's
+        profile name, which is not necessarily ASCII on a Chinese Windows.
+        """
+        script = self._updates_dir / "relaunch.cmd"
+        try:
+            # install() can be called without download() having run in this
+            # process (a resumed session, a hand-placed installer), so the
+            # directory is not guaranteed to exist yet.
+            self._updates_dir.mkdir(parents=True, exist_ok=True)
+            script.write_text(
+                _windows_relaunch_script(
+                    installer_path, app_exe, self._updates_dir / "relaunch.log",
+                ),
+                encoding="mbcs",
+                # newline="" or text mode translates our explicit \r\n again and
+                # every line ends \r\r\n. cmd tolerates that on some lines but a
+                # quoted path followed by a stray CR is not the path we meant.
+                newline="",
+            )
+        except (OSError, UnicodeError):
+            return None
+        return script
 
     def _fetch_latest_release(self) -> dict[str, Any]:
         """GET the latest-release JSON. Raises _UpdateError on any failure."""
@@ -322,7 +440,9 @@ class AppUpdater:
             raise _UpdateError("Unexpected release payload from GitHub")
         return payload
 
-    def _fetch_installer(self, url: str) -> Path:
+    def _fetch_installer(
+        self, url: str, on_progress: ProgressCallback | None = None,
+    ) -> Path:
         """Stream-download the installer. Raises _UpdateError on failure."""
         # Take only the basename, and only from the URL we chose ourselves —
         # never let a remote string decide where on disk we write.
@@ -347,16 +467,144 @@ class AppUpdater:
                 f"HTTP {response.status_code} when downloading {url!r}"
             )
 
+        total = _content_length(response)
+        report = _guard_callback(on_progress)
+
         dest: Path = self._updates_dir / filename
+        downloaded = 0
+        started_at = time.monotonic()
+        window_at = started_at
+        window_bytes = 0
         try:
             with dest.open("wb") as fh:
                 for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
-                    if chunk:
-                        fh.write(chunk)
+                    if not chunk:
+                        continue
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+
+                    now = time.monotonic()
+                    window = now - window_at
+                    if window < _PROGRESS_MIN_INTERVAL_S:
+                        continue
+                    # Speed over this window, not since the start — the user
+                    # asked what it is doing now, not what it averaged.
+                    report(DownloadProgress(
+                        downloaded=downloaded,
+                        total=total,
+                        speed_bps=(downloaded - window_bytes) / window,
+                    ))
+                    window_at, window_bytes = now, downloaded
         except OSError as exc:
             raise _UpdateError(f"Cannot write {dest}: {exc}") from exc
 
+        # However the throttle happened to fall, always land on a final report
+        # so the readout cannot freeze at something like 98% for a fast tail.
+        # Average speed for this one; and total stays None if we never knew it
+        # rather than being back-filled from downloaded, which would show a
+        # confident "100%" we were never in a position to claim.
+        elapsed = time.monotonic() - started_at
+        report(DownloadProgress(
+            downloaded=downloaded,
+            total=total,
+            speed_bps=downloaded / elapsed if elapsed > 0 else 0.0,
+        ))
+
         return dest
+
+
+def current_executable() -> Path | None:
+    """The running process's own .exe, or None if that isn't a packaged app.
+
+    In the packaged Windows app this is ``<install dir>\\cie-helper.exe`` — both
+    the file the installer replaces and the thing to reopen afterwards. Asking
+    Windows for the module filename beats ``sys.executable``, which an embedded
+    interpreter is free to leave empty or point elsewhere.
+
+    Returns None when running from source, where the answer would be python.exe
+    and relaunching it would be nonsense.
+    """
+    exe: Path | None = None
+    if sys.platform == "win32":
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.kernel32.GetModuleFileNameW(
+            None, buffer, len(buffer),
+        ):
+            exe = Path(buffer.value)
+    if exe is None and sys.executable:
+        exe = Path(sys.executable)
+    if exe is None or exe.stem.lower() in {"python", "pythonw"}:
+        return None
+    return exe
+
+
+def _windows_relaunch_script(installer: Path, app_exe: Path, log: Path) -> str:
+    """A .cmd that runs the installer to completion, then reopens the app.
+
+    Written to a file rather than passed as a cmd command line on purpose: the
+    paths contain spaces ("CIE Helper", "Your Company") and chaining with && on
+    a generated command line is where the quoting bugs live. A file we author
+    ourselves has exactly the quoting we put in it, and a test can read it back.
+
+    The sequencing is the whole point. Launching the app from the installer's
+    own [Run] section starts it *inside* Setup's lifetime, and it did not
+    survive Setup tearing down. Here cmd waits for the installer to exit first.
+
+    The app is invoked directly rather than via ``start``, which launched
+    nothing at all here and left no trace.
+
+    Redirections are written *before* the echo, not after it. ``echo x=%VAR%>f``
+    is a trap: once %VAR% expands to a number, cmd reads the digit immediately
+    left of ``>`` as a file handle and treats it as a stdin redirect, so the
+    text never reaches the file. That silently produced a 0-byte log.
+
+    The log is the only evidence a user could ever give us about a silent update
+    that went wrong, so it is worth the one file.
+    """
+    return (
+        "@echo off\r\n"
+        f'>"{log}" echo starting installer\r\n'
+        f'"{installer}" {" ".join(_INNO_SILENT_ARGS)}\r\n'
+        f'>>"{log}" echo installer exit=%ERRORLEVEL%\r\n'
+        # Launch regardless of the installer's exit code: if the update failed
+        # the previous version is still installed, and leaving the user with no
+        # app at all is the worst outcome available.
+        f'>>"{log}" echo launching app\r\n'
+        f'"{app_exe}"\r\n'
+        f'>>"{log}" echo app exit=%ERRORLEVEL%\r\n'
+    )
+
+
+def _content_length(response: Any) -> int | None:
+    """Content-Length as a positive int, or None if absent/unusable."""
+    raw = response.headers.get("Content-Length")
+    try:
+        total = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return total if total > 0 else None
+
+
+def _guard_callback(
+    on_progress: ProgressCallback | None,
+) -> ProgressCallback:
+    """Wrap a progress callback so it can never break the download.
+
+    Returns a no-op when there is no callback, so the download loop has no
+    None-check in it.
+    """
+    if on_progress is None:
+        return lambda _progress: None
+
+    def report(progress: DownloadProgress) -> None:
+        # Deliberately broad: this is a UI notification, and a display bug is
+        # not a reason to throw away a 56 MB download that is going fine.
+        with contextlib.suppress(Exception):
+            on_progress(progress)
+
+    return report
 
 
 def _pick_asset_url(assets: object, suffix: str) -> str | None:

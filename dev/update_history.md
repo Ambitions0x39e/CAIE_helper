@@ -2,6 +2,138 @@
 
 ---
 
+## 2026-07-28 — 应用内自动更新 + v1.1.3 发版打包
+
+**改动文件：** `modules/updater.py`（新建）, `tests/test_updater.py`（新建）, `core/settings.py`, `app_flet/tabs/settings.py`, `tests/test_paper_type.py`, `tests/test_renderer.py`, `modules/downloader.py`, `pyproject.toml`, `packaging/windows/cie-helper.iss`, `dev/version_log.md`, `uv.lock`, `PROGRESS.md`（新建）, `BLOCKED.md`（新建）
+
+### 功能说明
+
+以前发新版本，用户得自己去 GitHub 翻发布页、下安装包、手动装一遍。本次做了应用内自动更新：**设置 → 关于 → 更新** 一键查最新发布、下对应平台安装包、静默安装。整个 feature 按任务书四步走（基线核对 → updater 模块 → 触发安装 → 设置页接线），随后清掉三个长期挂着的小问题，最后打出 v1.1.3 安装包准备发布测试。
+
+两条贯穿全程的安全取舍，因为这两处错了都是**弄坏一个能用的安装**、而不是仅仅更新失败：
+
+- **只认严格大于**：线上版本必须严格大于本机才算有更新；相等、更旧、解析不出来一律「无更新」，绝不降级安装。
+- **只装当前平台的包**：`check()` 只返回后缀匹配 `sys.platform` 的资产，`install()` spawn 前再校验一次后缀。
+
+### 查版本 / 下载 / 安装：modules/updater.py
+
+**改动文件：** `modules/updater.py`（新建 385 行）, `core/settings.py`
+
+沿用 `modules/downloader.py` 的模式：Pydantic 结果对象，私有 `_UpdateError` 绝不外泄，失败是**返回值**而不是异常。
+
+- `AppSettings` 加 `updates_dir`（`~/.cie_helper/updates`），并在 `init_dirs()` 里一并创建（仿 `pdfs_dir`）。
+- 三个结果对象：`UpdateCheckResult`（`success` / `error` / `update_available` / `latest_version` / `release_notes` / `download_url`）、`UpdateDownloadResult`、`UpdateInstallResult`。
+- `_parse_version()` 把 `"v1.2.3"` 转成 `(1,2,3)` 元组比较；不是恰好三段数字就返回 `None` 而不是抛异常 —— tag 成 `"nightly"` 必须降级为「无更新」，不能变成 traceback。用元组而非字符串比较，`1.10.0 > 1.9.0` 才成立。
+- 资产按 `sys.platform` 选：`win32`→`.exe`、`darwin`→`.pkg`，其它平台或没有匹配资产都返回 `success=False` + `error="platform not supported"`（UI 据此跳浏览器）。平台判断放在联网**之前**，不支持的平台一次网络请求都不发。
+- `current_app_version()` 读 `pyproject.toml`（与关于页 `_app_version()` 同源）。`flet build` 会把整个工作目录拷进 bundle，所以打包后 pyproject 就在 app 根目录，这条路径在打包环境同样成立。
+- 下载写入 `updates_dir`（先建），文件名只取 URL 的 basename 并过一遍 `Path().name`，不让远端字符串决定往哪写；顺手剥掉 query string。
+
+**超时取值（任务书两处冲突）：** 任务书同时写了「`timeout=10`」和「同 `downloader.py` 的 `_REQUEST_TIMEOUT`」。取后者 `(10, 30)` —— 它点名了唯一真源，connect 超时正是 10 秒；安装包 50–100 MB，read 超时必须给 30s，否则正常下载会被判成超时。
+
+### 触发安装：让 app 退出到能被覆盖
+
+**改动文件：** `modules/updater.py`
+
+| 平台 | 命令 |
+|---|---|
+| Windows | `Popen([exe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], creationflags=DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP)` |
+| macOS | `Popen(["open", pkg])` |
+
+- Windows 必须 `DETACHED_PROCESS`，否则安装器随着我们正在关闭的进程一起死。spawn 后当前进程**必须**退出，Inno 覆盖不了自己持有的 `cie-helper.exe`。
+- macOS 用 `open` 而不是 `installer` CLI：装进 `/Applications` 要管理员密码，`installer` 在无终端交互的环境里会卡死或报权限错误。做不到真静默是系统限制。
+- `install()` 只保证安装器**被拉起**，不等安装结束 —— 因为 app 必须先退出。
+
+### 设置页接线：关于页「更新」行
+
+**改动文件：** `app_flet/tabs/settings.py`（只改 `_build_about_view`，两处 hunk 都落在该函数内）
+
+- 「更新」行插在「反馈」之前（`_menu_row("更新", "检查并安装最新版本", ft.Icons.SYSTEM_UPDATE_OUTLINED, ...)`），两行用 `_divided()` 隔开。
+- **只在点击时查，不在启动时后台查。** 查更新和下载都走 `page.run_thread`（沿用 `mark.py` 既有模式），期间**用该行自己的副标题当进度条**：「检查中…」→「下载中…」→「正在安装…」，行同时 `disabled` 并有 `update_busy` 标志防重入。副标题嵌在 `Container→Row→Column→Text` 里，靠逐层 `isinstance` 收窄取到，因为不许改 `_menu_row`。
+- **查到新版本不等于可以装**：一定先弹 `ft.AlertDialog` 显示「发现新版本 X」+ `当前 A → 新版本 B` + release notes，点「立即更新」才下载安装，「取消」只关。用户正用着 app，不能被静默关掉吓到。
+- 无更新提示「已是最新版本（版本号）」，失败提示「检查更新失败：{error}」，都用明确文案而不是静默无反应。
+- 不支持的平台直接 `page.launch_url(RELEASES_PAGE_URL)`，不查不报错不崩。
+- 退出用 `time.sleep(0.8)` → `page.window.close()` → `os._exit(0)`：先给脱钩的安装器一点启动时间和 close 指令一点 flush 时间，再硬退。`os._exit` 是刻意的 —— 正常关闭可能被挂起的 UI 任务卡住，留下被锁的 exe 和已经在跑的安装器。
+- 因为白名单只允许改这一个函数，`contextlib` / `os` / `time` / updater 的 import 全部写成函数内局部 import。
+
+### 反向验证：版本比较写反不会报错，必须亲手验
+
+**改动文件：** `modules/updater.py`（临时改回）
+
+把 `is_newer = latest > current` 改成 `<`，跑 `pytest tests/test_updater.py -k version`：
+
+```
+2 failed, 18 passed, 33 deselected
+FAILED test_check_reports_update_when_remote_version_is_newer
+  → update_available=False, download_url=None            有新版却查不到
+FAILED test_check_reports_no_update_when_remote_version_is_older
+  → update_available=True, download_url='.../v9.9.9/...exe'   更旧的线上版本被当成更新
+```
+
+改回后 `20 passed`。第二条红的价值在于：写反不是「查不到更新」这种无害失败，而是**主动给用户降级安装**。
+
+### 真实安装验证（已批准例外，只跑一次）
+
+argv 由 `AppUpdater.install()` 拼出（stub 掉 `Popen` 捕获后原样同步执行）：
+
+```
+argv from code : ['D:\\repos\\CieHelperWin\\dist\\cie-helper-1.1.2-setup.exe',
+                  '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART']
+creationflags  : 520          # DETACHED_PROCESS(8) | CREATE_NEW_PROCESS_GROUP(512)
+EXIT CODE: 0
+```
+
+无向导弹窗。macOS 无环境，到 mock 为止。
+
+### 三个顺手看到的问题（用户后来指示修掉）
+
+**改动文件：** `tests/test_paper_type.py`, `tests/test_renderer.py`, `modules/downloader.py`
+
+原先只记进 `BLOCKED.md` 没动，后按指示修完。两处不只是「消掉红字」：
+
+- **`test_grader_config_try_load_returns_none_when_missing`**：断言的前提「未配置」从来没被**造出来**过 —— 它直接读本机 `~/.cie_helper/.env`，所以在任何真配了 `GRADER_API_KEY` 的机器上都会失败，测的是环境而不是代码。改为 `monkeypatch.setitem(GraderConfig.model_config, "env_file", <不存在的路径>)` + 清 `GRADER_*` 环境变量。**补了反向用例**（有 key 时必须返回配置），否则把 `try_load` 改成永远返回 `None` 也能过。
+- **`tests/test_renderer.py` 的 `Task was destroyed but it is pending!`**：`render_regions` 的 `future.cancel()` 只是**排期**取消，收尾在同一批 `call_soon_threadsafe` 里就 `loop.stop()`，任务永远停在 pending，GC 时打印警告。改为先在 loop 内部（`all_tasks()` 才安全）取消并 `gather` 掉挂住的任务，再 stop + close。**产品代码 `modules/renderer.py:180` 本来就是对的**，问题只在测试收尾。
+- `modules/downloader.py` `_build_url()` 的 `return` 后面删掉一行只含空格的多余行。
+
+测试套件：**124 通过 / 1 失败 → 177 通过 / 1 失败（+53 新测试）→ 179 通过 / 0 失败**。ruff（含 `tests`）与 mypy 全程 0 issues。
+
+### v1.1.3 发版打包 + app.zip 瘦身
+
+**改动文件：** `pyproject.toml`, `packaging/windows/cie-helper.iss`, `dev/version_log.md`, `uv.lock`
+
+- 分支快进合并到 `main`（本地，未 push），用 `release.ps1 1.1.3` 改两处版本号 + 插 changelog 存根，填好 v1.1.3 更新说明（主题：自动更新 feature）后 `release.ps1 1.1.3 -Build` 出包。
+- **必须从主仓库那个短路径打包**：worktree 在 `.claude/worktrees/<name>/` 下太深，MSBuild 会炸 C1083 / FTK1011（见 memory `flet-build-windows-gotchas`）。
+- **`[tool.flet.app].exclude` 补 6 个开发文件**：`release.ps1`、`CLAUDE.md`、`PROGRESS.md`、`BLOCKED.md`、`.gitignore`、`.gitattributes` 之前全都打进了 `app.zip` —— `exclude` 是唯一的过滤器（flet 不读 `.gitignore`），而它匹配**顶层名字**，文件和目录一样适用，之前没人列过这几个。不是安全问题（`release.ps1` 只有构建逻辑无凭证，危险的 `.env` 早在 exclude 里且实测确认没打进去），但不该出现在用户的安装里。补上后重打，安装器小了约 9.7 KB。
+
+**产出的两个安装包：**
+
+| 文件 | 内部版本 | 用途 |
+|---|---|---|
+| `dist/cie-helper-1.1.3-setup.exe`（56,356,909 B） | 1.1.3 | 传 GitHub 发布 |
+| `dist/cie-helper-1.1.1-setup.exe`（56,355,158 B） | 1.1.1 | 扮演「旧版本」装在本机，用来体验真实升级过程 |
+
+为什么需要第二个包：装 1.1.3 + 发布 v1.1.3 → 版本相等 → 正确地提示「已是最新版本」，下载和安装那段一次都不会走，测到的是按钮不是功能。选 `1.1.1` 是因为 `dist/` 里这个名字是空的，不会覆盖真正发布过的 `cie-helper-1.1.2-setup.exe`。打完后 `git checkout` 把 pyproject + iss 还原回 1.1.3。
+
+打包后逐项验过 `app.zip` 内容：`modules/updater.py` 在、`pyproject.toml` 版本号正确、设置页含「更新」行与 updater import、6 个开发文件均已排除、`.env` 未泄漏。
+
+### 排查用法 / 注意事项
+
+**PowerShell 5.1 别对原生命令用 `*>&1`。** 第一次 `-Build` 失败是因为我加了 `*>&1 | Tee-Object`：PS 5.1 会把原生命令的 stderr 每行包成 `NativeCommandError` 并把 `$?` 置为 `$false`，撞上 `release.ps1` 里的 `$ErrorActionPreference='Stop'` 就成了终止错误 —— `uv` 本身在正常构建。去掉重定向即可，stderr 本来就被捕获了。
+
+**GitHub Release 有两个坑会让更新功能完全查不到：**
+
+1. **tag 必须是 `vX.Y.Z`**。实测发布时 tag 打成了 `Feature-Update`，`_parse_version()` 返回 `None`，应用提示「检查更新失败：Unrecognised release tag: 'Feature-Update'」，压根不会告知有新版本。代码故意这么严：解析不出来就报错，绝不瞎猜版本号 —— 猜错方向就是给用户装旧版。
+2. **别勾 pre-release、别存成 draft**。`/releases/latest` 会跳过这两种，应用会拿到更旧的 release 然后说「已是最新版本」。
+
+另外：release 描述为空时，GitHub 页面会回退显示 tag 所指 commit 的 message（当时显示成 `chore: release v1.1.2`）；`body` 字段实际是空串，所以应用弹框里显示的是「（本次发布没有填写更新说明）」而不是那段文字。填上真正的描述即可顶掉。已从 `dev/version_log.md` 抽出 `dist/RELEASE_NOTES_v1.1.3.md` 供 `gh release create --notes-file` 使用。
+
+**app.zip hash 陷阱**（只影响「装同一个版本」这种测法）：flet 靠比对 `app.zip.hash` 决定是否重新解包。若新装的 app.zip 与已解包的字节相同，就不会重新解包，手工改过的解包目录内容会留着。走 1.1.1 → 1.1.3 的正常升级路径不会遇到这个问题。
+
+**测试流程（1.1.1 → 1.1.3）：** 发布 tag `v1.1.3` 并附 `.exe` → 装 `cie-helper-1.1.1-setup.exe` → 关于页应显示 `Version 1.1.1` → 点「更新」→ 弹框「发现新版本 1.1.3」→「立即更新」→ 副标题走「下载中…」「正在安装…」→ 窗口自行消失 → 等 30–60 秒 → 手动启动 → 关于页显示 `Version 1.1.3` → 再点一次「更新」应提示「已是最新版本」（顺带验掉版本相等分支）。用户数据在 `~/.cie_helper/`，安装器不碰。
+
+**已知粗糙处：** 56 MB 下载期间只有「下载中…」文字，没有进度条。
+
+---
+
 ## 2026-07-27 — 设置页改版落地：行式布局 + 新页取代旧页
 
 **改动文件：** `app_flet/tabs/settings.py`（由 `settings_dev.py` 顶替，后者删除）, `app_flet/main.py`（改动已全部撤回）, `.claude/launch.json`, `dev/version_log.md`
