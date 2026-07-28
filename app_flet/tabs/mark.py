@@ -127,13 +127,9 @@ def build_mark_tab(
                 "AI 批改", size=24,
                 weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
             ),
-            ft.Text(
-                "解析评分标准 → 上传答卷 → AI 批改 → 查看结果",
-                size=13, color=ft.Colors.GREY,
-            ),
             ft.Divider(),
             ft.Text(
-                "Step 1 — 评分标准", size=18,
+                "Step 1 — 解析 Mark Scheme", size=18,
                 weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
             ),
         ]
@@ -192,7 +188,7 @@ def build_mark_tab(
         # Start page (MATH only)
         if paper_type_ref[0] == PaperType.MATH:
             start_page_field = ft.TextField(
-                label="评分标准内容起始页",
+                label=" MS 内容起始页",
                 label_style=ft.TextStyle(color=ft.Colors.BLACK),
                 value=(
                     "" if start_page_ref[0] is None
@@ -203,7 +199,7 @@ def build_mark_tab(
                 width=200,
                 color=ft.Colors.BLACK,
                 helper=ft.Text(
-                    "留空 = 自动检测（各科起始页不同，3–8 页都有）",
+                    "默认留空，自动检测",
                     size=11, color=ft.Colors.GREY,
                 ),
                 on_change=_on_start_page_change,  # type: ignore[arg-type]
@@ -236,7 +232,7 @@ def build_mark_tab(
             )
         )
         parse_row: list[ft.Control] = [ft.Button(
-            "解析评分标准",
+            "解析 Mark Scheme",
             icon=ft.Icons.SEARCH,
             disabled=not can_parse,
             style=ft.ButtonStyle(
@@ -305,7 +301,7 @@ def build_mark_tab(
         ms_records = [r for r in all_records if r.ms_path]
         if not ms_records:
             return [ft.Text(
-                "没有包含评分标准的已下载试卷。请先下载或直接上传。",
+                "没有包含 Mark Scheme的已下载试卷。请先下载或直接上传。",
                 color=ft.Colors.GREY, size=13,
             )]
 
@@ -414,7 +410,7 @@ def build_mark_tab(
     ) -> None:
         files = await ms_picker.pick_files(
             allowed_extensions=["pdf"],
-            dialog_title="选择评分标准 PDF",
+            dialog_title="选择 Mark Scheme PDF",
         )
         if files and files[0].path:
             ms_upload_path_ref[0] = files[0].path
@@ -423,14 +419,14 @@ def build_mark_tab(
     def _start_parse(force: bool) -> None:
         ms_path = _get_ms_path()
         if not ms_path:
-            show_snack("请先选择评分标准文件", ft.Colors.RED)
+            show_snack("请先选择 Mark Scheme文件", ft.Colors.RED)
             return
 
         pt = paper_type_ref[0]
 
         progress_bar = ft.ProgressBar(visible=True)
         progress_text = ft.Text(
-            "正在解析评分标准…", size=12, color=ft.Colors.GREY,
+            "正在解析 Mark Scheme…", size=12, color=ft.Colors.GREY,
         )
         # Collapse the tab to Step 1 + this bar so a re-parse from the last
         # step doesn't bury the bar under the previous question list.
@@ -485,8 +481,8 @@ def build_mark_tab(
                 grade_questions_seeded[0] = False
                 show_snack(
                     f"已解析 {pc.paper_id} — "
-                    f"{len(pc.questions)} 题, "
-                    f"{pc.total_marks} 总分",
+                    f"共 {len(pc.questions)} 题, "
+                    f"总分为 {pc.total_marks}",
                     ft.Colors.GREEN,
                 )
             except Exception as exc:
@@ -541,7 +537,7 @@ def build_mark_tab(
             controls.append(ft.Row([
                 ft.ProgressRing(width=20, height=20, stroke_width=2),
                 ft.Text(
-                    "正在分析答卷…",
+                    "正在解析QP…",
                     size=12, color=ft.Colors.GREY,
                 ),
             ], spacing=8))

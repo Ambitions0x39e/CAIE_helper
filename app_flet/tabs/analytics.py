@@ -406,13 +406,14 @@ def build_analytics_tab(
     avg = df["percentage"].mean()
     best = df["percentage"].max()
     latest = df["percentage"].iloc[-1]
-    delta = (
-        latest - df["percentage"].iloc[-2]
-        if done >= _MIN_FOR_TREND
-        else None
-    )
-
-    delta_text = f"{delta:+.1f}%" if delta is not None else ""
+    # Commented out alongside the "最新变化" row below (see further down) rather
+    # than deleted, so re-enabling the readout is a matter of uncommenting both.
+    # delta = (
+    #     latest - df["percentage"].iloc[-2]
+    #     if done >= _MIN_FOR_TREND
+    #     else None
+    # )
+    # delta_text = f"{delta:+.1f}%" if delta is not None else ""
 
     overall_metrics = ft.Row(
         [
@@ -457,14 +458,14 @@ def build_analytics_tab(
         ),
         overall_metrics,
     ]
-    if delta_text:
-        controls.append(
-            ft.Text(
-                f"最新变化: {delta_text}",
-                size=12,
-                color=ft.Colors.GREY,
-            ),
-        )
+    # if delta_text:
+    #     controls.append(
+    #         ft.Text(
+    #             f"最新变化: {delta_text}",
+    #             size=12,
+    #             color=ft.Colors.GREY,
+    #         ),
+    #     )
     controls.append(ft.Divider())
     controls.extend(syllabus_sections)
 
