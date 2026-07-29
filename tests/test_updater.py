@@ -816,6 +816,13 @@ def test_install_chains_installer_then_relaunch_in_a_detached_cmd(
     assert body.index(str(exe)) < body.index(str(app_exe))
     # Not via `start`, which launched nothing at all here and left no trace.
     assert "start " not in body
+    # The settle delay between installer and relaunch is the fix for the app
+    # exiting 0 immediately after install — it must survive between the two,
+    # not just exist somewhere in the script.
+    assert "Start-Sleep" in body
+    assert body.index(str(exe)) < body.index("Start-Sleep") < body.index(
+        str(app_exe)
+    )
 
 
 def test_install_still_installs_when_the_relaunch_script_cannot_be_written(

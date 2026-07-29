@@ -574,10 +574,15 @@ def _windows_relaunch_script(installer: Path, app_exe: Path, log: Path) -> str:
         # or with a freshly deleted extraction dir, it ran fine every time — so
         # the difference was how soon after the install it began.
         #
-        # `ping`, not `timeout`: timeout aborts with "input redirection is not
-        # supported" whenever stdin is not a real console, which is exactly the
-        # situation this script runs in.
-        'ping -n 6 127.0.0.1 >nul\r\n'
+        # Not `timeout`: it aborts with "input redirection is not supported"
+        # whenever stdin is not a real console, which is exactly the situation
+        # this script runs in. Not `ping` either (the first fix tried here):
+        # some locked-down Windows images block ICMP outright, including to
+        # 127.0.0.1, and a blocked ping fails immediately instead of waiting —
+        # silently turning the delay into zero seconds. `Start-Sleep` depends
+        # on neither a console nor the network stack.
+        'powershell -NoProfile -NonInteractive'
+        ' -Command "Start-Sleep -Seconds 5"\r\n'
         # Launch regardless of the installer's exit code: if the update failed
         # the previous version is still installed, and leaving the user with no
         # app at all is the worst outcome available.
