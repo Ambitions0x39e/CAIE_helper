@@ -9,23 +9,23 @@ import flet as ft
 from app_flet.components.widgets import metric_card, success_banner
 from core.models import PaperType
 from core.settings import GraderConfig
-from modules.grader import (
+from modules.marking.grader import (
     QuestionResult,
     grade_question,
     parse_grading_result,
 )
-from modules.mcq_parser import (
+from modules.marking.mcq_parser import (
     detect_student_answers,
     is_valid_manual_answer,
     score_mcq_answers,
 )
-from modules.ms_parser import (
+from modules.marking.ms_parser import (
     ms_cache_exists,
     parse_mark_scheme,
     resolve_ms_start_page,
 )
-from modules.page_segmenter import PageClip, segment_questions_report
-from modules.renderer import NativeRenderer, page_count, to_pdf_bytes
+from modules.marking.page_segmenter import PageClip, segment_questions_report
+from modules.marking.renderer import NativeRenderer, page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
     from app_flet.state import AppState

@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from modules.page_segmenter import PageClip, _load_pages
+from modules.marking.page_segmenter import PageClip, _load_pages
 
 if TYPE_CHECKING:
     from asyncio import AbstractEventLoop

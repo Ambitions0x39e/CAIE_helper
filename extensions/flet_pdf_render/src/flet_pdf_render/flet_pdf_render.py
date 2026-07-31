@@ -9,7 +9,7 @@ import flet as ft
 class RenderClip:
     """A full-width vertical slice of one PDF page, in PDF points (top-origin).
 
-    Mirrors modules.page_segmenter.PageClip; y coordinates are measured from
+    Mirrors modules.marking.page_segmenter.PageClip; y coordinates are measured from
     the top of the page (pdfplumber convention). A clip covering the whole
     page (y_top=0, y_bottom=page_height) renders the full page.
     """

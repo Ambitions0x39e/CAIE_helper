@@ -7,7 +7,7 @@ import pytest
 from fpdf import FPDF
 
 from core.models import PaperType
-from modules.ms_parser import (
+from modules.marking.ms_parser import (
     _MS_START_PAGE_FALLBACK,
     PaperConfig,
     QuestionConfig,

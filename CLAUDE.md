@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Run the app
-uv run streamlit run app.py
+uv run flet run app_flet
 
 # Install dependencies
 uv sync
@@ -47,19 +47,25 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
 ## Stack
 
 - **Python 3.13+** with `uv` as package manager
-- **Streamlit** for the web UI (single-page app with 3 tabs + 2 multipage admin pages)
+- **Flet** for the UI (desktop/iOS app; `flet run app_flet`)
 - **Pydantic v2** for all validation, settings, and domain models (strict mode enabled on most models)
 - **pandas** for CSV store and analytics DataFrames
-- **pdfplumber** for parsing grade threshold PDFs
+- **pdfminer.six** for text extraction / segmentation (iOS-safe); **pdfplumber** only for grade-threshold PDFs, behind the `gt` extra
 - **requests** for downloading PDFs
 - **ruff** (E/F/I/UP/B/SIM) + **mypy strict** for linting/typing
+
+The Streamlit app (`app.py`, `pages/`, `modules/visualizer.py`) was removed once
+it had been fully superseded by the Flet app — it no longer even imported. Two of
+its features were never ported: the grade-threshold checker and the syllabus
+config editor. `core/gt_parser.py` (UI-agnostic) is kept for a future port; the
+deleted UI is recoverable from git history.
 
 ## Architecture
 
 ### Entry point
-- `app.py` — main Streamlit app with 3 tabs: Download, Manage, Analytics
-- `pages/admin.py` — syllabus/paper-type config admin page
-- `pages/gt_checker.py` — grade threshold checker with bulk download + score entry
+- `main.py` / `app_flet/main.py` — Flet app: header + 5 tabs (下载 / 管理 / 统计 / 批改 / 设置)
+- `app_flet/state.py` — `AppState`, the mutable state shared across tabs
+- `app_flet/tabs/*.py` — one `build_*_tab()` per tab; `app_flet/components/` holds shared widgets and dialogs
 
 ### `core/` — infrastructure layer
 - **`settings.py`** — `AppSettings` (paths: `~/.cie_helper/`) and `MailConfig` (SMTP from .env). Singleton `app_settings` imported by all modules.
@@ -72,17 +78,18 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
 - **`downloader.py`** — `PaperDownloader` streams PDFs from CIEFrank or PapaCambridge, saves to `~/.cie_helper/pdfs/`, appends `PaperRecord` to store. Uses `_DownloadError` (never leaks outside module).
 - **`manager.py`** — `PaperManager` handles score submission (marks Completed, timestamps), record deletion (optionally removes local PDFs), and opening PDFs in system viewer (cross-platform).
 - **`mailer.py`** — `GoodNotesMailer` sends QP PDF to GoodNotes import email via SMTP SSL, updates `sent_to_gn` flag on success. Uses `_MailError` (never leaks outside module).
-- **`visualizer.py`** — `PaperVisualizer` renders Streamlit analytics: overall metrics, per-syllabus breakdown, per-paper-type trend charts via `st.line_chart`.
+- **`updater.py`** — in-app update check / download / silent install against GitHub releases.
+- **`marking/`** — the Mark tab's pipeline, split out because these five served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading). Nothing outside `app_flet/tabs/mark.py` imports them.
 
 ### Data patterns
 - **Result objects** — all operations return typed result objects (`DownloadResult`, `MailResult`, `UpdateResult`, `DeleteResult`, `OpenResult`) with `success: bool`, `error: str | None`, and operation-specific fields. Exceptions are caught and wrapped — never propagate to the UI layer.
 - **Validation at boundaries** — `DownloadRequest`, `MailRequest`, `ScoreUpdate`, `DeleteRequest` are Pydantic models that validate user input at the entry point.
 - **CSV as database** — file lives at `~/.cie_helper/data.csv`; no SQL database.
 - **`.env`** — SMTP credentials stored at repo root, loaded by `MailConfig`/pydantic-settings.
-- **`__init__.py`** re-exports — both `core/__init__.py` and `modules/__init__.py` re-export the public API of their submodules.
+- **No `modules/` re-exports** — `modules/__init__.py` and `modules/marking/__init__.py` are deliberately empty of imports, so `import modules.marking.page_segmenter` doesn't drag in siblings' platform-specific deps (several have no iOS wheel, which would break `flet build ipa`). `tests/test_modules_import.py` guards this in a subprocess. `core/__init__.py` does re-export.
 
 ### Syllabus config
-- `data/syllabus_config.json` — JSON array of `{syllabus_id, name, paper_types[]}` entries. Managed via pages/admin.py. Used by visualizer to label analytics groups.
+- `data/syllabus_config.json` — JSON array of `{syllabus_id, name, paper_types[]}` entries. Read by the Analytics and Download tabs for syllabus/paper-type labels. **No in-app editor** since the Streamlit admin page was removed — edit the JSON by hand.
 
 ## Key conventions
 
@@ -90,4 +97,4 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
 - `typing.Literal` for string enum patterns (DownloadSource, PaperRecord.status)
 - Cross-field validation via `@model_validator(mode="after")`
 - Private exception classes (`_DownloadError`, `_MailError`) to encapsulate module internals
-- Streamlit error display via shared `fmt_validation_error()` helper formatting Pydantic errors
+- Layering is one-directional: `core ← modules ← app_flet`. Nothing in `core/` or `modules/` may import `app_flet`.

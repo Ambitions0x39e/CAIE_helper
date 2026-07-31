@@ -2,7 +2,7 @@
 
 `modules/__init__.py` used to eagerly import every submodule, including the
 Streamlit-based visualizer and the pdfplumber-based renderer. That made
-`import modules.page_segmenter` drag in streamlit + pdfplumber, which breaks
+`import modules.marking.page_segmenter` drag in streamlit + pdfplumber, which breaks
 on iOS (no wheels) and on any env where streamlit is optional.
 
 Each test runs in a fresh subprocess so sys.modules isn't polluted by pytest.
@@ -28,7 +28,7 @@ def _import_leaks(submodule: str, forbidden: list[str]) -> tuple[int, str]:
 
 def test_page_segmenter_import_is_light() -> None:
     rc, err = _import_leaks(
-        "modules.page_segmenter", ["streamlit", "pdfplumber", "requests"]
+        "modules.marking.page_segmenter", ["streamlit", "pdfplumber", "requests"]
     )
     assert rc == 0, err
 
@@ -37,5 +37,5 @@ def test_grader_import_does_not_need_streamlit() -> None:
     # grader still imports pdfplumber for rendering — that leaves in Phase 2B
     # when the Dart renderer replaces render_question_regions. For now, just
     # guard that grader never drags in streamlit.
-    rc, err = _import_leaks("modules.grader", ["streamlit"])
+    rc, err = _import_leaks("modules.marking.grader", ["streamlit"])
     assert rc == 0, err

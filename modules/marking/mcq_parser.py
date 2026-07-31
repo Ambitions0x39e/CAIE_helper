@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING
 from pdfminer.high_level import extract_text
 
 from core.settings import GraderConfig
-from modules.ms_parser import PaperConfig, QuestionConfig
-from modules.renderer import page_count, to_pdf_bytes
+from modules.marking.ms_parser import PaperConfig, QuestionConfig
+from modules.marking.renderer import page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
-    from modules.renderer import NativeRenderer
+    from modules.marking.renderer import NativeRenderer
 
 _ANSWER_LETTERS = frozenset("ABCD")
 

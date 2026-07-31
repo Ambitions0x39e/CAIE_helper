@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from modules.grader import (
+from modules.marking.grader import (
     MarkDetail,
     QuestionResult,
     parse_grading_result,

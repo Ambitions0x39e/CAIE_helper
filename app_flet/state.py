@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 from core.settings import GraderConfig, MailConfig
 from core.storage import CSVStore
-from modules.ms_parser import PaperConfig
-from modules.page_segmenter import PageClip
+from modules.marking.ms_parser import PaperConfig
+from modules.marking.page_segmenter import PageClip
 
 if TYPE_CHECKING:
     from flet_pdf_render import PdfRenderer
