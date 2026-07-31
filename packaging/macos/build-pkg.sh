@@ -33,7 +33,7 @@ fi
 # Like the Inno Setup AppId on Windows: keep this identifier constant across
 # versions so macOS treats new versions as upgrades of the same product.
 IDENTIFIER="com.ambitions0x39e.cie-helper"
-OUT="$DIST_DIR/cie-helper-$VERSION.pkg"
+OUT="$DIST_DIR/cie-helper-$VERSION-setup.pkg"
 
 # Stage just the .app in a clean root so the payload is exactly one bundle
 # mapped to /Applications (no stray build artifacts).
