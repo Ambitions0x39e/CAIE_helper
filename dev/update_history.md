@@ -2,6 +2,93 @@
 
 ---
 
+## 2026-07-31 — 按考季查询批量下载 + 清掉 Streamlit 遗留（v1.2.1）
+
+**改动文件：** `modules/downloader.py`, `app_flet/tabs/download.py`, `tests/test_downloader_query.py`（新建）, `app.py`（删）, `pages/gt_checker.py`（删）, `modules/visualizer.py`（删）, `tests/test_visualizer_metrics.py`（删）, `modules/marking/`（新建，5 个文件迁入）, `modules/__init__.py`, `app_flet/state.py`, `app_flet/tabs/mark.py`, `tests/test_grader.py`, `tests/test_mcq_parser.py`, `tests/test_modules_import.py`, `tests/test_ms_parser.py`, `tests/test_page_segmenter.py`, `tests/test_renderer.py`, `pyproject.toml`, `uv.lock`, `CLAUDE.md`, `extensions/flet_pdf_render/src/flet_pdf_render/flet_pdf_render.py`, `extensions/flet_pdf_render/examples/flet_pdf_render_example/src/main.py`, `.gitignore`, `packaging/macos/build-pkg.sh`
+
+### 功能说明
+
+两件事。一是把 Download 页那个「查询」子标签从占位符（点了弹「功能开发中」）接到 CIEFrank 的 renum 接口，选完科目/年份/考季能列出该考季全部卷子、勾选后批量下载，不用再手敲 paper_id。二是把早已被 Flet 取代、且**已经启动不了**的 Streamlit 老应用整块删掉，顺手把 `modules/` 里只服务批改流程的五个文件拆进 `modules/marking/` 子包。
+
+### 按考季查询 + 批量下载
+
+**改动文件：** `modules/downloader.py`, `app_flet/tabs/download.py`, `tests/test_downloader_query.py`
+
+- `query_available(subject, year, season)` 打 `POST https://cie.fraft.cn/obj/Common/Fetch/renum`，返回 `QueryResult(success, entries, error)`。**没有改动 `download()` / `record_only()` / `_fetch_pdf()` / `DownloadRequest` / `DownloadResult` 任何既有代码**，纯新增。
+- **季节码要转译**：接口吃的是英文月份缩写，不是文件名里那套 m/s/w。实打核对过 —— `Mar`→`9701_m25_*`、`Jun`→`s25`、`Nov`→`w25`。这个映射写反了**不会报错**（照样是合法 JSON，只是悄悄查了别的考季），所以单测里专门钉死三个码，并做过「故意改成 `w→Win` 跑红、改回跑绿」的反向验证。
+- **三种响应形状必须分清**：正常 `{"total":54,"rows":[{"file":"9701_w25_qp_11.pdf"}],"collection":true}`；未来考季 `{"total":0,"rows":[]}` 是**正常空结果不是错误**；科目非法 `{"status":101,"message":"路径非法。"}` **根本没有 `rows` 字段**，绝不能被当成「这个考季没卷子」。解析里显式区分：缺 `rows` ⇒ 报错，`rows: []` ⇒ 空结果。
+- 网络 / HTTP / 非 JSON / 形状不符一律经 `_DownloadError` 转成 `QueryResult.error`，与 `_fetch_pdf` 同款，异常不冒到 UI。
+- `classify_paper_id()` 拆成公开纯函数：3 段末段 gt → `"gt"`，4 段第 3 段 qp → `"qp"`，其余（ms/ci/in/er…）→ `"other"`。
+- 测试 26 例，只 mock `requests.post`，`query_available` 本体全程真跑。
+
+### 结果列表：tree 形态 + 按卷号分列
+
+**改动文件：** `app_flet/tabs/download.py`
+
+- QP 黑字带勾选框，对应 MS 作 `╰─` 灰字子行挂在下面（**MS 不占选择列**，因为 `download()` 本来就是 QP+MS 一起下）；某个 QP 查不到 MS 时子行显示「（没有对应 MS）」，树形不断层；配不上 QP 的孤儿 MS 也照样列出，不让它凭空消失。
+- **按卷号分列**：取 variant 倒数第二位数字（`_11/_12/_13`→1，`_21`→2），一卷一列等宽铺满窗口。列头是 `Paper N · <卷型名>`，卷型名取自 `SyllabusConfig.paper_types_as_dict()`，与 analytics 同源。
+- gt 保留勾选框（可独立下载），ci/in/er 列出但不给选择列、标「暂不支持」。默认全不选。
+- 批量下载**复用 `PaperDownloader.download()`**，不另建下载路径；本地已有的直接计入跳过，结束报 `成功X · 跳过Y · 失败Z`。发 GoodNotes 只把 `kind == "qp"` 的成功项排进待发送位。
+
+### 排查：页面底下拖出一大截空白
+
+**改动文件：** `app_flet/tabs/download.py`
+
+现象是 Download 页内容下方有一大块白，其它页没有。原因是 **`expand` 用错了地方**：`app_flet/main.py` 的 `content_area` 是 `ft.Column(scroll=AUTO, expand=True)`，**滚动容器里高度无界，子控件的 `expand` 拿不到约束**，于是 `Container(expand)→Tabs(expand)→TabBarView` 按内在高度铺开。旁证：manage / analytics 返回的都是不带 expand 的 `Container(padding=20)`，只有加了 Tabs 的 Download 页这么写。
+
+改法分两步，第二步是用户实测后才补的：
+
+| | 做法 | 结果 |
+|---|---|---|
+| 第一版 | Tabs 给确定高度 `max(320, page.height - 210)`，外层去掉 expand | 开窗时对，**最大化后仍停在开窗那会儿的高度**，底下照样一大块白 |
+| 最终 | 接 `page.on_resize`，窗口一变就重算 | 700→490、1080→870、1440→1230、400→320（下限） |
+
+`page.on_resize` 全仓原本没人用（其它页都是建页时读 `page.width`），现在被 Download 页独占；重建时覆盖成新闭包不会堆叠，切走后旧回调只是去改一个已不在树上的控件，无害。`_TAB_CHROME_H = 210` = 页头 64 + 页内标题 48 + 间距 8 + 底部导航 80，若视觉上还差一条边就调这一个常量。
+
+### 删 Streamlit 遗留
+
+**改动文件：** `app.py`（删）, `pages/gt_checker.py`（删）, `modules/visualizer.py`（删）, `tests/test_visualizer_metrics.py`（删）, `pyproject.toml`, `uv.lock`, `CLAUDE.md`
+
+- `app.py` **早就 import 不了**：它还在找 `modules.grader` 的 `detect_handwriting_pages` / `render_pages` / `render_question_regions`，这三个名字在渲染器重构后就不存在了。没人发现，正是它已死的最好证明。
+- 连带 `uv.lock` 掉了整条 streamlit 依赖链（altair、pyarrow、pydeck、protobuf、tornado、gitpython 等 19 个包，lock 少 326 行）。`legacy` extra（streamlit + pdfplumber）改名 `gt`，只留 pdfplumber。
+- **两个功能没迁到 Flet 就跟着没了**：分数线查询、考纲/卷型配置编辑。`core/gt_parser.py` 不依赖任何 UI，**保留**，将来往 Flet 迁不用去 git history 里刨；配置现在只能手改 `data/syllabus_config.json`。`pages/admin.py` 一直是 gitignored 的本地文件，由用户自行删除。
+- CLAUDE.md 的架构段本来停留在 Streamlit 时代（连 app_flet 都没提），一并更新：运行命令、Stack、入口、`marking/`、新增「分层单向 `core ← modules ← app_flet`」。
+
+### `modules/marking/` 子包
+
+**改动文件：** `modules/marking/`（新建）, `modules/__init__.py`, `app_flet/state.py`, `app_flet/tabs/mark.py`, 6 个测试文件
+
+`modules/` 原本 10 个扁平文件，其中 5 个只服务 Mark 一个页面。用 `git mv` 把 `ms_parser` / `mcq_parser` / `page_segmenter` / `renderer` / `grader` 挪进 `modules/marking/`（历史跟着走，`git log --follow` 照样能追），改了 11 个文件的 import。
+
+**`modules/marking/__init__.py` 同样不做 re-export** —— 与外层 `modules/__init__.py` 同一条规矩：单个 submodule 导入不能拖进没有 iOS wheel 的兄弟模块，否则 `flet build ipa` 全挂。`tests/test_modules_import.py` 那个子进程守卫仍然有效。
+
+踩到一个坑：批量改 import 时只匹配了 `modules.renderer` 这种点号形式，漏了 `from modules import renderer as renderer_mod`（`tests/test_renderer.py:17`），pytest 直接收集失败。
+
+### 仓库清理
+
+**改动文件：** `.gitignore`, `packaging/macos/build-pkg.sh`, `extensions/.../examples/.../src/main.py`
+
+- 删掉 3 个已并入 main 的 worktree（`auto-update-feature-e8afbd` 含一整套 .venv，671 MB；`ios_shift`；两个空壳目录）+ 7 个只剩标签的已合并分支 + 2 条过期 stash（其中一条是把 streamlit 挪进 extra 的旧想法，早被 main 上的 `legacy` extra 超越）。
+- `.gitignore` 补 `test_papers/`、`site/`（两者本来就在 `[tool.flet.app].exclude` 里），补末尾换行。
+- macOS 产物改名 `cie-helper-<version>-setup.pkg`，与 Windows 的 `cie-helper-setup.exe` 对齐。**更新器按后缀（`_ASSET_SUFFIX`）而非文件名认资产，改名不影响自动更新识别。**
+- 扩展示例的 import 分组修掉，`ruff check .` 现在全仓（含 extensions）通过。
+
+### 调研结论：轻量更新是可行的（**本次未实现，仅调研**）
+
+现在每改一行 Python，用户就得重下 53.7 MB 安装包。查了打包结构，实测出关键事实：
+
+```
+%APPDATA%\Roaming\Your Company\cie-helper\flet\app\.hash
+sha256(%LOCALAPPDATA%\Programs\CIE Helper\data\flutter_assets\app\app.zip)
+→ 两者完全一致：bf56bffa4686802ad5e8994b1d29e2192fd88eb67c66262718b17f4efeca8f29
+```
+
+启动器每次开机算一遍 `app.zip` 的 sha256，与解压目录里的 `.hash` 比对，**不一致才重新解压**。而 `app.zip` 只有 **432 KB**（未加密，70 个条目，含 `pyproject.toml`——`current_app_version()` 读的就是它），安装目录 257 MB 里 153 MB 是 `site-packages`。所以「只换 app.zip」= 432 KB 对 53.7 MB，差 125 倍，且**不执行任何新 exe，SmartScreen 那道拦截自然消失**（安装目录在 `%LOCALAPPDATA%\Programs\`，当前用户可写，不需要 UAC）。
+
+约束：`app.zip` 之外的东西（`site-packages`、DLL、Flutter 客户端、Dart 扩展）变了就必须走完整安装包，需要一个 deps 指纹闸门来自动判断。macOS 侧因为用户已在安装时用 `xattr -c` 清 quarantine，Gatekeeper 评估被跳过，改资源不碰主二进制**理论上**不触发 AMFI（未在真机验证）；剩下的障碍只是 pkgbuild 装进 /Applications 后文件归 root，要么提权要么改成拖拽安装。
+
+---
+
 ## 2026-07-28 — 下载进度显示 + 安装后自动重开 + 文案精简（v1.2.0）
 
 **改动文件：** `modules/updater.py`, `tests/test_updater.py`, `app_flet/tabs/settings.py`, `app_flet/tabs/mark.py`, `app_flet/tabs/analytics.py`, `packaging/windows/cie-helper.iss`, `.gitignore`, `dev/developer_notes.md`（新建，gitignored）, `pyproject.toml`, `dev/version_log.md`
