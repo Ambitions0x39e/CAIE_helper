@@ -27,8 +27,9 @@ _SEASONS = [
     ("w", "Winter"),
 ]
 _FIRST_YEAR = 2004
-# 子行缩进：对齐勾选框右侧，让 ╰─ 挂在 QP 名字底下
+# 子行缩进：对齐勾选框右侧，让分支图标挂在 QP 名字底下
 _TREE_INDENT = 42
+_LEAF_ICON_SIZE = 14
 # 标签页内容区高度 = 窗口高 - (页头 64 + 页内标题 48 + 间距 8 + 底部导航 80)。
 # 不能用 expand：外层 content_area 是 scroll=AUTO 的 Column，滚动容器里高度无界，
 # expand 撑不出约束，TabBarView 会按内在高度铺开 —— 那正是页面底下拖出一大截空白的原因。
@@ -115,13 +116,24 @@ def build_request_tab(
         return ""
 
     def _leaf(text: str, *, color: str = ft.Colors.GREY) -> ft.Row:
-        """树的子行：╰─ 开头，缩进到勾选框右边，不占选择列。"""
+        """树的子行：子项图标 + 灰字，缩进到勾选框右边，不占选择列。
+
+        分支符号用 Material 图标而不是 ``╰─``：制表符（U+2570/U+2500）的
+        East Asian Width 是 Ambiguous，在全局那套中文字体（main.py 的
+        Microsoft YaHei）里按全角渲染，宽度和基线都跟旁边的半角文件名对不上，
+        看着歪。图标是矢量的，跟字体无关。
+        """
         return ft.Row(
             [
                 ft.Container(width=_TREE_INDENT),
-                ft.Text(f"╰─ {text}", size=13, color=color),
+                ft.Icon(
+                    ft.Icons.SUBDIRECTORY_ARROW_RIGHT,
+                    size=_LEAF_ICON_SIZE,
+                    color=color,
+                ),
+                ft.Text(text, size=13, color=color),
             ],
-            spacing=0,
+            spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
