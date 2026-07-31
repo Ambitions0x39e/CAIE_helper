@@ -27,9 +27,14 @@ _SEASONS = [
     ("w", "Winter"),
 ]
 _FIRST_YEAR = 2004
-# 子行缩进：对齐勾选框右侧，让分支图标挂在 QP 名字底下
-_TREE_INDENT = 42
+# 子行缩进：让分支图标挂在 QP 名字左下角
+_TREE_INDENT = 34
 _LEAF_ICON_SIZE = 14
+# 行高写死，把 Material 勾选框那圈 48px 点击热区留下的空档压掉，
+# 让 MS 子行贴到它的 QP 底下（配合 Checkbox 的 COMPACT 密度）。
+# 再往下压就会开始切字：14pt 的行盒约 19px，13pt 约 17px。
+_ROW_H = 24
+_LEAF_ROW_H = 16
 # 标签页内容区高度 = 窗口高 - (页头 64 + 页内标题 48 + 间距 8 + 底部导航 80)。
 # 不能用 expand：外层 content_area 是 scroll=AUTO 的 Column，滚动容器里高度无界，
 # expand 撑不出约束，TabBarView 会按内在高度铺开 —— 那正是页面底下拖出一大截空白的原因。
@@ -134,6 +139,7 @@ def build_request_tab(
                 ft.Text(text, size=13, color=color),
             ],
             spacing=4,
+            height=_LEAF_ROW_H,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
@@ -143,6 +149,8 @@ def build_request_tab(
             label=entry.paper_id,
             label_style=ft.TextStyle(color=ft.Colors.BLACK, size=14),
             value=False,  # 默认全不选
+            visual_density=ft.VisualDensity.COMPACT,
+            splash_radius=_LEAF_ICON_SIZE,
             on_change=_on_check,  # type: ignore[arg-type]
         )
         note = ft.Text(_row_note(entry), size=12, color=ft.Colors.GREY)
@@ -150,6 +158,7 @@ def build_request_tab(
         return ft.Row(
             [checkbox, ft.Container(expand=True), note],
             spacing=8,
+            height=_ROW_H,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
@@ -163,6 +172,7 @@ def build_request_tab(
                 ft.Text(_row_note(entry), size=12, color=ft.Colors.GREY),
             ],
             spacing=8,
+            height=_ROW_H,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
