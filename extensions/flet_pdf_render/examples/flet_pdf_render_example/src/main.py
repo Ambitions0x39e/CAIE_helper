@@ -8,7 +8,6 @@ mapping on desktop before iOS.
 import os
 
 import flet as ft
-
 from flet_pdf_render import PdfRenderer, RenderClip
 
 PDF_PATH = r"D:/repos/CieHelperWin/9702_s25_qp_21.pdf.pdf"
