@@ -44,10 +44,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Legacy Streamlit app (app.py, pages/*) + grade-threshold parsing. NOT part of
-# the Flet app and NOT iOS-safe (pdfplumber -> pypdfium2 has no iOS wheel).
-legacy = [
-    "streamlit>=1.35.0",
+# Grade-threshold parsing (core/gt_parser.py). Its only caller was the deleted
+# Streamlit page; the parser itself is UI-agnostic and kept for a future Flet
+# port. NOT iOS-safe (pdfplumber -> pypdfium2 has no iOS wheel), hence an extra
+# rather than a runtime dep.
+gt = [
     "pdfplumber>=0.11.0",
 ]
 dev = [
@@ -63,8 +64,7 @@ dev = [
 #
 # Runtime deps are installed FRESH into the bundle from [project.dependencies]
 # (see SERIOUS_PYTHON_SITE_PACKAGES), so the local `.venv` is NOT needed in the
-# package — excluding it is safe and removes ~425 MB (it also drags in the whole
-# legacy streamlit stack: streamlit/pyarrow/altair/pydeck).
+# package — excluding it is safe and removes ~425 MB.
 #
 # Categories below:
 #   dev-only dirs      : extensions*, spikes, tests, dev, in_dev, docs
@@ -130,7 +130,7 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = [
     "pandas", "pandas.*", "requests", "requests.*",
-    "pdfplumber", "pdfplumber.*", "streamlit", "streamlit.*",
+    "pdfplumber", "pdfplumber.*",
 ]
 ignore_missing_imports = true
 
@@ -157,8 +157,6 @@ dev = [
     # the cli's Flutter client and the bundled Python flet must match.
     "flet-cli>=0.85.3,<0.86",
     "flet-desktop>=0.85.3,<0.86",
-    # Legacy deps needed to run the full test suite locally (segmenter fidelity
-    # check compares pdfminer vs pdfplumber; visualizer tests need streamlit).
+    # Segmenter fidelity check compares pdfminer against pdfplumber.
     "pdfplumber>=0.11.0",
-    "streamlit>=1.35.0",
 ]

@@ -1,4 +1,4 @@
-"""Tests for modules.page_segmenter using synthetic PDFs."""
+"""Tests for modules.marking.page_segmenter using synthetic PDFs."""
 from __future__ import annotations
 
 import io
@@ -8,7 +8,7 @@ import pdfplumber
 import pytest
 from fpdf import FPDF
 
-from modules.page_segmenter import (
+from modules.marking.page_segmenter import (
     PageClip,
     QuestionRegion,
     _accepted_garbled_subs,

@@ -1,4 +1,4 @@
-"""Tests for modules.renderer pure helpers (source normalization + clip building).
+"""Tests for the renderer's pure helpers (source normalization + clip building).
 
 The NativeRenderer's async bridge to the flet page loop needs a running app, so
 it's verified at runtime (2B.3) rather than here. These tests cover the pure,
@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 from fpdf import FPDF
 
-from modules import renderer as renderer_mod
-from modules.page_segmenter import PageClip
-from modules.renderer import (
+from modules.marking import renderer as renderer_mod
+from modules.marking.page_segmenter import PageClip
+from modules.marking.renderer import (
     NativeRenderer,
     _extract_pages,
     full_page_clips,

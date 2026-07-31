@@ -1,9 +1,9 @@
-"""Tests for modules.mcq_parser skip-page resolution."""
+"""Tests for modules.marking.mcq_parser skip-page resolution."""
 from __future__ import annotations
 
 from pathlib import Path
 
-from modules.mcq_parser import (
+from modules.marking.mcq_parser import (
     _extract_paper_id,
     _parse_paper_filename,
     _resolve_skip_pages,

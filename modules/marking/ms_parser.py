@@ -22,10 +22,10 @@ from pydantic import BaseModel
 
 from core.models import PaperType
 from core.settings import GraderConfig
-from modules.renderer import page_count, to_pdf_bytes
+from modules.marking.renderer import page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
-    from modules.renderer import NativeRenderer
+    from modules.marking.renderer import NativeRenderer
 
 QUESTION_ID_RE = re.compile(r"^(\d+)(?:\(([a-z])\))?$")
 
@@ -521,7 +521,7 @@ def parse_mark_scheme(
         cached = None if force else _load_cached(path)
         if cached is not None:
             return cached
-        from modules.mcq_parser import parse_mcq_mark_scheme
+        from modules.marking.mcq_parser import parse_mcq_mark_scheme
         config = parse_mcq_mark_scheme(pdf_path)
         _save_cache(path, config)
         return config
