@@ -250,3 +250,148 @@ class PaperDownloader:
 
 class _DownloadError(Exception):
     """Raised internally when a PDF fetch fails. Never leaks outside this module."""
+
+
+# ---------------------------------------------------------------------------
+# Session query — list everything CIEFrank has for one subject/year/season
+# ---------------------------------------------------------------------------
+
+_URL_RENUM: Final[str] = "https://cie.fraft.cn/obj/Common/Fetch/renum"
+
+QuerySeason = Literal["m", "s", "w"]
+QueryKind = Literal["qp", "gt", "other"]
+
+# The endpoint speaks English month abbreviations, not the m/s/w codes used in
+# every filename. Getting this mapping wrong is silent — the response is still
+# valid JSON, just for the wrong session — hence the dedicated tests.
+_RENUM_SEASONS: Final[dict[str, str]] = {"m": "Mar", "s": "Jun", "w": "Nov"}
+
+
+def classify_paper_id(paper_id: str) -> QueryKind:
+    """
+    Bucket a paper_id stem (no .pdf) into what the downloader can handle.
+
+    ``9701_w25_qp_11`` → "qp", ``9701_w25_gt`` → "gt", everything else
+    (ms, ci, in, er, qr, …) → "other".
+    """
+    parts = paper_id.split("_")
+    if len(parts) == 3 and parts[2] == "gt":
+        return "gt"
+    if len(parts) == 4 and parts[2] == "qp":
+        return "qp"
+    return "other"
+
+
+class QueryEntry(BaseModel):
+    """One paper the session query turned up."""
+
+    model_config = {"strict": False}
+
+    paper_id: str
+    kind: QueryKind
+    already_downloaded: bool = False
+
+
+class QueryResult(BaseModel):
+    """Outcome of a session query — never raises, mirrors DownloadResult."""
+
+    model_config = {"strict": False}
+
+    success: bool
+    entries: list[QueryEntry] = []
+    error: str | None = None
+
+
+def query_available(
+    subject: str,
+    year: str,
+    season: QuerySeason,
+    store: CSVStore | None = None,
+) -> QueryResult:
+    """
+    List every paper CIEFrank holds for one subject/year/season.
+
+    ``store`` is only there so tests (and callers holding a store already) can
+    avoid re-reading the CSV; it defaults to the app's own store.
+
+    Returns a QueryResult — network, HTTP, malformed-JSON and "路径非法" style
+    errors all come back as ``success=False`` with a message, never as an
+    exception. An empty ``entries`` list with ``success=True`` means the
+    session genuinely has nothing (e.g. a future exam session).
+    """
+    renum_season = _RENUM_SEASONS.get(season)
+    if renum_season is None:
+        return QueryResult(success=False, error=f"未知考季代码: {season!r}")
+
+    try:
+        rows = _fetch_renum(subject.strip(), str(year).strip(), renum_season)
+    except _DownloadError as exc:
+        return QueryResult(success=False, error=str(exc))
+
+    downloaded = _downloaded_paper_ids(store)
+    entries: list[QueryEntry] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        filename = row.get("file")
+        if not isinstance(filename, str) or not filename.strip():
+            continue
+        paper_id = re.sub(r"\.pdf$", "", filename.strip(), flags=re.IGNORECASE)
+        entries.append(
+            QueryEntry(
+                paper_id=paper_id,
+                kind=classify_paper_id(paper_id),
+                already_downloaded=paper_id in downloaded,
+            )
+        )
+
+    return QueryResult(success=True, entries=entries)
+
+
+def _fetch_renum(subject: str, year: str, season: str) -> list[object]:
+    """
+    POST the renum query and hand back its ``rows`` list.
+
+    Raises _DownloadError for anything that isn't a well-formed row list —
+    including the ``{"status":101,"message":"路径非法。"}`` shape the endpoint
+    returns for an unknown subject, which carries no ``rows`` key at all and
+    must NOT be mistaken for "this session has no papers".
+    """
+    try:
+        response = requests.post(
+            _URL_RENUM,
+            data={"subject": subject, "year": year, "season": season},
+            timeout=_REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise _DownloadError(f"网络错误: {exc}") from exc
+
+    if not response.ok:
+        raise _DownloadError(f"HTTP {response.status_code} — 查询接口无响应")
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise _DownloadError(f"查询接口返回的不是合法 JSON: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise _DownloadError("查询接口返回了意料之外的结构")
+
+    if "rows" not in payload:
+        message = payload.get("message") or "查询接口拒绝了这次请求"
+        raise _DownloadError(f"查询失败: {message}")
+
+    rows = payload["rows"]
+    if not isinstance(rows, list):
+        raise _DownloadError("查询接口返回的 rows 不是列表")
+
+    return rows
+
+
+def _downloaded_paper_ids(store: CSVStore | None) -> set[str]:
+    """paper_ids already in the store; an unreadable store just means 'none'."""
+    try:
+        records = (store or CSVStore()).load_all()
+    except Exception:  # noqa: BLE001
+        return set()
+    return {record.paper_id for record in records}
