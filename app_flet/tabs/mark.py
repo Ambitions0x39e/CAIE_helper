@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
+from app_flet import theme
 from app_flet.components.widgets import metric_card, success_banner
 from core.models import PaperType
 from core.settings import GraderConfig
@@ -125,12 +126,12 @@ def build_mark_tab(
         controls: list[ft.Control] = [
             ft.Text(
                 "AI 批改", size=24,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ),
             ft.Divider(),
             ft.Text(
                 "Step 1 — 解析 Mark Scheme", size=18,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ),
         ]
 
@@ -139,11 +140,9 @@ def build_mark_tab(
             content=ft.Row([
                 ft.Radio(
                     value="downloaded", label="从已下载试卷",
-                    label_style=ft.TextStyle(color=ft.Colors.BLACK),
                 ),
                 ft.Radio(
                     value="upload", label="上传 PDF",
-                    label_style=ft.TextStyle(color=ft.Colors.BLACK),
                 ),
             ]),
             value=ms_source_ref[0],
@@ -156,11 +155,9 @@ def build_mark_tab(
             content=ft.Row([
                 ft.Radio(
                     value="mcq", label="MCQ",
-                    label_style=ft.TextStyle(color=ft.Colors.BLACK),
                 ),
                 ft.Radio(
                     value="math", label="Structured / Math",
-                    label_style=ft.TextStyle(color=ft.Colors.BLACK),
                 ),
             ]),
             value=paper_type_ref[0].value,
@@ -182,14 +179,14 @@ def build_mark_tab(
                     icon=ft.Icons.UPLOAD_FILE,
                     on_click=_on_ms_upload_click,  # type: ignore[arg-type]
                 ),
-                ft.Text(upload_label, size=12, color=ft.Colors.GREY),
+                ft.Text(upload_label, size=12, color=theme.MUTED),
             ]))
 
         # Start page (MATH only)
         if paper_type_ref[0] == PaperType.MATH:
             start_page_field = ft.TextField(
                 label="MS 内容起始页",
-                label_style=ft.TextStyle(color=ft.Colors.BLACK),
+                label_style=theme.field_label_style(),
                 value=(
                     "" if start_page_ref[0] is None
                     else str(start_page_ref[0])
@@ -197,10 +194,9 @@ def build_mark_tab(
                 hint_text="自动",
                 keyboard_type=ft.KeyboardType.NUMBER,
                 width=200,
-                color=ft.Colors.BLACK,
                 helper=ft.Text(
                     "默认留空，自动检测",
-                    size=11, color=ft.Colors.GREY,
+                    size=11, color=theme.MUTED,
                 ),
                 on_change=_on_start_page_change,  # type: ignore[arg-type]
             )
@@ -213,10 +209,10 @@ def build_mark_tab(
         ):
             controls.append(ft.Container(
                 ft.Row([
-                    ft.Icon(ft.Icons.WARNING, color=ft.Colors.ORANGE),
+                    ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
                     ft.Text(
                         "请先在设置中配置 Grader API 凭证",
-                        color=ft.Colors.ORANGE,
+                        color=theme.WARNING,
                     ),
                 ]),
                 padding=8,
@@ -235,9 +231,7 @@ def build_mark_tab(
             "解析 Mark Scheme",
             icon=ft.Icons.SEARCH,
             disabled=not can_parse,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-            ),
+            style=theme.filled_button(),
             on_click=_on_parse_click,  # type: ignore[arg-type]
         )]
         if state.paper_config and state.ms_from_cache:
@@ -245,11 +239,11 @@ def build_mark_tab(
                 ft.Row([
                     ft.Icon(
                         ft.Icons.HISTORY,
-                        color=ft.Colors.AMBER_800, size=16,
+                        color=theme.ACCENT_STRONG, size=16,
                     ),
                     ft.Text(
                         "此结果来自缓存",
-                        size=12, color=ft.Colors.BLACK,
+                        size=12,
                     ),
                     ft.TextButton(
                         "重新解析",
@@ -257,7 +251,7 @@ def build_mark_tab(
                         on_click=_on_reparse_click,  # type: ignore[arg-type]
                     ),
                 ], spacing=6, tight=True),
-                bgcolor=ft.Colors.AMBER_100,
+                bgcolor=theme.ACCENT_TINT,
                 border_radius=8,
                 padding=ft.Padding(left=10, right=4, top=2, bottom=2),
             ))
@@ -274,17 +268,16 @@ def build_mark_tab(
                 q_controls.append(ft.Text(
                     f"{qid} — {qcfg.max_marks} marks",
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLACK, size=13,
+                    size=13,
                 ))
                 q_controls.append(ft.Text(
-                    qcfg.mark_scheme, size=12, color=ft.Colors.GREY,
+                    qcfg.mark_scheme, size=12, color=theme.MUTED,
                 ))
 
             controls.append(ft.ExpansionTile(
                 title=ft.Text(
                     f"已解析: {pc.paper_id}"
                     f" ({len(pc.questions)} 题)",
-                    color=ft.Colors.BLACK,
                 ),
                 controls=[ft.Container(
                     ft.Column(q_controls, spacing=4), padding=12,
@@ -302,7 +295,7 @@ def build_mark_tab(
         if not ms_records:
             return [ft.Text(
                 "没有包含 Mark Scheme 的已下载试卷。请先下载或直接上传。",
-                color=ft.Colors.GREY, size=13,
+                color=theme.MUTED, size=13,
             )]
 
         syllabus_codes = sorted(
@@ -326,24 +319,22 @@ def build_mark_tab(
 
         syllabus_dd = ft.Dropdown(
             label="科目代码",
-            label_style=ft.TextStyle(color=ft.Colors.BLACK),
+            label_style=theme.field_label_style(),
             options=[
                 ft.dropdown.Option(code) for code in syllabus_codes
             ],
             value=selected_syllabus_ref[0],
             width=160,
-            color=ft.Colors.BLACK,
             on_select=_on_syllabus_select,  # type: ignore[arg-type]
         )
         paper_dd = ft.Dropdown(
             label="选择试卷",
-            label_style=ft.TextStyle(color=ft.Colors.BLACK),
+            label_style=theme.field_label_style(),
             options=[
                 ft.dropdown.Option(pid) for pid in filtered_ids
             ],
             value=selected_paper_ref[0],
             expand=True,
-            color=ft.Colors.BLACK,
             on_select=_on_paper_select,  # type: ignore[arg-type]
         )
 
@@ -419,14 +410,14 @@ def build_mark_tab(
     def _start_parse(force: bool) -> None:
         ms_path = _get_ms_path()
         if not ms_path:
-            show_snack("请先选择 Mark Scheme 文件", ft.Colors.RED)
+            show_snack("请先选择 Mark Scheme 文件", theme.DANGER)
             return
 
         pt = paper_type_ref[0]
 
         progress_bar = ft.ProgressBar(visible=True)
         progress_text = ft.Text(
-            "正在解析 Mark Scheme…", size=12, color=ft.Colors.GREY,
+            "正在解析 Mark Scheme…", size=12, color=theme.MUTED,
         )
         # Collapse the tab to Step 1 + this bar so a re-parse from the last
         # step doesn't bury the bar under the previous question list.
@@ -483,10 +474,10 @@ def build_mark_tab(
                     f"已解析 {pc.paper_id} — "
                     f"共 {len(pc.questions)} 题, "
                     f"总分为 {pc.total_marks}",
-                    ft.Colors.GREEN,
+                    theme.SUCCESS,
                 )
             except Exception as exc:
-                show_snack(f"解析失败: {exc}", ft.Colors.RED)
+                show_snack(f"解析失败: {exc}", theme.DANGER)
             finally:
                 parsing_ref[0] = False
                 parse_bar_ref[0] = None
@@ -509,7 +500,7 @@ def build_mark_tab(
             ft.Divider(),
             ft.Text(
                 "Step 2 — 上传答卷", size=18,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ),
         ]
 
@@ -527,7 +518,7 @@ def build_mark_tab(
                 icon=ft.Icons.UPLOAD_FILE,
                 on_click=_on_answer_upload_click,  # type: ignore[arg-type]
             ),
-            ft.Text(upload_label, size=12, color=ft.Colors.GREY),
+            ft.Text(upload_label, size=12, color=theme.MUTED),
         ]))
 
         if not state.answer_pdf_path:
@@ -538,7 +529,7 @@ def build_mark_tab(
                 ft.ProgressRing(width=20, height=20, stroke_width=2),
                 ft.Text(
                     "正在解析 QP…",
-                    size=12, color=ft.Colors.GREY,
+                    size=12, color=theme.MUTED,
                 ),
             ], spacing=8))
             return controls
@@ -561,15 +552,15 @@ def build_mark_tab(
             ft.Row([
                 ft.Icon(
                     ft.Icons.WARNING if incomplete else ft.Icons.INFO,
-                    color=ft.Colors.ORANGE if incomplete else ft.Colors.BLUE,
+                    color=theme.WARNING if incomplete else theme.PRIMARY,
                     size=18,
                 ),
                 ft.Text(
                     " | ".join(info_parts),
-                    color=ft.Colors.BLACK, size=13,
+                    size=13,
                 ),
             ]),
-            bgcolor=ft.Colors.ORANGE_50 if incomplete else ft.Colors.BLUE_50,
+            bgcolor=theme.WARNING_TINT if incomplete else theme.PRIMARY_TINT,
             border_radius=8, padding=12,
         ))
         if incomplete:
@@ -580,13 +571,13 @@ def build_mark_tab(
             controls.append(ft.Text(
                 f"未自动识别：{preview}。"
                 "请在下方为这些题手动输入页码（例如 2 或 2,3）。",
-                color=ft.Colors.ORANGE, size=12,
+                color=theme.WARNING, size=12,
             ))
 
         # Page assignment per question
         controls.append(ft.Text(
             "为每题指定页码:", size=14,
-            weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+            weight=ft.FontWeight.BOLD,
         ))
 
         pc = state.paper_config
@@ -609,13 +600,12 @@ def build_mark_tab(
             tf = ft.TextField(
                 label=f"{qid} ({qcfg.max_marks}m)",
                 label_style=ft.TextStyle(
-                    color=ft.Colors.ORANGE_800 if needs_input else ft.Colors.BLACK,
+                    color=theme.WARNING_STRONG if needs_input else None,
                 ),
                 value=default_val,
                 hint_text="待填" if needs_input else "例: 2,3",
-                border_color=ft.Colors.ORANGE if needs_input else None,
+                border_color=theme.WARNING if needs_input else None,
                 expand=True,
-                color=ft.Colors.BLACK,
                 dense=True,
             )
             page_inputs[qid] = tf
@@ -693,7 +683,7 @@ def build_mark_tab(
                 _rebuild()
             except Exception as exc:
                 show_snack(
-                    f"答卷分析失败: {exc}", ft.Colors.RED,
+                    f"答卷分析失败: {exc}", theme.DANGER,
                 )
                 state.auto_pages_done = True
                 _rebuild()
@@ -708,7 +698,7 @@ def build_mark_tab(
             ft.Divider(),
             ft.Text(
                 "Step 3 — 批改", size=18,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ),
         ]
 
@@ -717,22 +707,22 @@ def build_mark_tab(
         if state.grading_error:
             controls.append(ft.Container(
                 ft.Row([
-                    ft.Icon(ft.Icons.ERROR, color=ft.Colors.RED, size=18),
+                    ft.Icon(ft.Icons.ERROR, color=theme.DANGER, size=18),
                     ft.Text(
                         state.grading_error,
-                        color=ft.Colors.RED, size=13, expand=True,
+                        color=theme.DANGER, size=13, expand=True,
                     ),
                 ], vertical_alignment=ft.CrossAxisAlignment.START, spacing=8),
-                bgcolor=ft.Colors.RED_50, border_radius=8, padding=12,
+                bgcolor=theme.DANGER_TINT, border_radius=8, padding=12,
             ))
 
         if state.grader_config is None:
             controls.append(ft.Container(
                 ft.Row([
-                    ft.Icon(ft.Icons.WARNING, color=ft.Colors.ORANGE),
+                    ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
                     ft.Text(
                         "请先在设置中配置 Grader API 凭证",
-                        color=ft.Colors.ORANGE,
+                        color=theme.WARNING,
                     ),
                 ]),
                 padding=8,
@@ -742,7 +732,6 @@ def build_mark_tab(
         # Thinking mode toggle
         thinking_switch = ft.Switch(
             label="启用思考模式 (更慢但更准确)",
-            label_text_style=ft.TextStyle(color=ft.Colors.BLACK),
             value=thinking_ref[0],
             on_change=_on_thinking_change,  # type: ignore[arg-type]
         )
@@ -766,7 +755,7 @@ def build_mark_tab(
         controls.append(ft.Row(
             [
                 ft.Text(
-                    "选择要批改的题目:", size=13, color=ft.Colors.BLACK,
+                    "选择要批改的题目:", size=13,
                 ),
                 ft.Container(expand=True),
                 ft.TextButton(
@@ -784,7 +773,7 @@ def build_mark_tab(
                 ft.Checkbox(
                     label=qid,
                     label_style=ft.TextStyle(
-                        color=ft.Colors.BLACK, size=13,
+                        size=13,
                     ),
                     value=qid in grade_questions_ref[0],
                     on_change=_make_q_check_handler(qid),
@@ -801,12 +790,12 @@ def build_mark_tab(
         if not selected:
             controls.append(ft.Text(
                 "请至少勾选一个题目进行批改。",
-                color=ft.Colors.ORANGE, size=12,
+                color=theme.WARNING, size=12,
             ))
         elif missing:
             controls.append(ft.Text(
                 f"请为以下题目指定页码: {', '.join(missing)}",
-                color=ft.Colors.ORANGE, size=12,
+                color=theme.WARNING, size=12,
             ))
 
         can_grade = (
@@ -817,9 +806,7 @@ def build_mark_tab(
             "开始批改",
             icon=ft.Icons.ROCKET_LAUNCH,
             disabled=not can_grade,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-            ),
+            style=theme.filled_button(),
             on_click=_on_grade_click,  # type: ignore[arg-type]
         ))
 
@@ -876,7 +863,7 @@ def build_mark_tab(
 
     def _on_grade_click(_: ft.ControlEvent) -> None:
         if state.grading_in_progress:
-            show_snack("已有批改请求进行中，请等待完成", ft.Colors.ORANGE)
+            show_snack("已有批改请求进行中，请等待完成", theme.WARNING)
             return
         gc = state.grader_config
         if gc is None:
@@ -890,7 +877,7 @@ def build_mark_tab(
             q for q in grade_questions_ref[0] if q in assignments
         ]
         if not questions_to_grade:
-            show_snack("没有可批改的题目", ft.Colors.ORANGE)
+            show_snack("没有可批改的题目", theme.WARNING)
             return
 
         grade_cfg = GraderConfig(
@@ -904,7 +891,7 @@ def build_mark_tab(
         state.grading_error = None  # clear any prior failure banner
         progress_bar = ft.ProgressBar(value=0, visible=True)
         progress_text = ft.Text(
-            "正在批改…", size=12, color=ft.Colors.GREY,
+            "正在批改…", size=12, color=theme.MUTED,
         )
         content.controls.append(ft.Divider())
         content.controls.append(progress_bar)
@@ -973,7 +960,7 @@ def build_mark_tab(
                 # message on screen as a banner until the next grade.
                 _log.exception("grading failed on question %s", qid)
                 state.grading_error = f"批改失败（{qid}）: {exc}"
-                show_snack(f"批改失败: {exc}", ft.Colors.RED)
+                show_snack(f"批改失败: {exc}", theme.DANGER)
             finally:
                 state.grading_in_progress = False
                 _rebuild()
@@ -995,7 +982,7 @@ def build_mark_tab(
             ft.Divider(),
             ft.Text(
                 "批改结果", size=18,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ),
         ]
 
@@ -1009,13 +996,13 @@ def build_mark_tab(
         controls.append(ft.Row(
             [
                 metric_card(
-                    "总分", f"{score}/{max_score}", ft.Colors.BLUE,
+                    "总分", f"{score}/{max_score}", theme.PRIMARY,
                 ),
                 metric_card(
-                    "百分比", f"{pct:.1f}%", ft.Colors.GREEN,
+                    "百分比", f"{pct:.1f}%", theme.SUCCESS,
                 ),
                 metric_card(
-                    "题数", str(len(results)), ft.Colors.PURPLE,
+                    "题数", str(len(results)), theme.CARD_PURPLE,
                 ),
             ],
             spacing=12, scroll=ft.ScrollMode.AUTO,
@@ -1028,7 +1015,7 @@ def build_mark_tab(
                 ft.Text(
                     f"{qr.question} — {ov}/{qr.max}",
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLACK, size=15,
+                    size=15,
                 ),
             ]
             for m in qr.marks:
@@ -1038,14 +1025,14 @@ def build_mark_tab(
                     else ft.Icons.CANCEL
                 )
                 color = (
-                    ft.Colors.GREEN if m.awarded else ft.Colors.RED
+                    theme.SUCCESS if m.awarded else theme.DANGER
                 )
                 mark_controls.append(ft.Row(
                     [
                         ft.Icon(icon, color=color, size=18),
                         ft.Text(
                             f"{m.code}: {m.reason}",
-                            color=ft.Colors.BLACK, size=13,
+                            size=13,
                             expand=True,  # wrap long reasons, don't overflow
                         ),
                     ],
@@ -1059,11 +1046,11 @@ def build_mark_tab(
                         [
                             ft.Icon(
                                 ft.Icons.CHAT_BUBBLE,
-                                color=ft.Colors.BLUE, size=16,
+                                color=theme.PRIMARY, size=16,
                             ),
                             ft.Text(
                                 qr.comment,
-                                color=ft.Colors.GREY, size=12,
+                                color=theme.MUTED, size=12,
                                 expand=True,  # wrap long comments
                             ),
                         ],
@@ -1090,9 +1077,9 @@ def build_mark_tab(
 
             adj_field = ft.TextField(
                 label="调分", value=str(ov), width=90,
-                label_style=ft.TextStyle(color=ft.Colors.BLACK),
+                label_style=theme.field_label_style(),
                 keyboard_type=ft.KeyboardType.NUMBER,
-                color=ft.Colors.BLACK, dense=True,
+                dense=True,
                 on_submit=_make_override_handler(),
                 on_blur=_make_override_handler(),
             )
@@ -1115,7 +1102,7 @@ def build_mark_tab(
                     spacing=12,
                 ),
                 padding=12,
-                border=ft.Border.all(1, ft.Colors.GREY_300),
+                border=ft.Border.all(1, theme.HAIRLINE),
                 border_radius=8,
             )
             controls.append(panel)
@@ -1126,15 +1113,12 @@ def build_mark_tab(
         else:
             controls.append(ft.Text(
                 "检查上方结果，确认后记录分数。",
-                size=12, color=ft.Colors.GREY,
+                size=12, color=theme.MUTED,
             ))
             controls.append(ft.Button(
                 "确认并记录分数",
                 icon=ft.Icons.CHECK,
-                style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.GREEN,
-                    color=ft.Colors.WHITE,
-                ),
+                style=theme.filled_button(theme.SUCCESS),
                 on_click=_on_confirm_click,  # type: ignore[arg-type]
             ))
 
@@ -1181,12 +1165,12 @@ def build_mark_tab(
                     show_snack(
                         f"已记录 {score}/{max_score}"
                         f" → {paper_id_match}",
-                        ft.Colors.GREEN,
+                        theme.SUCCESS,
                     )
                 else:
                     show_snack(
                         "未找到匹配的试卷记录",
-                        ft.Colors.ORANGE,
+                        theme.WARNING,
                     )
             else:
                 pct = (
@@ -1195,11 +1179,11 @@ def build_mark_tab(
                 show_snack(
                     f"分数: {score}/{max_score} ({pct:.1f}%)"
                     " — 使用管理页面手动记录",
-                    ft.Colors.AMBER,
+                    theme.ACCENT,
                 )
                 state.grading_confirmed = True
         except Exception as exc:
-            show_snack(f"记录失败: {exc}", ft.Colors.RED)
+            show_snack(f"记录失败: {exc}", theme.DANGER)
 
         _rebuild()
 
@@ -1215,22 +1199,22 @@ def build_mark_tab(
             ft.Divider(),
             ft.Text(
                 "Step 2 — 上传已批注 QP", size=18,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ),
             ft.Text(
                 "上传在 GoodNotes 中批注过的试卷"
                 "（圈出/写出每题答案）。",
-                size=13, color=ft.Colors.GREY,
+                size=13, color=theme.MUTED,
             ),
         ]
 
         if state.grader_config is None:
             controls.append(ft.Container(
                 ft.Row([
-                    ft.Icon(ft.Icons.WARNING, color=ft.Colors.ORANGE),
+                    ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
                     ft.Text(
                         "请先在设置中配置 Grader API 凭证以启用自动检测",
-                        color=ft.Colors.ORANGE,
+                        color=theme.WARNING,
                     ),
                 ]),
                 padding=8,
@@ -1245,7 +1229,7 @@ def build_mark_tab(
                 icon=ft.Icons.UPLOAD_FILE,
                 on_click=_on_mcq_upload_click,  # type: ignore[arg-type]
             ),
-            ft.Text(upload_label, size=12, color=ft.Colors.GREY),
+            ft.Text(upload_label, size=12, color=theme.MUTED),
         ]))
 
         if not state.mcq_qp_path:
@@ -1254,7 +1238,7 @@ def build_mark_tab(
         controls.append(ft.Divider())
         controls.append(ft.Text(
             "Step 3 — 检测与批改", size=18,
-            weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+            weight=ft.FontWeight.BOLD,
         ))
         controls.append(ft.Button(
             "检测答案",
@@ -1263,9 +1247,7 @@ def build_mark_tab(
                 state.grader_config is None
                 or state.grading_in_progress
             ),
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-            ),
+            style=theme.filled_button(),
             on_click=_on_detect_click,  # type: ignore[arg-type]
         ))
 
@@ -1273,23 +1255,22 @@ def build_mark_tab(
             controls.append(ft.Text(
                 f"未能检测到 {len(state.mcq_undetected)} 题: "
                 f"{', '.join(state.mcq_undetected)}。请在下方手动填写。",
-                color=ft.Colors.ORANGE, size=12,
+                color=theme.WARNING, size=12,
             ))
 
             controls.append(ft.Text(
                 "手动填写未检测题目:", size=13,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ))
             mcq_manual_inputs.clear()
             manual_fields: list[ft.Control] = []
             for qid in state.mcq_undetected:
                 tf = ft.TextField(
                     label=qid[1:],
-                    label_style=ft.TextStyle(color=ft.Colors.BLACK),
+                    label_style=theme.field_label_style(),
                     value=manual_answer_values.get(qid, ""),
                     max_length=1,
                     width=70,
-                    color=ft.Colors.BLACK,
                     dense=True,
                     text_align=ft.TextAlign.CENTER,
                     on_change=_make_manual_change_handler(qid),
@@ -1306,12 +1287,12 @@ def build_mark_tab(
 
             controls.append(ft.Row(
                 [
-                    metric_card("得分", f"{score}/{total}", ft.Colors.BLUE),
+                    metric_card("得分", f"{score}/{total}", theme.PRIMARY),
                     metric_card(
-                        "百分比", f"{pct:.1f}%", ft.Colors.GREEN,
+                        "百分比", f"{pct:.1f}%", theme.SUCCESS,
                     ),
                     metric_card(
-                        "已检测", str(len(merged_answers)), ft.Colors.PURPLE,
+                        "已检测", str(len(merged_answers)), theme.CARD_PURPLE,
                     ),
                 ],
                 spacing=12, scroll=ft.ScrollMode.AUTO,
@@ -1319,7 +1300,7 @@ def build_mark_tab(
 
             controls.append(ft.Text(
                 "逐题结果:", size=13,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ))
             q_cards: list[ft.Control] = []
             for qid in pc.questions:
@@ -1333,27 +1314,27 @@ def build_mark_tab(
                         else ft.Icons.CANCEL
                     )
                     icon_color = (
-                        ft.Colors.GREEN if is_correct else ft.Colors.RED
+                        theme.SUCCESS if is_correct else theme.DANGER
                     )
                 else:
                     icon = ft.Icons.REMOVE
-                    icon_color = ft.Colors.GREY
+                    icon_color = theme.MUTED
                 q_cards.append(ft.Container(
                     ft.Column([
                         ft.Text(
                             qid[1:], weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.BLACK, size=13,
+                            size=13,
                         ),
                         ft.Icon(icon, color=icon_color, size=16),
                         ft.Text(
-                            student_ans, color=ft.Colors.BLACK, size=12,
+                            student_ans, size=12,
                         ),
                         ft.Text(
-                            correct_ans, color=ft.Colors.GREY, size=11,
+                            correct_ans, color=theme.MUTED, size=11,
                         ),
                     ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     width=60, padding=6,
-                    border=ft.Border.all(1, ft.Colors.GREY_300),
+                    border=ft.Border.all(1, theme.HAIRLINE),
                     border_radius=6,
                 ))
             controls.append(ft.Row(q_cards, wrap=True, spacing=6))
@@ -1364,14 +1345,12 @@ def build_mark_tab(
             else:
                 controls.append(ft.Text(
                     "检查上方结果，确认后记录分数。",
-                    size=12, color=ft.Colors.GREY,
+                    size=12, color=theme.MUTED,
                 ))
                 controls.append(ft.Button(
                     "确认并记录分数",
                     icon=ft.Icons.CHECK,
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE,
-                    ),
+                    style=theme.filled_button(theme.SUCCESS),
                     on_click=_on_mcq_confirm_click,  # type: ignore[arg-type]
                 ))
 
@@ -1414,7 +1393,7 @@ def build_mark_tab(
 
     def _on_detect_click(_: ft.ControlEvent) -> None:
         if state.grading_in_progress:
-            show_snack("已有批改请求进行中，请等待完成", ft.Colors.ORANGE)
+            show_snack("已有批改请求进行中，请等待完成", theme.WARNING)
             return
         gc = state.grader_config
         pc = state.paper_config
@@ -1423,7 +1402,7 @@ def build_mark_tab(
 
         progress_bar = ft.ProgressBar(value=0, visible=True)
         progress_text = ft.Text(
-            "正在检测答案…", size=12, color=ft.Colors.GREY,
+            "正在检测答案…", size=12, color=theme.MUTED,
         )
         content.controls.append(progress_bar)
         content.controls.append(progress_text)
@@ -1451,7 +1430,7 @@ def build_mark_tab(
                 state.mcq_undetected = undetected
                 manual_answer_values.clear()
             except Exception as exc:
-                show_snack(f"检测失败: {exc}", ft.Colors.RED)
+                show_snack(f"检测失败: {exc}", theme.DANGER)
             finally:
                 state.grading_in_progress = False
                 _rebuild()
@@ -1494,19 +1473,19 @@ def build_mark_tab(
                     show_snack(
                         f"已记录 {score}/{total} ({pct:.1f}%)"
                         f" → {paper_id_match}",
-                        ft.Colors.GREEN,
+                        theme.SUCCESS,
                     )
                 else:
-                    show_snack("未找到匹配的试卷记录", ft.Colors.ORANGE)
+                    show_snack("未找到匹配的试卷记录", theme.WARNING)
             else:
                 show_snack(
                     f"分数: {score}/{total} ({pct:.1f}%)"
                     " — 使用管理页面手动记录",
-                    ft.Colors.AMBER,
+                    theme.ACCENT,
                 )
                 state.mcq_confirmed = True
         except Exception as exc:
-            show_snack(f"记录失败: {exc}", ft.Colors.RED)
+            show_snack(f"记录失败: {exc}", theme.DANGER)
 
         _rebuild()
 

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 from pydantic import ValidationError
 
+from app_flet import theme
 from core.settings import GraderConfig, MailConfig
 
 if TYPE_CHECKING:
@@ -58,7 +59,7 @@ def _app_icon_bytes() -> bytes | None:
 # the label, so repeating it inside the box would say the same thing twice.
 
 _FIELD_WIDTH = 320
-_HAIRLINE = ft.Colors.GREY_300
+_HAIRLINE = theme.HAIRLINE
 # Below this the label and a 320pt field cannot share a line without one of
 # them being squeezed to nothing, so the row stacks instead. The app ships to
 # phones and iPad as well as desktop, so the side-by-side form is a
@@ -86,11 +87,10 @@ def _tf(
         width=_FIELD_WIDTH,
         height=42,
         text_size=14,
-        color=ft.Colors.BLACK,
         content_padding=ft.Padding.symmetric(vertical=8, horizontal=12),
         border_radius=8,
-        border_color=ft.Colors.GREY_400,
-        focused_border_color=ft.Colors.BLUE,
+        border_color=theme.FIELD_BORDER,
+        focused_border_color=theme.PRIMARY,
     )
 
 
@@ -98,7 +98,7 @@ def _section(title: str) -> ft.Control:
     """A group heading ("Profile" / "Preferences" in the reference design)."""
     return ft.Container(
         ft.Text(
-            title, size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+            title, size=18, weight=ft.FontWeight.BOLD,
         ),
         padding=ft.Padding.only(top=24, bottom=6),
     )
@@ -117,10 +117,10 @@ def _row(
     rather than letting the fixed-width field crush the label.
     """
     left: list[ft.Control] = [
-        ft.Text(label, size=15, color=ft.Colors.BLACK),
+        ft.Text(label, size=15),
     ]
     if description:
-        left.append(ft.Text(description, size=12, color=ft.Colors.GREY))
+        left.append(ft.Text(description, size=12, color=theme.MUTED))
 
     if narrow:
         if isinstance(control, ft.TextField):
@@ -220,7 +220,7 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
             sender_password.value, goodnotes_email.value,
         ]):
             status_text.value = "请填写完整的 SMTP 信息"
-            status_text.color = ft.Colors.RED
+            status_text.color = theme.DANGER
             page.update()
             return
         try:
@@ -235,12 +235,12 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
             state.mail_config = mc
         except (ValidationError, OSError, ValueError) as exc:
             status_text.value = f"SMTP 保存失败: {exc}"
-            status_text.color = ft.Colors.RED
+            status_text.color = theme.DANGER
             page.update()
             return
 
         status_text.value = "✅ 已保存"
-        status_text.color = ft.Colors.GREEN
+        status_text.color = theme.SUCCESS
         page.update()
 
     return ft.View(
@@ -283,10 +283,7 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
                                 "保存",
                                 icon=ft.Icons.SAVE,
                                 on_click=on_save,  # type: ignore[arg-type]
-                                style=ft.ButtonStyle(
-                                    bgcolor=ft.Colors.BLUE,
-                                    color=ft.Colors.WHITE,
-                                ),
+                                style=theme.filled_button(),
                             ),
                         ),
                     ],
@@ -326,7 +323,7 @@ def _build_grader_view(page: ft.Page, state: AppState) -> ft.View:
     def on_save(_: ft.ControlEvent) -> None:
         if not grader_api_key.value:
             status_text.value = "请填写 API Key"
-            status_text.color = ft.Colors.RED
+            status_text.color = theme.DANGER
             page.update()
             return
         try:
@@ -339,12 +336,12 @@ def _build_grader_view(page: ft.Page, state: AppState) -> ft.View:
             state.grader_config = gc
         except (ValidationError, OSError) as exc:
             status_text.value = f"Grader 保存失败: {exc}"
-            status_text.color = ft.Colors.RED
+            status_text.color = theme.DANGER
             page.update()
             return
 
         status_text.value = "✅ 已保存"
-        status_text.color = ft.Colors.GREEN
+        status_text.color = theme.SUCCESS
         page.update()
 
     return ft.View(
@@ -379,10 +376,7 @@ def _build_grader_view(page: ft.Page, state: AppState) -> ft.View:
                                 "保存",
                                 icon=ft.Icons.SAVE,
                                 on_click=on_save,  # type: ignore[arg-type]
-                                style=ft.ButtonStyle(
-                                    bgcolor=ft.Colors.BLUE,
-                                    color=ft.Colors.WHITE,
-                                ),
+                                style=theme.filled_button(),
                             ),
                         ),
                     ],
@@ -411,11 +405,11 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
         )
         if icon_bytes is not None
         else ft.Container(
-            ft.Icon(ft.Icons.SCHOOL, size=48, color=ft.Colors.WHITE),
+            ft.Icon(ft.Icons.SCHOOL, size=48, color=theme.ON_FILLED),
             width=100,
             height=100,
             border_radius=20,
-            bgcolor=ft.Colors.BLUE_GREY_800,
+            bgcolor=theme.OVERLAY_DARK,
             alignment=ft.Alignment.CENTER,
         )
     )
@@ -478,8 +472,8 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
     def _alert(title: str, message: str) -> None:
         dlg: ft.AlertDialog | None = None
         dlg = ft.AlertDialog(
-            title=ft.Text(title, color=ft.Colors.BLACK),
-            content=ft.Text(message, color=ft.Colors.BLACK),
+            title=ft.Text(title),
+            content=ft.Text(message),
             actions=[
                 ft.TextButton(
                     "确定",
@@ -548,7 +542,7 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
 
         dlg = ft.AlertDialog(
             title=ft.Text(
-                f"发现新版本 {result.latest_version}", color=ft.Colors.BLACK,
+                f"发现新版本 {result.latest_version}",
             ),
             content=ft.Column(
                 [
@@ -556,18 +550,17 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
                         f"当前 {version or '未知'} → 新版本 "
                         f"{result.latest_version}",
                         size=13,
-                        color=ft.Colors.GREY,
+                        color=theme.MUTED,
                     ),
                     ft.Text(
                         result.release_notes or "（本次发布没有填写更新说明）",
                         size=13,
-                        color=ft.Colors.BLACK,
                     ),
                     ft.Text(
                         "下载完成后会自动安装。安装时应用会自动退出，"
                         "装好后会自己重新打开。",
                         size=12,
-                        color=ft.Colors.GREY,
+                        color=theme.MUTED,
                     ),
                 ],
                 tight=True,
@@ -583,9 +576,7 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
                 ft.Button(
                     "立即更新",
                     on_click=on_update_now,  # type: ignore[arg-type]
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-                    ),
+                    style=theme.filled_button(),
                 ),
             ],
         )
@@ -645,13 +636,12 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
                             _APP_NAME,
                             size=20,
                             weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.BLACK,
                             text_align=ft.TextAlign.CENTER,
                         ),
                         ft.Text(
                             f"Version {version}" if version else "",
                             size=13,
-                            color=ft.Colors.GREY,
+                            color=theme.MUTED,
                             text_align=ft.TextAlign.CENTER,
                         ),
                         ft.Container(height=20),
@@ -688,17 +678,17 @@ def _menu_row(
     return ft.Container(
         ft.Row(
             [
-                ft.Icon(icon, color=ft.Colors.BLUE, size=20),
+                ft.Icon(icon, color=theme.PRIMARY, size=20),
                 ft.Column(
                     [
-                        ft.Text(title, size=15, color=ft.Colors.BLACK),
-                        ft.Text(subtitle, size=12, color=ft.Colors.GREY),
+                        ft.Text(title, size=15),
+                        ft.Text(subtitle, size=12, color=theme.MUTED),
                     ],
                     spacing=3,
                     expand=True,
                 ),
                 ft.Icon(
-                    ft.Icons.CHEVRON_RIGHT, color=ft.Colors.GREY, size=20,
+                    ft.Icons.CHEVRON_RIGHT, color=theme.MUTED, size=20,
                 ),
             ],
             spacing=12,
@@ -727,11 +717,11 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
         [
             ft.Text(
                 "设置", size=24,
-                weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+                weight=ft.FontWeight.BOLD,
             ),
             # ft.Text(
             #     "邮件与批改 API 凭证，保存到本地 ~/.cie_helper/.env",
-            #     size=13, color=ft.Colors.GREY,
+            #     size=13, color=theme.MUTED,
             # ),
             ft.Container(height=10),
             *_divided(

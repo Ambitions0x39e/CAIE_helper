@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
+from app_flet import theme
 from app_flet.components.dialogs import (
     show_delete_dialog,
     show_score_dialog,
@@ -26,7 +27,7 @@ def build_manage_tab(
     records = state.store.load_all()
     if not records:
         return ft.Container(
-            ft.Text("暂无记录，请先下载试卷。", size=16, color=ft.Colors.GREY),
+            ft.Text("暂无记录，请先下载试卷。", size=16, color=theme.MUTED),
             padding=40,
         )
 
@@ -44,7 +45,6 @@ def build_manage_tab(
     hide_toggle = ft.Switch(
         label="隐藏已完成",
         value=state.hide_completed,
-        label_text_style=ft.TextStyle(color=ft.Colors.BLACK),
     )
 
     def _build_database_view() -> list[ft.Control]:
@@ -59,30 +59,28 @@ def build_manage_tab(
                     _: ft.ControlEvent,
                 ) -> None:
                     if not path:
-                        show_snack("文件路径不存在", ft.Colors.RED)  # type: ignore[operator]
+                        show_snack("文件路径不存在", theme.DANGER)  # type: ignore[operator]
                         return
                     res = manager.open_pdf(path)
                     if not res.success:
-                        show_snack(f"打开失败: {res.error}", ft.Colors.RED)  # type: ignore[operator]
+                        show_snack(f"打开失败: {res.error}", theme.DANGER)  # type: ignore[operator]
                 return handler
 
             rows.append(
                 ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Text(r.paper_id, color=ft.Colors.BLACK)),
+                        ft.DataCell(ft.Text(r.paper_id)),
                         ft.DataCell(status_badge(r.status)),
                         ft.DataCell(
                             ft.Text(
                                 f"{r.score_raw}/{r.score_total}"
                                 if r.score_raw is not None
                                 else "—",
-                                color=ft.Colors.BLACK,
                             )
                         ),
                         ft.DataCell(
                             ft.Text(
                                 f"{pct:.1f}%" if pct is not None else "—",
-                                color=ft.Colors.BLACK,
                             )
                         ),
                         ft.DataCell(
@@ -111,25 +109,25 @@ def build_manage_tab(
                     ft.DataTable(
                         columns=[
                             ft.DataColumn(
-                                label=ft.Text("Paper ID", color=ft.Colors.BLACK),
+                                label=ft.Text("Paper ID"),
                             ),
                             ft.DataColumn(
-                                label=ft.Text("状态", color=ft.Colors.BLACK),
+                                label=ft.Text("状态"),
                             ),
                             ft.DataColumn(
-                                label=ft.Text("分数", color=ft.Colors.BLACK),
+                                label=ft.Text("分数"),
                             ),
                             ft.DataColumn(
-                                label=ft.Text("百分比", color=ft.Colors.BLACK),
+                                label=ft.Text("百分比"),
                             ),
                             ft.DataColumn(
-                                label=ft.Text("操作", color=ft.Colors.BLACK),
+                                label=ft.Text("操作"),
                             ),
                         ],
                         rows=rows,
-                        border=ft.Border.all(1, ft.Colors.GREY_300),
+                        border=ft.Border.all(1, theme.HAIRLINE),
                         border_radius=8,
-                        heading_row_color=ft.Colors.BLUE_50,
+                        heading_row_color=theme.PRIMARY_TINT,
                     ),
                 ],
                 scroll=ft.ScrollMode.AUTO,
@@ -142,7 +140,7 @@ def build_manage_tab(
             filtered = [r for r in records if r.status == "Pending"]
 
         if not filtered:
-            return [ft.Text("没有匹配的记录。", color=ft.Colors.GREY)]
+            return [ft.Text("没有匹配的记录。", color=theme.MUTED)]
 
         cards: list[ft.Control] = [hide_toggle]
         for record in filtered:
@@ -178,7 +176,7 @@ def build_manage_tab(
                     ft.IconButton(
                         ft.Icons.DELETE,
                         tooltip="删除",
-                        icon_color=ft.Colors.RED,
+                        icon_color=theme.DANGER,
                         on_click=lambda _, rid=rec.paper_id: show_delete_dialog(
                             page, rid, state, refresh_cb=refresh_cb
                         ),
@@ -218,18 +216,16 @@ def build_manage_tab(
                                         ft.Text(
                                             record.paper_id,
                                             weight=ft.FontWeight.BOLD,
-                                            color=ft.Colors.BLACK,
                                         ),
                                     ], spacing=4),
                                     ft.Text(
                                         score_text,
                                         size=13,
-                                        color=ft.Colors.BLACK,
                                     ),
                                     ft.Text(
                                         timestamp_text,
                                         size=11,
-                                        color=ft.Colors.GREY,
+                                        color=theme.MUTED,
                                     ),
                                 ],
                                 spacing=2,
@@ -239,7 +235,7 @@ def build_manage_tab(
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    border=ft.Border.all(1, ft.Colors.GREY_300),
+                    border=ft.Border.all(1, theme.HAIRLINE),
                     border_radius=8,
                     padding=ft.Padding(left=12, right=8, top=8, bottom=8),
                 )
@@ -249,11 +245,11 @@ def build_manage_tab(
 
     def _open_pdf(path: str | None) -> None:
         if not path:
-            show_snack("文件路径不存在", ft.Colors.RED)  # type: ignore[operator]
+            show_snack("文件路径不存在", theme.DANGER)  # type: ignore[operator]
             return
         res = manager.open_pdf(path)
         if not res.success:
-            show_snack(f"打开失败: {res.error}", ft.Colors.RED)  # type: ignore[operator]
+            show_snack(f"打开失败: {res.error}", theme.DANGER)  # type: ignore[operator]
 
     def _send_gn(paper_id: str, qp_path: str) -> None:
         if not state.mail_config:
@@ -265,9 +261,9 @@ def build_manage_tab(
         mailer = GoodNotesMailer(config=state.mail_config, store=state.store)
         result = mailer.send(mail_req)
         if result.success:
-            show_snack(f"已发送到 {result.recipient}", ft.Colors.GREEN)  # type: ignore[operator]
+            show_snack(f"已发送到 {result.recipient}", theme.SUCCESS)  # type: ignore[operator]
         else:
-            show_snack(f"发送失败: {result.error}", ft.Colors.RED)  # type: ignore[operator]
+            show_snack(f"发送失败: {result.error}", theme.DANGER)  # type: ignore[operator]
 
     def _rebuild_content() -> None:
         content_area.controls.clear()
@@ -298,9 +294,7 @@ def build_manage_tab(
         on_click=lambda _: show_score_dialog(
             page, state, refresh_cb=refresh_cb,
         ),
-        style=ft.ButtonStyle(
-            bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-        ),
+        style=theme.filled_button(),
     )
 
     return ft.Container(
@@ -312,7 +306,6 @@ def build_manage_tab(
                             "管理试卷",
                             size=24,
                             weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.BLACK,
                         ),
                         ft.Container(expand=True),
                         submit_btn,

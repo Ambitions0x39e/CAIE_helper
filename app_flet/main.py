@@ -9,6 +9,7 @@ import logging
 import flet as ft
 from flet_pdf_render import PdfRenderer
 
+from app_flet import theme
 from app_flet.components.dialogs import show_score_dialog
 from app_flet.state import AppState
 from app_flet.tabs.analytics import build_analytics_tab
@@ -43,8 +44,8 @@ def main(page: ft.Page) -> None:
     page.title = "CIE Helper"
     page.theme_mode = ft.ThemeMode.LIGHT
     _color_scheme = ft.ColorScheme(
-        on_surface=ft.Colors.BLACK,
-        primary=ft.Colors.BLUE,
+        on_surface=theme.TEXT_PRIMARY,
+        primary=theme.PRIMARY,
     )
     # Pick a Simplified-Chinese font that actually exists on this platform.
     # "PingFang SC" is Apple-only; on Windows it's missing, so Flutter fell
@@ -67,7 +68,7 @@ def main(page: ft.Page) -> None:
         return ft.TextStyle(
             font_family=_zh_font,
             font_family_fallback=_zh_fallback,
-            color=ft.Colors.BLACK,
+            color=theme.TEXT_PRIMARY,
             **kw,  # type: ignore[arg-type]
         )
 
@@ -89,7 +90,7 @@ def main(page: ft.Page) -> None:
     page.padding = 0
     page.window.width = 960
     page.window.height = 700
-    page.bgcolor = ft.Colors.WHITE
+    page.bgcolor = theme.SURFACE
     page.adaptive = False
 
     # ── Initialise ──────────────────────────────────────────────────
@@ -109,7 +110,7 @@ def main(page: ft.Page) -> None:
     page.services.extend([ms_picker, answer_picker, pdf_renderer])
     state.pdf_renderer = pdf_renderer
 
-    def show_snack(msg: str, color: str = ft.Colors.AMBER) -> None:
+    def show_snack(msg: str, color: str = theme.ACCENT) -> None:
         snackbar.content = ft.Text(msg)
         snackbar.bgcolor = color
         snackbar.open = True
@@ -171,12 +172,11 @@ def main(page: ft.Page) -> None:
     header = ft.Container(
         ft.Row(
             [
-                ft.Icon(ft.Icons.SCHOOL, color=ft.Colors.BLUE),
+                ft.Icon(ft.Icons.SCHOOL, color=theme.PRIMARY),
                 ft.Text(
                     "CIE Helper",
                     size=20,
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLACK,
                 ),
                 ft.Container(expand=True),
                 ft.Button(
@@ -186,16 +186,14 @@ def main(page: ft.Page) -> None:
                     on_click=lambda _: show_score_dialog(
                         page, state, refresh_cb=refresh_current_tab,
                     ),
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-                    ),
+                    style=theme.filled_button(),
                 ),
             ],
             spacing=8,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         padding=ft.Padding(left=20, right=12, top=12, bottom=12),
-        bgcolor=ft.Colors.BLUE_50,
+        bgcolor=theme.PRIMARY_TINT,
     )
 
     # ── Layout ──────────────────────────────────────────────────────
