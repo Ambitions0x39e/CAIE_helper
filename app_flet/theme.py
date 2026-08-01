@@ -69,9 +69,22 @@ CARD_PURPLE = ft.Colors.PURPLE
 CARD_TEAL = ft.Colors.TEAL
 
 
+#: iOS app 图标那套 squircle 的圆角比例（圆角半径 / 边长）。Flet 的
+#: RoundedRectangleBorder 只画圆弧角，不是 Apple 那种连续曲率的超椭圆，
+#: 这里是用同样的比例去逼近观感，不是真 squircle 曲线。
+SQUIRCLE_RADIUS_RATIO = 0.2237
+#: Material 3 默认按钮高度（dp），比例换算成像素半径要有个锚点。
+_BUTTON_HEIGHT = 40
+SQUIRCLE_RADIUS = round(_BUTTON_HEIGHT * SQUIRCLE_RADIUS_RATIO, 2)
+
+
 def filled_button(bgcolor: str = PRIMARY) -> ft.ButtonStyle:
-    """实心按钮：彩色底 + 白字。默认主色，传别的语义色改用途。"""
-    return ft.ButtonStyle(bgcolor=bgcolor, color=ON_FILLED)
+    """实心按钮：彩色底 + 白字 + squircle 圆角。默认主色，传别的语义色改用途。"""
+    return ft.ButtonStyle(
+        bgcolor=bgcolor,
+        color=ON_FILLED,
+        shape=ft.RoundedRectangleBorder(radius=SQUIRCLE_RADIUS),
+    )
 
 
 def field_label_style() -> ft.TextStyle:
