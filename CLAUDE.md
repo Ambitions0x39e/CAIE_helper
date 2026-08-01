@@ -32,17 +32,23 @@ uv run pytest
 The distributable app is built with `flet build <platform>` (`windows`, `macos`, `ipa`, `ios-simulator`, …). Two hard-won gotchas — see memory `reference_flet_build_windows.md` and `reference_flet_build_size.md`:
 
 ```bash
-# Windows (Chinese/GBK console): force UTF-8 or rich crashes on emoji output;
-# CL=-utf-8 or MSVC fails plugins containing non-GBK chars (C4819→C2220) —
-# dash spelling, NOT /utf-8, which Git Bash mangles into a Program Files path;
-# build from a SHORT real path (deep worktree paths overflow MSBuild).
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
+# --python-version is the ONLY way to control the bundled CPython (0.86+).
+# Without it you get the serious_python default (3.14), not this project's 3.13.
+# Windows (Chinese/GBK console): force UTF-8 or rich crashes on emoji output.
+# CL=-utf-8 guarded MSVC against non-GBK chars in plugin sources (C4819→C2220);
+# flet 0.86.1 fixed that (#6686) so it is probably redundant now — kept until
+# someone verifies a build without it. Dash spelling, NOT /utf-8, which Git Bash
+# mangles into a Program Files path.
+# Build from a SHORT real path (deep worktree paths overflow MSBuild).
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows --python-version 3.13
 ```
 
-- **What ships**: `flet build` installs `[project.dependencies]` FRESH into the bundle (`build/site-packages`) — that path is clean, streamlit is never there. Separately it copies the **entire working directory** into `app.zip` and **ignores `.gitignore`**. Only top-level names in `[tool.flet.app].exclude` are left out.
-- **Keep the exclude list complete.** Anything heavy not listed there (`.venv`, `.claude`, `.mypy_cache`, `.git`, caches, stray root PDFs) ships inside `app.zip` and bloats the app — this is what took it to ~1.2 GB. With the full exclude list, `build/windows` is ~190 MB. When adding a new top-level dir/cache, add it to `exclude`.
+- **After any toolchain bump, `uv run flet clean` first.** 0.86 ships Flutter 3.44.8; a `build/` left over from an older Flutter holds `hook.dill` files compiled by the previous Dart SDK, and the new one dies on them with `Can't load Kernel binary: Invalid kernel binary format version (expected 130, found 127)`. The failure names `package:objective_c`, which makes it look like a plugin problem — it isn't, it's a stale cache.
+- **What ships**: `flet build` installs `[project.dependencies]` FRESH into the bundle (`build/windows/site-packages`). Separately it copies the **entire working directory** and **ignores `.gitignore`** — only top-level names in `[tool.flet.app].exclude` are left out.
+- **No more `app.zip`.** serious_python 4.x (via flet 0.86) ships the app **unpacked** at `build/windows/app/`, compiled to `.pyc`, alongside `site-packages` — there is no first-launch extraction and no `%APPDATA%\…\flet\app\` copy. `pyproject.toml` still ships next to the sources, so `current_app_version()` keeps working.
+- **Keep the exclude list complete.** Anything heavy not listed there (`.venv`, `.claude`, `.mypy_cache`, `.git`, caches, stray root PDFs) ships inside the bundle and bloats it — this is what once took it to ~1.2 GB. With the full exclude list `build/windows` is ~243 MB. When adding a new top-level dir/cache, add it to `exclude`.
 - **`uv sync --no-dev` does NOT shrink the app** — the `.venv` folder is copied wholesale regardless of what's installed; only `exclude` controls size.
-- **Keep `flet`, `flet-cli`, `flet-desktop` pinned in the same minor, in lockstep** (see memory `reference_flet_version_pin.md`). The bundle's Python flet is pip-installed fresh from `[project.dependencies]` (uv.lock is ignored), while the Flutter client comes from flet-cli's template — if they diverge (e.g. bundle grabs a newer flet), the packaged app opens to a permanent white screen (session never registers, `main()` never runs). Debug a white-screening package by running the exe with `--debug` (keeps Dart-side logs) and editing the extracted app at `%APPDATA%\Roaming\<company>\<app>\flet\app\` (no rebuild needed).
+- **Keep `flet`, `flet-cli`, `flet-desktop` pinned in the same minor, in lockstep** (see memory `reference_flet_version_pin.md`), and keep the extension pubspec's `flet:` range covering that minor. The bundle's Python flet is pip-installed fresh from `[project.dependencies]` (uv.lock is ignored), while the Flutter client comes from flet-cli's template — if they diverge the packaged app opens to a permanent white screen (session never registers, `main()` never runs). 0.86 makes this stricter: its stream transports use a length-prefixed framing incompatible with pre-0.86 peers. Debug a white-screening package by running the exe with `--debug` (keeps Dart-side logs); the app sources are now editable in place at `build/windows/app/` (but they are `.pyc`).
 
 ## Stack
 
