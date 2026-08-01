@@ -11,20 +11,25 @@ dependencies = [
     # watchdog, which has no iOS wheel and breaks `flet build ipa`.
     # NB2: UPPER BOUND IS LOAD-BEARING. `flet build` pip-installs this FRESH
     # into the bundle (ignoring uv.lock), while the Flutter client is generated
-    # by flet-cli's pinned template. If pip grabs a newer flet (e.g. 0.86.0)
-    # than the flet-cli (0.85.3) client, the wire protocol mismatches and the
+    # by flet-cli's pinned template. If pip grabs a flet newer than the
+    # flet-cli that generated the client, the wire protocol mismatches and the
     # packaged app white-screens (session never registers; main() never runs).
-    # When bumping flet-cli/flet-desktop in [dependency-groups], bump this
-    # range in lockstep.
-    # 2026-07-16: PINNED to 0.85.x by decision — do not bump casually.
-    # 0.86.0 is broken on Chinese-codepage Windows (flet#6686 C4819/C2220
-    # compile failure + serious_python 4.3.2 pip-install hangs forever during
-    # packaging), and this app no longer needs anything from 0.86: the large-PDF
-    # RPC hang is sidestepped by rendering in-process with pypdfium2 (see
-    # _try_local_render in modules/renderer.py) instead of shipping the PDF to
-    # the Dart side. If an upgrade is ever attempted anyway, bump flet,
-    # flet-cli, flet-desktop AND the extension pubspec's flet range in lockstep.
-    "flet>=0.85.3,<0.86",
+    # 0.86 makes this stricter still: the stream transports gained a
+    # length-prefixed framing that is incompatible with pre-0.86 peers.
+    # So: bump flet, flet-cli and flet-desktop TOGETHER, and keep the extension
+    # pubspec's flet range (extensions/flet_pdf_render/src/flutter/…) covering
+    # the same minor.
+    #
+    # 2026-07-16: pinned to 0.85.x because 0.86.0 failed to build on
+    # Chinese-codepage Windows — flet#6686 (C4819 escalated to C2220) plus a
+    # serious_python 4.3.2 pip-install that hung forever during packaging.
+    # 2026-08-01: moved to 0.86.x. #6686 is fixed in 0.86.1 ("flet build windows
+    # failing on non-UTF-8 system locales, e.g. code page 936/GBK"), and 0.86
+    # is the only way to get a bundled Python other than 3.12: `flet build
+    # --python-version 3.13` (0.85's serious_python hardcodes the 3.12 download
+    # URL in its CMakeLists, no switch). Without it the app ships 3.12 while
+    # this project declares >=3.13 — a mismatch waiting to bite.
+    "flet>=0.86.4,<0.87",
     "flet-pdf-render",  # local native pdfrx render extension
     "pandas>=2.2.0",
     "pydantic[email]>=2.7.0",
@@ -58,9 +63,14 @@ dev = [
 ]
 
 [tool.flet.app]
-# What gets packaged into app.zip = the whole project dir MINUS these names.
+# What gets packaged = the whole project dir MINUS these names.
 # flet does NOT read .gitignore, so every heavy non-app dir must be listed here
 # explicitly or it ships inside the app. Matched by TOP-LEVEL name.
+#
+# Since flet 0.86 / serious_python 4.x there is no `app.zip`: the app ships
+# UNPACKED (and compiled to .pyc) at build/<platform>/app/, next to
+# site-packages. This exclude list governs that copy exactly as it governed the
+# zip, so everything below still applies.
 #
 # Runtime deps are installed FRESH into the bundle from [project.dependencies]
 # (see SERIOUS_PYTHON_SITE_PACKAGES), so the local `.venv` is NOT needed in the
@@ -90,11 +100,11 @@ exclude = [
     ".venv", ".git", ".claude", ".mypy_cache", ".pytest_cache",
     ".ruff_cache", ".codegraph", ".cursor", "__pycache__", "dist",
     # secrets / dev files — the local root `.env` holds REAL SMTP + API creds and
-    # ships inside app.zip even though the runtime only reads ~/.cie_helper/.env,
+    # ships inside the bundle even though the runtime only reads ~/.cie_helper/.env,
     # so packaging it is a pure credential leak with zero functional need.
     ".env", ".env.example",
     # dev-only top-level FILES. The runtime never reads any of these, but they
-    # were shipping inside app.zip because exclude is the only filter (flet
+    # were shipping inside the bundle because exclude is the only filter (flet
     # ignores .gitignore) and it matches top-level NAMES — dirs and files
     # alike. release.ps1 is the local, gitignored build script; the three .md
     # files are notes for whoever is working on the repo, not for users.
@@ -155,8 +165,8 @@ dev = [
     # flet build/run tooling — local only, NOT packaged for iOS (watchdog).
     # Keep in the SAME minor as the runtime `flet` pin above (see NB2 there):
     # the cli's Flutter client and the bundled Python flet must match.
-    "flet-cli>=0.85.3,<0.86",
-    "flet-desktop>=0.85.3,<0.86",
+    "flet-cli>=0.86.4,<0.87",
+    "flet-desktop>=0.86.4,<0.87",
     # Segmenter fidelity check compares pdfminer against pdfplumber.
     "pdfplumber>=0.11.0",
 ]
