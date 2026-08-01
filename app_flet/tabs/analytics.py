@@ -8,6 +8,7 @@ import flet as ft
 import pandas as pd
 from flet import canvas as cv
 
+from app_flet import theme
 from app_flet.components.widgets import metric_card
 from core.config_store import ConfigStore
 
@@ -51,7 +52,7 @@ def _trend_chart(
         return ft.Text(
             "至少需要 2 次成绩才能绘制趋势图",
             size=12,
-            color=ft.Colors.GREY,
+            color=theme.MUTED,
             italic=True,
         )
 
@@ -76,12 +77,12 @@ def _trend_chart(
     shapes.append(cv.Line(
         _CHART_LEFT_PAD, _CHART_TOP_PAD,
         _CHART_LEFT_PAD, _CHART_TOP_PAD + plot_h,
-        paint=ft.Paint(color=ft.Colors.GREY_300, stroke_width=1),
+        paint=ft.Paint(color=theme.HAIRLINE, stroke_width=1),
     ))
     shapes.append(cv.Line(
         _CHART_LEFT_PAD, _CHART_TOP_PAD + plot_h,
         _CHART_LEFT_PAD + plot_w, _CHART_TOP_PAD + plot_h,
-        paint=ft.Paint(color=ft.Colors.GREY_300, stroke_width=1),
+        paint=ft.Paint(color=theme.HAIRLINE, stroke_width=1),
     ))
 
     # Y-axis labels/gridlines (0 / 50 / 100 %)
@@ -90,11 +91,11 @@ def _trend_chart(
         shapes.append(cv.Line(
             _CHART_LEFT_PAD, gy,
             _CHART_LEFT_PAD + plot_w, gy,
-            paint=ft.Paint(color=ft.Colors.GREY_100, stroke_width=1),
+            paint=ft.Paint(color=theme.HAIRLINE_FAINT, stroke_width=1),
         ))
         shapes.append(cv.Text(
             0, gy, f"{pct}%",
-            style=ft.TextStyle(size=10, color=ft.Colors.GREY),
+            style=ft.TextStyle(size=10, color=theme.MUTED),
             alignment=ft.Alignment.CENTER_LEFT,
         ))
 
@@ -102,7 +103,7 @@ def _trend_chart(
     for i, attempt in enumerate(attempts):
         shapes.append(cv.Text(
             _x(i), _CHART_TOP_PAD + plot_h + 6, str(attempt),
-            style=ft.TextStyle(size=10, color=ft.Colors.GREY),
+            style=ft.TextStyle(size=10, color=theme.MUTED),
             alignment=ft.Alignment.TOP_CENTER,
         ))
 
@@ -143,55 +144,51 @@ def _score_table(df: pd.DataFrame) -> ft.DataTable:
                 ft.DataCell(
                     ft.Text(
                         str(row["paper_id"]),
-                        color=ft.Colors.BLACK,
                     ),
                 ),
                 ft.DataCell(
                     ft.Text(
                         str(row["score_raw"]),
-                        color=ft.Colors.BLACK,
                     ),
                 ),
                 ft.DataCell(
                     ft.Text(
                         str(row["score_total"]),
-                        color=ft.Colors.BLACK,
                     ),
                 ),
                 ft.DataCell(
                     ft.Text(
                         f"{row['percentage']:.1f}%",
-                        color=ft.Colors.BLACK,
                     ),
                 ),
                 ft.DataCell(
-                    ft.Text(ts, color=ft.Colors.GREY, size=12),
+                    ft.Text(ts, color=theme.MUTED, size=12),
                 ),
             ])
         )
     return ft.DataTable(
         columns=[
             ft.DataColumn(
-                label=ft.Text("Paper ID", color=ft.Colors.BLACK),
+                label=ft.Text("Paper ID"),
             ),
             ft.DataColumn(
-                label=ft.Text("Raw", color=ft.Colors.BLACK),
+                label=ft.Text("Raw"),
             ),
             ft.DataColumn(
-                label=ft.Text("Total", color=ft.Colors.BLACK),
+                label=ft.Text("Total"),
             ),
             ft.DataColumn(
-                label=ft.Text("%", color=ft.Colors.BLACK),
+                label=ft.Text("%"),
             ),
             ft.DataColumn(
-                label=ft.Text("Date", color=ft.Colors.BLACK),
+                label=ft.Text("Date"),
             ),
         ],
         rows=rows,
         column_spacing=28,  # keep the table near _TABLE_EST_WIDTH
-        border=ft.Border.all(1, ft.Colors.GREY_300),
+        border=ft.Border.all(1, theme.HAIRLINE),
         border_radius=8,
-        heading_row_color=ft.Colors.BLUE_50,
+        heading_row_color=theme.PRIMARY_TINT,
     )
 
 
@@ -209,9 +206,9 @@ def _build_syllabus_section(
 
     syl_metrics = ft.Row(
         [
-            metric_card("Papers", str(syl_count), ft.Colors.BLUE),
-            metric_card("Average", f"{syl_avg:.1f}%", ft.Colors.GREEN),
-            metric_card("Best", f"{syl_best:.1f}%", ft.Colors.ORANGE),
+            metric_card("Papers", str(syl_count), theme.PRIMARY),
+            metric_card("Average", f"{syl_avg:.1f}%", theme.SUCCESS),
+            metric_card("Best", f"{syl_best:.1f}%", theme.WARNING),
         ],
         spacing=12,
         scroll=ft.ScrollMode.AUTO,
@@ -246,7 +243,7 @@ def _build_syllabus_section(
 
         title = ft.Text(
             type_title, size=16,
-            weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK,
+            weight=ft.FontWeight.BOLD,
         )
 
         # Flexible layout, decided from the live window width each rebuild:
@@ -332,7 +329,6 @@ def _build_syllabus_section(
         title=ft.Text(
             f"📚 {syl_id} — {syl_name}",
             weight=ft.FontWeight.BOLD,
-            color=ft.Colors.BLACK,
         ),
         expanded=False,
         on_change=_on_expand_change,  # type: ignore[arg-type]
@@ -363,12 +359,11 @@ def build_analytics_tab(
                     "统计分析",
                     size=24,
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLACK,
                 ),
                 ft.Container(height=20),
                 ft.Text(
                     "暂无已完成的试卷，提交分数后查看统计。",
-                    color=ft.Colors.GREY,
+                    color=theme.MUTED,
                 ),
             ]),
             padding=20,
@@ -392,7 +387,7 @@ def build_analytics_tab(
     ]
     if not rows_data:
         return ft.Container(
-            ft.Text("没有有效的成绩数据。", color=ft.Colors.GREY),
+            ft.Text("没有有效的成绩数据。", color=theme.MUTED),
             padding=20,
         )
 
@@ -417,14 +412,14 @@ def build_analytics_tab(
 
     overall_metrics = ft.Row(
         [
-            metric_card("总试卷", str(total), ft.Colors.BLUE),
-            metric_card("已完成", str(done), ft.Colors.GREEN),
-            metric_card("平均分", f"{avg:.1f}%", ft.Colors.PURPLE),
-            metric_card("最高分", f"{best:.1f}%", ft.Colors.ORANGE),
+            metric_card("总试卷", str(total), theme.PRIMARY),
+            metric_card("已完成", str(done), theme.SUCCESS),
+            metric_card("平均分", f"{avg:.1f}%", theme.CARD_PURPLE),
+            metric_card("最高分", f"{best:.1f}%", theme.WARNING),
             metric_card(
                 "最新",
                 f"{latest:.1f}%",
-                ft.Colors.TEAL,
+                theme.CARD_TEAL,
             ),
         ],
         spacing=12,
@@ -448,13 +443,11 @@ def build_analytics_tab(
             "统计分析",
             size=24,
             weight=ft.FontWeight.BOLD,
-            color=ft.Colors.BLACK,
         ),
         ft.Container(height=12),
         ft.Text(
             "Overall",
             weight=ft.FontWeight.BOLD,
-            color=ft.Colors.BLACK,
         ),
         overall_metrics,
     ]
@@ -463,7 +456,7 @@ def build_analytics_tab(
     #         ft.Text(
     #             f"最新变化: {delta_text}",
     #             size=12,
-    #             color=ft.Colors.GREY,
+    #             color=theme.MUTED,
     #         ),
     #     )
     controls.append(ft.Divider())

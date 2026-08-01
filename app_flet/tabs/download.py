@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, cast
 import flet as ft
 from pydantic import ValidationError
 
+from app_flet import theme
 from app_flet.components.widgets import error_banner, success_banner
 from core.config_store import ConfigStore
 from modules.downloader import (
@@ -67,42 +68,39 @@ def build_request_tab(
 
     paper_type_dd = ft.Dropdown(
         label="科目",
-        label_style=ft.TextStyle(color=ft.Colors.BLACK),
+        label_style=theme.field_label_style(),
         options=[
             ft.dropdown.Option(key=s.syllabus_id, text=f"{s.syllabus_id} — {s.name}")
             for s in syllabi
         ],
         value=syllabi[0].syllabus_id if syllabi else None,
         expand=True,
-        color=ft.Colors.BLACK,
     )
 
     year_dd = ft.Dropdown(
         label="年份",
-        label_style=ft.TextStyle(color=ft.Colors.BLACK),
+        label_style=theme.field_label_style(),
         options=[
             ft.dropdown.Option(key=str(y), text=str(y))
             for y in range(current_year, _FIRST_YEAR - 1, -1)
         ],
         value=str(current_year),
         expand=True,
-        color=ft.Colors.BLACK,
     )
 
     season_dd = ft.Dropdown(
         label="考季",
-        label_style=ft.TextStyle(color=ft.Colors.BLACK),
+        label_style=theme.field_label_style(),
         options=[
             ft.dropdown.Option(key=code, text=label)
             for code, label in _SEASONS
         ],
         value=_SEASONS[0][0],
         expand=True,
-        color=ft.Colors.BLACK,
     )
 
     progress_ring = ft.ProgressRing(visible=False, width=20, height=20)
-    status_text = ft.Text("", size=12, color=ft.Colors.GREY)
+    status_text = ft.Text("", size=12, color=theme.MUTED)
     # 自己不滚也不 expand：由外层那个 scroll=AUTO 的列统一滚，
     # 免得短列表也占满整屏、长列表套两层滚动条。
     result_list = ft.Column(spacing=0, visible=False)
@@ -120,7 +118,7 @@ def build_request_tab(
             return "暂不支持"
         return ""
 
-    def _leaf(text: str, *, color: str = ft.Colors.GREY) -> ft.Row:
+    def _leaf(text: str, *, color: str = theme.MUTED) -> ft.Row:
         """树的子行：子项图标 + 灰字，缩进到勾选框右边，不占选择列。
 
         分支符号用 Material 图标而不是 ``╰─``：制表符（U+2570/U+2500）的
@@ -147,13 +145,13 @@ def build_request_tab(
         """qp / gt：黑字 + 勾选框，右端灰字状态，整行铺满窗口宽度。"""
         checkbox = ft.Checkbox(
             label=entry.paper_id,
-            label_style=ft.TextStyle(color=ft.Colors.BLACK, size=14),
+            label_style=ft.TextStyle(size=14),
             value=False,  # 默认全不选
             visual_density=ft.VisualDensity.COMPACT,
             splash_radius=_LEAF_ICON_SIZE,
             on_change=_on_check,  # type: ignore[arg-type]
         )
-        note = ft.Text(_row_note(entry), size=12, color=ft.Colors.GREY)
+        note = ft.Text(_row_note(entry), size=12, color=theme.MUTED)
         rows.append((checkbox, note, entry))
         return ft.Row(
             [checkbox, ft.Container(expand=True), note],
@@ -167,9 +165,9 @@ def build_request_tab(
         return ft.Row(
             [
                 ft.Container(width=_TREE_INDENT),
-                ft.Text(entry.paper_id, size=14, color=ft.Colors.GREY),
+                ft.Text(entry.paper_id, size=14, color=theme.MUTED),
                 ft.Container(expand=True),
-                ft.Text(_row_note(entry), size=12, color=ft.Colors.GREY),
+                ft.Text(_row_note(entry), size=12, color=theme.MUTED),
             ],
             spacing=8,
             height=_ROW_H,
@@ -179,7 +177,7 @@ def build_request_tab(
     def _refresh_status() -> None:
         picked = sum(1 for cb, _, _ in rows if cb.value)
         skip = sum(1 for cb, _, e in rows if cb.value and e.already_downloaded)
-        status_text.color = ft.Colors.GREY
+        status_text.color = theme.MUTED
         status_text.value = (
             f"共 {total_files[0]} 个文件，{len(rows)} 份可下载 · 已勾选 {picked}"
             + (f"（其中 {skip} 个本地已有，会跳过）" if skip else "")
@@ -204,7 +202,7 @@ def build_request_tab(
         result_list.visible = False
         batch_bar.visible = False
         error_area.visible = False
-        status_text.color = ft.Colors.GREY
+        status_text.color = theme.MUTED
         status_text.value = "查询中…"
         page.update()
 
@@ -222,13 +220,13 @@ def build_request_tab(
         error_area.visible = False
 
         if not result.success:
-            status_text.color = ft.Colors.RED
+            status_text.color = theme.DANGER
             status_text.value = f"查询失败: {result.error}"
             page.update()
             return
 
         if not result.entries:
-            status_text.color = ft.Colors.GREY
+            status_text.color = theme.MUTED
             status_text.value = "这个考季没有查到任何文件"
             page.update()
             return
@@ -260,7 +258,6 @@ def build_request_tab(
                     header,
                     size=13,
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLACK,
                 ),
                 ft.Divider(height=9),
             ]
@@ -326,7 +323,7 @@ def build_request_tab(
                 checkbox.value = False
                 continue
 
-            status_text.color = ft.Colors.GREY
+            status_text.color = theme.MUTED
             status_text.value = f"下载中 {idx}/{len(picked)} — {entry.paper_id}"
             page.update()
 
@@ -364,7 +361,7 @@ def build_request_tab(
                     ft.Text(
                         f"…另有 {len(errors) - 5} 条失败",
                         size=12,
-                        color=ft.Colors.RED,
+                        color=theme.DANGER,
                     )
                 )
             error_area.visible = True
@@ -372,16 +369,14 @@ def build_request_tab(
         page.update()
         show_snack(  # type: ignore[operator]
             f"成功 {succeeded} · 跳过 {skipped} · 失败 {failed}",
-            ft.Colors.RED if failed else ft.Colors.GREEN,
+            theme.DANGER if failed else theme.SUCCESS,
         )
 
     send_btn = ft.Button(
         "查询",
         icon=ft.Icons.SEARCH,
         on_click=on_send_request,  # type: ignore[arg-type]
-        style=ft.ButtonStyle(
-            bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-        ),
+        style=theme.filled_button(),
     )
 
     batch_bar = ft.Row(
@@ -390,9 +385,7 @@ def build_request_tab(
                 "批量下载",
                 icon=ft.Icons.DOWNLOAD_FOR_OFFLINE,
                 on_click=on_batch_download,  # type: ignore[arg-type]
-                style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-                ),
+                style=theme.filled_button(),
             ),
             ft.TextButton("全选可下载", on_click=lambda _: _set_all(True)),
             ft.TextButton("清空", on_click=lambda _: _set_all(False)),
@@ -438,11 +431,10 @@ def build_by_id_tab(
 
     paper_id_field = ft.TextField(
         label="Paper ID",
-        label_style=ft.TextStyle(color=ft.Colors.BLACK),
+        label_style=theme.field_label_style(),
         hint_text="9702_s23_qp_11",
         helper="格式: <科目>_<考期>_qp_<试卷>",
         expand=True,
-        color=ft.Colors.BLACK,
     )
 
     source_selector = ft.SegmentedButton(
@@ -467,17 +459,14 @@ def build_by_id_tab(
                     ft.Text(
                         f"准备发送: {state.last_downloaded_id}",
                         size=12,
-                        color=ft.Colors.GREY,
+                        color=theme.MUTED,
                         expand=True,
                     ),
                     ft.Button(
                         "发送到 GoodNotes",
                         icon=ft.Icons.SEND,
                         on_click=on_send_gn,  # type: ignore[arg-type]
-                        style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.AMBER,
-                            color=ft.Colors.WHITE,
-                        ),
+                        style=theme.filled_button(theme.ACCENT),
                     ),
                 ])
             )
@@ -499,7 +488,7 @@ def build_by_id_tab(
             msgs = "; ".join(
                 e["msg"].removeprefix("Value error, ") for e in exc.errors()
             )
-            show_snack(f"验证失败: {msgs}", ft.Colors.RED)  # type: ignore[operator]
+            show_snack(f"验证失败: {msgs}", theme.DANGER)  # type: ignore[operator]
             return
 
         progress_ring.visible = True
@@ -559,7 +548,7 @@ def build_by_id_tab(
         except ValidationError as exc:
             show_snack(  # type: ignore[operator]
                 f"验证失败: {exc.errors()[0]['msg']}",
-                ft.Colors.RED,
+                theme.DANGER,
             )
             return
 
@@ -569,7 +558,7 @@ def build_by_id_tab(
         if mail_result.success:
             show_snack(  # type: ignore[operator]
                 f"✅ 已发送到 {mail_result.recipient}",
-                ft.Colors.GREEN,
+                theme.SUCCESS,
             )
             state.last_downloaded_id = None
             state.last_downloaded_qp = None
@@ -578,25 +567,21 @@ def build_by_id_tab(
         else:
             show_snack(  # type: ignore[operator]
                 f"发送失败: {mail_result.error}",
-                ft.Colors.RED,
+                theme.DANGER,
             )
 
     download_btn = ft.Button(
         "下载",
         icon=ft.Icons.DOWNLOAD,
         on_click=on_download,  # type: ignore[arg-type]
-        style=ft.ButtonStyle(
-            bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-        ),
+        style=theme.filled_button(),
     )
 
     record_btn = ft.Button(
         "仅记录",
         icon=ft.Icons.NOTE_ADD,
         on_click=on_record,  # type: ignore[arg-type]
-        style=ft.ButtonStyle(
-            bgcolor=ft.Colors.GREY_600, color=ft.Colors.WHITE,
-        ),
+        style=theme.filled_button(theme.NEUTRAL),
     )
 
     return ft.Container(
@@ -605,7 +590,7 @@ def build_by_id_tab(
                 ft.Row([paper_id_field], spacing=12),
                 ft.Row(
                     [
-                        ft.Text("来源:", size=14, color=ft.Colors.BLACK),
+                        ft.Text("来源:", size=14),
                         source_selector,
                     ],
                     spacing=12,
@@ -679,7 +664,6 @@ def build_download_tab(
                         "下载试卷",
                         size=24,
                         weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.BLACK,
                     ),
                     padding=ft.Padding(left=20, right=20, top=16, bottom=0),
                 ),

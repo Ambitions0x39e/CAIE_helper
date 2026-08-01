@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 from pydantic import ValidationError
 
+from app_flet import theme
 from modules.manager import PaperManager, ScoreUpdate
 
 if TYPE_CHECKING:
@@ -37,26 +38,23 @@ def show_score_dialog(
 
     paper_dropdown = ft.Dropdown(
         label="选择试卷",
-        label_style=ft.TextStyle(color=ft.Colors.BLACK),
+        label_style=theme.field_label_style(),
         options=[ft.dropdown.Option(pid) for pid in pending_ids],
         value=pending_ids[0],
-        color=ft.Colors.BLACK,
     )
     raw_field = ft.TextField(
         label="得分",
-        label_style=ft.TextStyle(color=ft.Colors.BLACK),
+        label_style=theme.field_label_style(),
         keyboard_type=ft.KeyboardType.NUMBER,
         value="0",
-        color=ft.Colors.BLACK,
     )
     total_field = ft.TextField(
         label="满分",
-        label_style=ft.TextStyle(color=ft.Colors.BLACK),
+        label_style=theme.field_label_style(),
         keyboard_type=ft.KeyboardType.NUMBER,
         value="100",
-        color=ft.Colors.BLACK,
     )
-    error_text = ft.Text("", color=ft.Colors.RED, visible=False)
+    error_text = ft.Text("", color=theme.DANGER, visible=False)
     dlg: ft.AlertDialog | None = None
 
     def on_submit(_: ft.ControlEvent) -> None:
@@ -86,7 +84,7 @@ def show_score_dialog(
             refresh_cb()  # type: ignore[operator]
 
     dlg = ft.AlertDialog(
-        title=ft.Text("提交分数", color=ft.Colors.BLACK),
+        title=ft.Text("提交分数"),
         content=ft.Column(
             [
                 paper_dropdown,
@@ -104,9 +102,7 @@ def show_score_dialog(
             ft.Button(
                 "提交",
                 on_click=on_submit,  # type: ignore[arg-type]
-                style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-                ),
+                style=theme.filled_button(),
             ),
         ],
     )
@@ -147,7 +143,7 @@ def show_delete_dialog(
             refresh_cb()  # type: ignore[operator]
 
     dlg = ft.AlertDialog(
-        title=ft.Text(f"删除 {paper_id}?", color=ft.Colors.BLACK),
+        title=ft.Text(f"删除 {paper_id}?"),
         content=delete_files_cb,
         actions=[
             ft.TextButton(
@@ -157,10 +153,7 @@ def show_delete_dialog(
             ft.Button(
                 "确认删除",
                 on_click=on_confirm,  # type: ignore[arg-type]
-                style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.RED,
-                    color=ft.Colors.WHITE,
-                ),
+                style=theme.filled_button(theme.DANGER),
             ),
         ],
     )
@@ -173,8 +166,8 @@ def _show_alert(page: ft.Page, title: str, message: str) -> None:
     dlg: ft.AlertDialog | None = None
 
     dlg = ft.AlertDialog(
-        title=ft.Text(title, color=ft.Colors.BLACK),
-        content=ft.Text(message, color=ft.Colors.BLACK),
+        title=ft.Text(title),
+        content=ft.Text(message),
         actions=[
             ft.TextButton(
                 "确定",
