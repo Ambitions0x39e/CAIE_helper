@@ -11,6 +11,10 @@ from modules.marking.page_segmenter import PageClip
 if TYPE_CHECKING:
     from flet_pdf_render import PdfRenderer
 
+    # Type-only: modules.marking.grader imports `openai` at module level, and
+    # nothing else here should pull that in just to hold a result list.
+    from modules.marking.grader import QuestionResult
+
 
 @dataclass
 class AppState:
@@ -54,7 +58,7 @@ class AppState:
     # report the real shortfall instead of counting phantom entries.
     unmatched_questions: list[str] = field(default_factory=list)
     deleted_questions: set[str] = field(default_factory=set)
-    grading_results: list[object] = field(default_factory=list)
+    grading_results: list[QuestionResult] = field(default_factory=list)
     score_overrides: dict[str, float] = field(default_factory=dict)
     grading_confirmed: bool = False
     # Last grading failure, shown as a persistent banner (a snackbar toast
