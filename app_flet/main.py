@@ -118,12 +118,15 @@ def main(page: ft.Page) -> None:
 
     # ── Content area ────────────────────────────────────────────────
     content_area = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
+    selected_index = 0
 
     def refresh_current_tab() -> None:
-        idx = navbar.selected_index
-        _switch_tab(idx)
+        _switch_tab(selected_index)
 
     def _switch_tab(idx: int) -> None:
+        nonlocal selected_index
+        selected_index = idx
+        _apply_nav_selection()
         content_area.controls.clear()
         if idx == 0:
             content_area.controls.append(
@@ -153,19 +156,79 @@ def main(page: ft.Page) -> None:
             )
         page.update()
 
-    def on_nav_change(e: ft.ControlEvent) -> None:
-        _switch_tab(e.control.selected_index)  # type: ignore[attr-defined]
+    # ── Side navigation ─────────────────────────────────────────────
+    # A hand-rolled rail rather than ft.NavigationRail: the destinations have
+    # to cluster at the top with 设置 pinned to the bottom, and the built-in
+    # rail spreads / groups them on its own terms.
+    #: 每个入口是一个圆角正方形：上 2/3 放图标，下 1/3 放文字。
+    _NAV_BUTTON_SIZE = 64
+    _NAV_ICON_BAND = _NAV_BUTTON_SIZE * 2 / 3
+    _NAV_LABEL_BAND = _NAV_BUTTON_SIZE - _NAV_ICON_BAND
+    _NAV_RADIUS = round(_NAV_BUTTON_SIZE * theme.SQUIRCLE_RADIUS_RATIO, 2)
+    nav_icons: list[ft.Icon] = []
+    nav_labels: list[ft.Text] = []
+    nav_buttons: list[ft.Container] = []
 
-    navbar = ft.NavigationBar(
-        destinations=[
-            ft.NavigationBarDestination(icon=ft.Icons.DOWNLOAD, label="下载"),
-            ft.NavigationBarDestination(icon=ft.Icons.LIST_ALT, label="管理"),
-            ft.NavigationBarDestination(icon=ft.Icons.BAR_CHART, label="统计"),
-            ft.NavigationBarDestination(icon=ft.Icons.EDIT, label="批改"),
-            ft.NavigationBarDestination(icon=ft.Icons.SETTINGS, label="设置"),
-        ],
-        selected_index=0,
-        on_change=on_nav_change,  # type: ignore[arg-type]
+    def _make_nav_button(
+        idx: int, icon: ft.IconData, label: str,
+    ) -> ft.Container:
+        icon_ctl = ft.Icon(icon, size=26)
+        label_ctl = ft.Text(label, size=12, no_wrap=True)
+        button = ft.Container(
+            ft.Column(
+                [
+                    ft.Container(
+                        icon_ctl,
+                        height=_NAV_ICON_BAND,
+                        alignment=ft.Alignment.CENTER,
+                    ),
+                    ft.Container(
+                        label_ctl,
+                        height=_NAV_LABEL_BAND,
+                        alignment=ft.Alignment.TOP_CENTER,
+                    ),
+                ],
+                spacing=0,
+            ),
+            width=_NAV_BUTTON_SIZE,
+            height=_NAV_BUTTON_SIZE,
+            border_radius=_NAV_RADIUS,
+            ink=True,
+            on_click=lambda _: _switch_tab(idx),
+        )
+        nav_icons.append(icon_ctl)
+        nav_labels.append(label_ctl)
+        nav_buttons.append(button)
+        return button
+
+    def _apply_nav_selection() -> None:
+        for i, button in enumerate(nav_buttons):
+            active = i == selected_index
+            button.bgcolor = theme.PRIMARY_TINT if active else None
+            nav_icons[i].color = theme.PRIMARY if active else theme.MUTED
+            nav_labels[i].color = theme.PRIMARY if active else theme.TEXT_PRIMARY
+            nav_labels[i].weight = (
+                ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL
+            )
+
+    _main_nav = [
+        _make_nav_button(0, ft.Icons.DOWNLOAD, "下载"),
+        _make_nav_button(1, ft.Icons.LIST_ALT, "管理"),
+        _make_nav_button(2, ft.Icons.BAR_CHART, "统计"),
+        _make_nav_button(3, ft.Icons.EDIT, "批改"),
+    ]
+    _settings_nav = _make_nav_button(4, ft.Icons.SETTINGS, "设置")
+    _apply_nav_selection()
+
+    nav_rail = ft.Container(
+        ft.Column(
+            [*_main_nav, ft.Container(expand=True), _settings_nav],
+            spacing=8,
+            expand=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        width=_NAV_BUTTON_SIZE + 20,
+        padding=ft.Padding(left=10, right=10, top=12, bottom=12),
     )
 
     # ── Header bar ──────────────────────────────────────────────────
@@ -197,15 +260,25 @@ def main(page: ft.Page) -> None:
     )
 
     # ── Layout ──────────────────────────────────────────────────────
-    page.navigation_bar = navbar
-
     # Initial tab
     content_area.controls.append(build_download_tab(page, state, show_snack))
 
     page.add(
         ft.SafeArea(
             ft.Column(
-                [header, content_area],
+                [
+                    header,
+                    ft.Row(
+                        [
+                            nav_rail,
+                            ft.VerticalDivider(width=1, color=theme.HAIRLINE),
+                            content_area,
+                        ],
+                        expand=True,
+                        spacing=0,
+                        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                    ),
+                ],
                 expand=True,
                 spacing=0,
             ),
