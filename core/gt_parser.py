@@ -1,3 +1,17 @@
+"""Parse CIE grade-threshold PDFs into per-option grade boundaries.
+
+Backed by **pdfminer.six**, not pdfplumber. pdfplumber's only irreplaceable
+feature here was ``extract_tables()``; everything else it does is pdfminer
+underneath (including the ``(cid:N)`` rendering the CID map below relies on).
+Dropping it makes this module iOS-safe — pdfplumber pulls in pypdfium2, which
+has no iOS wheel and would break ``flet build ipa`` — so grade thresholds can
+ship in the packaged app instead of hiding behind the ``gt`` extra.
+
+Table reconstruction (:func:`_extract_tables`) works off the ruling lines the
+PDFs actually draw, the same signal pdfplumber's default strategy uses: CIE
+renders every table border as a thin ``LTRect``, so the vertical rules give
+the column boundaries and the horizontal rules the row boundaries.
+"""
 from __future__ import annotations
 
 import contextlib
@@ -5,44 +19,248 @@ import re
 from pathlib import Path
 from typing import Final
 
-import pdfplumber
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LAParams, LTChar, LTContainer, LTRect
 from pydantic import BaseModel, field_validator, model_validator
 
 _GRADE_COLS: Final[list[str]] = ["A*", "A", "B", "C", "D", "E"]
 
-# CIE GT PDFs use a non-standard font encoding that maps many characters
-# to Private Use Area codepoints rendered as (cid:N) by pdfplumber.
-# This table was derived empirically from 9231_s25_gt.pdf.
-_CID_MAP: Final[dict[int, str]] = {
-    13:  "*",
-    15:  ",",
-    23:  "4",
-    25:  "6",
-    26:  "7",
-    27:  "8",
-    29:  ":",
-    37:  "B",
-    39:  "D",
-    40:  "E",
-    49:  "1",
-    50:  "O",
-    55:  "T",
-    59:  "X",
-    60:  "Y",
-    61:  "Z",
-    84:  "q",
-    90:  "w",
-    177: "-",
+# A border is a rect thinner than this; anything fatter is a filled block.
+_RULE_MAX_THICKNESS: Final[float] = 3.0
+# Rules closer together than this are the same boundary drawn twice
+# (CIE double-strokes most borders — hence ~200 rects for ~10 columns).
+_RULE_MERGE_TOL: Final[float] = 3.0
+# Ignore stub marks; a real rule spans at least this many points.
+_RULE_MIN_LENGTH: Final[float] = 4.0
+# A separator must reach this fraction of the page's longest rule. Tuned on
+# 9231_s23/s25 and 9701_w25: header-only verticals sit near 0.1, the real
+# column separators at 1.0, so anything in the middle works.
+_RULE_SPAN_RATIO: Final[float] = 0.5
+
+# CIE GT PDFs embed Arial as an Identity-H CIDFontType2 subset with **no**
+# ToUnicode CMap, and the subsetter strips the font's own `cmap` table too —
+# so pdfminer has nothing to decode with and emits "(cid:N)", where N is the
+# raw glyph id.
+#
+# Those glyph ids turn out to be the standard Macintosh TrueType glyph order,
+# whose entries 3..97 run straight through printable ASCII: 3 is space, 19 is
+# "0", 36 is "A", and so on. That single rule reproduced 17 of the 19 entries
+# in the hand-built table this replaced.
+#
+# The table it replaced was transcribed by eye from ONE document
+# (9231_s25_gt.pdf) and silently mistranslated every other syllabus, because
+# a missing id was dropped rather than flagged: 9701_w25 rendered its D
+# threshold as "10" instead of 103. Deriving the mapping instead of listing
+# it fixes every font subset at once.
+_GLYPH_ID_SPACE: Final[int] = 3
+_GLYPH_ID_TILDE: Final[int] = 97
+
+# Beyond the ASCII run the order is MacRoman-ish; only the codepoints these
+# documents actually use are worth naming.
+_CID_EXTRAS: Final[dict[int, str]] = {
+    177: "-",  # en dash, as in "Grade thresholds - November 2025"
 }
 
 _CID_RE = re.compile(r"\(cid:(\d+)\)")
 
 
+def _cid_to_char(gid: int) -> str:
+    """Map a raw glyph id to its character, or "" if it is not known."""
+    if _GLYPH_ID_SPACE <= gid <= _GLYPH_ID_TILDE:
+        return chr(0x20 + gid - _GLYPH_ID_SPACE)
+    return _CID_EXTRAS.get(gid, "")
+
+
 def _decode(text: str | None) -> str:
-    """Replace all (cid:N) sequences using the known CIE font mapping."""
+    """Resolve every (cid:N) escape pdfminer left in the extracted text."""
     if not text:
         return ""
-    return _CID_RE.sub(lambda m: _CID_MAP.get(int(m.group(1)), ""), text)
+    return _CID_RE.sub(lambda m: _cid_to_char(int(m.group(1))), text)
+
+
+# ---------------------------------------------------------------------------
+# Table reconstruction (pdfminer)
+# ---------------------------------------------------------------------------
+
+
+def _walk(element: object, chars: list[LTChar], rects: list[LTRect]) -> None:
+    """Flatten a pdfminer layout tree into its chars and rects."""
+    if not isinstance(element, LTContainer):
+        return
+    for item in element:
+        if isinstance(item, LTChar):
+            chars.append(item)
+        elif isinstance(item, LTRect):
+            rects.append(item)
+        if isinstance(item, LTContainer):
+            _walk(item, chars, rects)
+
+
+def _merge_positions(values: list[float]) -> list[float]:
+    """Collapse near-duplicate rule positions into one boundary each."""
+    boundaries: list[float] = []
+    for v in sorted(values):
+        if not boundaries or v - boundaries[-1] > _RULE_MERGE_TOL:
+            boundaries.append(v)
+        else:
+            boundaries[-1] = (boundaries[-1] + v) / 2
+    return boundaries
+
+
+def _cell_index(boundaries: list[float], pos: float) -> int | None:
+    """Which slot between *boundaries* does *pos* fall in? None if outside."""
+    for i in range(len(boundaries) - 1):
+        if boundaries[i] <= pos <= boundaries[i + 1]:
+            return i
+    return None
+
+
+def _spanning(rules: list[LTRect], *, vertical: bool) -> list[LTRect]:
+    """Keep only the rules long enough to separate a whole table.
+
+    A column separator runs its table's full height; a rule covering one
+    header row is decoration and must not be projected onto the data rows
+    (that is what split "250" into "25" + "0").
+
+    Each rule is judged against the rules it *overlaps*, not against the
+    longest on the page: a page can hold two tables of different heights, and
+    measuring the short table's separators against the tall one's deletes
+    them all — which collapsed a whole grid into a single column.
+    """
+    if not rules:
+        return []
+
+    def extent(r: LTRect) -> tuple[float, float, float]:
+        # (start, end, length) along the rule's long axis.
+        return (r.y0, r.y1, r.height) if vertical else (r.x0, r.x1, r.width)
+
+    spans = [extent(r) for r in rules]
+    kept: list[LTRect] = []
+    for rule, (lo, hi, length) in zip(rules, spans, strict=True):
+        peers = [
+            plen for plo, phi, plen in spans if plo < hi and phi > lo
+        ]
+        if length >= max(peers) * _RULE_SPAN_RATIO:
+            kept.append(rule)
+    return kept
+
+
+def _cell_text(chars: list[LTChar]) -> str:
+    """Read a cell's glyphs back in visual order.
+
+    A header cell like "Combination of / components" is two printed lines. A
+    plain left-to-right sort interleaves them into "Ccoommbpinoanteionnt so f",
+    which then fails every substring check downstream — so group into lines by
+    baseline first, top-down, and only sort by x inside a line.
+    """
+    lines: list[list[LTChar]] = []
+    for ch in sorted(chars, key=lambda c: -c.y1):
+        placed = False
+        for line in lines:
+            # Same printed line if the baselines overlap vertically at all.
+            if abs(line[0].y1 - ch.y1) <= max(ch.height, line[0].height) / 2:
+                line.append(ch)
+                placed = True
+                break
+        if not placed:
+            lines.append([ch])
+
+    return "\n".join(
+        "".join(c.get_text() for c in sorted(line, key=lambda c: c.x0)).strip()
+        for line in lines
+    ).strip()
+
+
+def _cluster_by_extent(rules: list[LTRect]) -> list[list[LTRect]]:
+    """Group vertical rules into one cluster per table, by y overlap.
+
+    A page can carry several tables with different column positions (the CIE
+    GT front page has one at y≈158-196 and another at y≈543-598). Pooling
+    their verticals into a single boundary list projects each table's columns
+    onto the other and slices the cells apart — that is what turned "250"
+    into "25" + "0". Rules that share vertical extent belong to one table.
+    """
+    clusters: list[list[LTRect]] = []
+    for rule in sorted(rules, key=lambda r: r.y0):
+        for cluster in clusters:
+            top = max(r.y1 for r in cluster)
+            bottom = min(r.y0 for r in cluster)
+            if rule.y0 <= top + _RULE_MERGE_TOL and rule.y1 >= bottom:
+                cluster.append(rule)
+                break
+        else:
+            clusters.append([rule])
+    return clusters
+
+
+def _extract_tables(pdf_path: Path) -> list[list[list[str | None]]]:
+    """Rebuild every ruled table in the PDF as a grid of cell strings."""
+    tables: list[list[list[str | None]]] = []
+
+    for layout in extract_pages(str(pdf_path), laparams=LAParams()):
+        chars: list[LTChar] = []
+        rects: list[LTRect] = []
+        _walk(layout, chars, rects)
+        if not chars or not rects:
+            continue
+
+        v_rules = [
+            r for r in rects
+            if r.width <= _RULE_MAX_THICKNESS and r.height >= _RULE_MIN_LENGTH
+        ]
+        h_rules = [
+            r for r in rects
+            if r.height <= _RULE_MAX_THICKNESS and r.width >= _RULE_MIN_LENGTH
+        ]
+
+        for cluster in _cluster_by_extent(v_rules):
+            top = max(r.y1 for r in cluster)
+            bottom = min(r.y0 for r in cluster)
+            # Only full-height rules separate columns; a rule covering one
+            # header row is decoration and must not reach the data rows.
+            col_bounds = _merge_positions(
+                [(r.x0 + r.x1) / 2 for r in _spanning(cluster, vertical=True)]
+            )
+            row_bounds = _merge_positions([
+                (r.y0 + r.y1) / 2 for r in h_rules
+                if bottom - _RULE_MERGE_TOL
+                <= (r.y0 + r.y1) / 2
+                <= top + _RULE_MERGE_TOL
+            ])
+            if len(col_bounds) < 2 or len(row_bounds) < 2:
+                continue
+
+            # (row, col) -> chars, keyed off each glyph's centre.
+            cells: dict[tuple[int, int], list[LTChar]] = {}
+            for ch in chars:
+                col = _cell_index(col_bounds, (ch.x0 + ch.x1) / 2)
+                row = _cell_index(row_bounds, (ch.y0 + ch.y1) / 2)
+                if col is None or row is None:
+                    continue  # outside this table — other table, or page furniture
+                cells.setdefault((row, col), []).append(ch)
+            if not cells:
+                continue
+
+            grid: list[list[str | None]] = []
+            # row_bounds run bottom-up (PDF origin); emit top-down like the page.
+            for row in reversed(range(len(row_bounds) - 1)):
+                line: list[str | None] = []
+                for col in range(len(col_bounds) - 1):
+                    got = cells.get((row, col))
+                    line.append(_cell_text(got) or None if got else None)
+                grid.append(line)
+            tables.append(grid)
+
+    return tables
+
+
+def _page_text(pdf_path: Path) -> str:
+    """First page's text, for the syllabus-id fallback."""
+    for layout in extract_pages(str(pdf_path), laparams=LAParams()):
+        chars: list[LTChar] = []
+        _walk(layout, chars, [])
+        return "".join(c.get_text() for c in chars)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +290,37 @@ class GradeThreshold(BaseModel):
             if mark < 0:
                 raise ValueError(f"Threshold for grade {grade!r} cannot be negative")
         return v
+
+    @model_validator(mode="after")
+    def thresholds_must_not_invert(self) -> GradeThreshold:
+        """A higher grade can never need fewer marks than a lower one.
+
+        This is the net under the CID decoding. These PDFs ship no usable
+        character map, so a glyph id we cannot resolve is dropped — and a
+        dropped digit turns 103 into 10, which reads as a perfectly plausible
+        grade boundary. An inversion (D=10 below E=80) is the fingerprint of
+        exactly that, and _try_parse_options_table skips rows that fail to
+        construct. Better to lose a row than to tell someone they got a D.
+
+        Ties are allowed: only a genuine inversion is rejected.
+        """
+        ranked = [
+            (g, self.thresholds[g]) for g in _GRADE_COLS if g in self.thresholds
+        ]
+        for (high, hv), (low, lv) in zip(ranked, ranked[1:], strict=False):
+            if hv < lv:
+                raise ValueError(
+                    f"threshold for {high} ({hv}) is below {low} ({lv}) — "
+                    "the source text was probably mis-decoded"
+                )
+        if self.max_weighted > 0:
+            over = [f"{g}={v}" for g, v in ranked if v > self.max_weighted]
+            if over:
+                raise ValueError(
+                    f"threshold(s) above the paper maximum "
+                    f"{self.max_weighted}: {', '.join(over)}"
+                )
+        return self
 
     def grade_for_score(self, total_raw: int | float) -> str:
         """Check grades from highest downward; return 'U' if below all thresholds."""
@@ -143,23 +392,19 @@ class GTParser:
         match = re.match(r"(\d{4})", stem)
         if match:
             return match.group(1)
-        with pdfplumber.open(str(pdf_path)) as pdf:
-            text = _decode(pdf.pages[0].extract_text() or "")
-        match = re.search(r"\b(\d{4})\b", text)
+        match = re.search(r"\b(\d{4})\b", _decode(_page_text(pdf_path)))
         if match:
             return match.group(1)
         raise ValueError("Could not determine syllabus ID from PDF")
 
     def _extract_options(self, pdf_path: Path) -> list[GradeThreshold]:
         results: list[GradeThreshold] = []
-        with pdfplumber.open(str(pdf_path)) as pdf:
-            for page in pdf.pages:
-                for table in page.extract_tables():
-                    decoded = [
-                        [_decode(cell) if cell is not None else None for cell in row]
-                        for row in table
-                    ]
-                    results.extend(self._try_parse_options_table(decoded))
+        for table in _extract_tables(pdf_path):
+            decoded = [
+                [_decode(cell) if cell is not None else None for cell in row]
+                for row in table
+            ]
+            results.extend(self._try_parse_options_table(decoded))
         return results
 
     @staticmethod
@@ -233,11 +478,13 @@ class GTParser:
             None,
         )
 
-        # Data rows start after the last header row we merged
-        data_start = min(header_row_idx + 3, len(table))
+        # Start straight after the header row and let the option-code regex
+        # below reject anything that is still header. The old "+3" assumed
+        # pdfplumber's three physical header rows; the line-based grid folds
+        # that stack into one, so +3 swallowed the first two options.
         results: list[GradeThreshold] = []
 
-        for row in table[data_start:]:
+        for row in table[header_row_idx + 1:]:
             if not row or not row[opt_idx]:
                 continue
 
