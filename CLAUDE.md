@@ -56,7 +56,7 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows --python
 - **Flet** for the UI (desktop/iOS app; `flet run app_flet`)
 - **Pydantic v2** for all validation, settings, and domain models (strict mode enabled on most models)
 - **pandas** for CSV store and analytics DataFrames
-- **pdfminer.six** for text extraction / segmentation (iOS-safe); **pdfplumber** only for grade-threshold PDFs, behind the `gt` extra
+- **pdfminer.six** for all PDF text/geometry extraction — segmentation *and* grade thresholds (both iOS-safe). **pdfplumber is dev-only now**, kept solely for the segmenter fidelity check that diffs the two engines; nothing shipped imports it, and the old `gt` extra is gone
 - **requests** for downloading PDFs
 - **ruff** (E/F/I/UP/B/SIM) + **mypy strict** for linting/typing
 
@@ -72,20 +72,26 @@ deleted UI is recoverable from git history.
 - `main.py` / `app_flet/main.py` — Flet app: header + 5 tabs (下载 / 管理 / 统计 / 批改 / 设置)
 - `app_flet/state.py` — `AppState`, the mutable state shared across tabs
 - `app_flet/tabs/*.py` — one `build_*_tab()` per tab; `app_flet/components/` holds shared widgets and dialogs
+- `app_flet/tabs/mark/` — the one tab too big for a single file. `tab.py` owns the rebuild loop, `setup_step` / `answer_pages` / `grade_step` / `results` / `mcq` are the sections, and they share mutable state through `MarkTabContext` (`context.py`) instead of the closure refs the old single-file version used. UI-agnostic decisions live one layer down, in `modules/marking/workflow.py`.
 
 ### `core/` — infrastructure layer
 - **`settings.py`** — `AppSettings` (paths: `~/.cie_helper/`) and `MailConfig` (SMTP from .env). Singleton `app_settings` imported by all modules.
 - **`storage.py`** — `CSVStore` loads/saves `PaperRecord` list from/to `~/.cie_helper/data.csv` via pandas. Provides `load_all`, `save_all`, `append`, `update`, `delete`, `to_dataframe`.
 - **`models.py`** — `PaperRecord` Pydantic model with computed `percentage` field and cross-field validators (scores required when Completed, raw ≤ total).
 - **`config_store.py`** — `ConfigStore` manages `data/syllabus_config.json` (syllabus names + paper type labels used by analytics).
-- **`gt_parser.py`** — `GTParser` parses CIE grade threshold PDFs, handling their non-standard CID font encoding. Produces `GTDocument` with per-option `GradeThreshold`.
+- **`gt_parser.py`** — `GTParser` parses CIE grade threshold PDFs into `GTDocument` / per-option `GradeThreshold`. Three things to know, all covered by `tests/test_gt_parser.py`:
+  - **Tables come from ruling lines**, not pdfplumber's `extract_tables()` — CIE draws every border as a thin `LTRect`. Verticals from *different tables on one page* must not be pooled (that sliced `250` into `25`+`0`), and multi-line cells must be read line-by-line or their glyphs interleave.
+  - **CID decoding is derived, not transcribed.** These PDFs embed Arial as an Identity-H subset with no ToUnicode *and* the font's own `cmap` stripped, so pdfminer emits `(cid:N)` where N is the raw glyph id. Those ids follow the standard Macintosh TrueType glyph order, whose entries 3–97 are printable ASCII — `_cid_to_char` computes that. The hand-transcribed table it replaced came from one document and silently mistranslated every other syllabus (9701_w25 reported a D boundary of `10` instead of `103`). **Never re-introduce a per-file CID table.**
+  - **`GradeThreshold` rejects inverted rows** (a higher grade needing fewer marks) and thresholds above the paper maximum. That is the net under the decoding: a dropped digit produces a plausible-looking boundary, and an inversion is its fingerprint. `_try_parse_options_table` skips rows that fail to construct, so a bad row is lost rather than shown.
 
 ### `modules/` — business logic layer
 - **`downloader.py`** — `PaperDownloader` streams PDFs from CIEFrank or PapaCambridge, saves to `~/.cie_helper/pdfs/`, appends `PaperRecord` to store. Uses `_DownloadError` (never leaks outside module).
 - **`manager.py`** — `PaperManager` handles score submission (marks Completed, timestamps), record deletion (optionally removes local PDFs), and opening PDFs in system viewer (cross-platform).
 - **`mailer.py`** — `GoodNotesMailer` sends QP PDF to GoodNotes import email via SMTP SSL, updates `sent_to_gn` flag on success. Uses `_MailError` (never leaks outside module).
 - **`updater.py`** — in-app update check / download / silent install against GitHub releases.
-- **`marking/`** — the Mark tab's pipeline, split out because these five served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading). Nothing outside `app_flet/tabs/mark.py` imports them.
+- **`marking/`** — the Mark tab's pipeline, split out because these served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading), `workflow` (orchestration). Nothing outside `app_flet/tabs/mark/` imports them.
+  - **`page_segmenter` is two-phase**: `scan_document(pdf)` does every PDF-only step and `match_scanned(doc, question_ids)` the rest, so the Mark tab can scan the answer paper *while* the mark scheme is still parsing. `segment_questions_report()` is still the one-shot composition of the two.
+  - **`workflow.py` must never import `flet`/`app_flet`.** That constraint is what makes the grading pipeline testable (`tests/test_marking_workflow.py`); keep user-facing strings on the UI side of the boundary.
 
 ### Data patterns
 - **Result objects** — all operations return typed result objects (`DownloadResult`, `MailResult`, `UpdateResult`, `DeleteResult`, `OpenResult`) with `success: bool`, `error: str | None`, and operation-specific fields. Exceptions are caught and wrapped — never propagate to the UI layer.
