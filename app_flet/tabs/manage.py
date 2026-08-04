@@ -288,14 +288,15 @@ def build_manage_tab(
     # Initial build
     _rebuild_content()
 
-    submit_btn = ft.Button(
-        "提交分数",
-        icon=ft.Icons.EDIT,
-        on_click=lambda _: show_score_dialog(
-            page, state, refresh_cb=refresh_cb,
-        ),
-        style=theme.filled_button(),
-    )
+    # Submit Btn, now deprecated and move to the upper bar.
+    # submit_btn = ft.Button(
+    #     "提交分数",
+    #     icon=ft.Icons.EDIT,
+    #     on_click=lambda _: show_score_dialog(
+    #         page, state, refresh_cb=refresh_cb,
+    #     ),
+    #     style=theme.filled_button(),
+    # )
 
     return ft.Container(
         ft.Column(
@@ -308,7 +309,7 @@ def build_manage_tab(
                             weight=ft.FontWeight.BOLD,
                         ),
                         ft.Container(expand=True),
-                        submit_btn,
+                        # submit_btn,
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
