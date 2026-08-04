@@ -235,13 +235,35 @@ Rules:
 - "id": use the printed format — "1" or "6(a)" etc.
 - "max_marks": the total marks for that question/sub-part.
 - "mark_scheme": one line per marking point (\\n-separated). \
-Each line starts with the mark code (B1, M1, A1 …) then a colon, \
+Each line starts with the mark code (B1, M1, A1, DM1 …) then a colon, \
 then the ACTUAL mathematical content / condition / expression \
-as printed in the image. Include guidance notes in square brackets \
-if present.
+as printed in the image.
 - Transcribe all algebra, equations, and working — do not summarise.
 - If a question spans multiple images, combine into one entry.
-- Do NOT invent marks — only report what is visible."""
+- Do NOT invent marks — only report what is visible.
+
+MARK CODES — the trailing digit is the POINT'S VALUE, not an index:
+- A code is a letter part plus a digit: B1, B2, M1, A1, DM1, DB1 …
+- The letters are the mark TYPE (B independent, M method, A accuracy, \
+DM/DA dependent) and the DIGIT IS HOW MANY MARKS THAT ONE POINT IS WORTH. \
+"B2" is a single marking point worth 2 marks; "M1" is worth 1.
+- So "max_marks" is the SUM of those digits, NOT the number of lines. \
+A part printed as "B2, M1, A1" has max_marks 4 over 3 lines.
+- Keep the digit exactly as printed — never rewrite "B2" as "B1".
+
+GUIDANCE COLUMN — transcribe it, attached to its marking point:
+- CIE mark schemes print a "Guidance" column beside the Answer and Marks \
+columns. It holds the detailed rules for awarding a point: what to accept \
+or reject, "oe" / "ft" / "cao" / "isw" notes, allowed alternative methods, \
+and common wrong answers to refuse.
+- Put that text at the END of the line for the marking point it governs, \
+in square brackets:
+  "M1: attempt to expand (x+2)^3 [Guidance: allow one sign slip; \
+must see at least 3 terms]"
+- If a note applies to the whole question rather than one point, give it \
+its own line: "[Guidance: accept decimals to 3sf throughout]"
+- This column is what makes later grading accurate — do NOT omit it, and \
+do not merge it into the answer text as if it were part of the answer."""
 
 
 def _call_vl(
