@@ -49,13 +49,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Grade-threshold parsing (core/gt_parser.py). Its only caller was the deleted
-# Streamlit page; the parser itself is UI-agnostic and kept for a future Flet
-# port. NOT iOS-safe (pdfplumber -> pypdfium2 has no iOS wheel), hence an extra
-# rather than a runtime dep.
-gt = [
-    "pdfplumber>=0.11.0",
-]
+# NB: the old `gt` extra (pdfplumber, for core/gt_parser.py) is gone —
+# gt_parser now rebuilds the threshold tables from pdfminer ruling lines, so
+# grade thresholds are iOS-safe and ship in the app instead of hiding behind
+# an extra. pdfplumber survives only as a dev dep, for the segmenter fidelity
+# check that compares the two engines.
 dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",

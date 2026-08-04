@@ -32,14 +32,22 @@ _MATH_GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷�
 
 ## 评分规则:
 1. 严格对照 Mark Scheme 的每一个得分点 (marking point)
-2. CIE mark 类型:
-   - B mark: 独立分，不依赖其他步骤
-   - M mark: 方法分，看学生是否使用了正确的方法/公式
-   - A mark: 准确分，通常依赖前面的 M mark。如果 M0 则对应的 A mark 也必须为 0
-3. 注意 "follow through" (ft) 规则: 如果标注了 ft，
+2. mark 代码 = 类型字母 + 分值数字，例如 B1 / B2 / M1 / A1 / DM1:
+   - 字母是类型:
+     - B mark: 独立分，不依赖其他步骤
+     - M mark: 方法分，看学生是否使用了正确的方法/公式
+     - A mark: 准确分，通常依赖前面的 M mark。如果 M0 则对应的 A mark 也必须为 0
+     - DM mark: 依赖方法分，它所依赖的那个 M mark 没给分时，DM 也必须为 0
+   - **紧跟字母后面的数字是这一个采分点值几分**，不是编号:
+     B2 是一个值 2 分的采分点，M1 值 1 分，A1 值 1 分。
+     给出 B2 就是给 2 分，不是 1 分。
+3. Mark Scheme 行末方括号里的 [Guidance: ...] 是该采分点的评分细则
+   (接受/拒绝什么、oe / ft / cao / isw、允许的替代解法)。
+   它比你的直觉优先: 细则说可以接受的就必须给分，说要拒绝的就不能给分。
+4. 注意 "follow through" (ft) 规则: 如果标注了 ft，
    即使前面的值算错了，只要后续方法正确就给 A 分
-4. 仔细辨认手写内容，注意区分容易混淆的字符 (如 3/5, 1/7, 6/0)
-5. 如果学生的方法与 Mark Scheme 不同但数学上等价且正确，
+5. 仔细辨认手写内容，注意区分容易混淆的字符 (如 3/5, 1/7, 6/0)
+6. 如果学生的方法与 Mark Scheme 不同但数学上等价且正确，
    应视为可接受的替代方法 (alternative method)
 
 ## 输出要求:
@@ -62,8 +70,12 @@ _MATH_GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷�
 - reason 字段必须是一句话 (不超过 40 个字)，只写结论，不要写推理过程。
   正确示范: "正确使用了 (α-1)²+(β-1)²+(γ-1)² 展开公式"
   错误示范: "学生写了……但是……然而……因此……" (这种长段落不允许)
-- total 必须等于所有 awarded=true 的 mark 数量之和。
-  如果你决定给某个 mark，awarded 必须为 true；
+- total 必须等于所有 awarded=true 的采分点的**分值之和**，
+  而不是采分点的个数之和 —— 分值就是 code 里字母后面那个数字。
+  例: 给了 B2 和 M1 → total = 2 + 1 = 3 (不是 2)。
+  marks 数组里每个采分点占一条，code 原样保留分值数字 (是 B2 就写 B2)。
+- total 不得超过 {max_marks}。
+- 如果你决定给某个 mark，awarded 必须为 true；
   如果你决定不给，awarded 必须为 false。
   不允许 reason 说"应给分"但 awarded 为 false 的矛盾。
 - 先做出每个 marking point 的给分决定，再填写 JSON。

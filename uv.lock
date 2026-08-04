@@ -202,9 +202,6 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-gt = [
-    { name = "pdfplumber" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -225,7 +222,6 @@ requires-dist = [
     { name = "openai", specifier = ">=1.30.0" },
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "pdfminer-six", specifier = ">=20240706" },
-    { name = "pdfplumber", marker = "extra == 'gt'", specifier = ">=0.11.0" },
     { name = "pillow", marker = "sys_platform != 'ios'", specifier = ">=10.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.7.0" },
     { name = "pydantic-settings", specifier = ">=2.3.0" },
@@ -237,7 +233,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
 ]
-provides-extras = ["gt", "dev"]
+provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [

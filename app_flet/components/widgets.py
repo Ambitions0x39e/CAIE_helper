@@ -1,8 +1,44 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import flet as ft
 
 from app_flet import theme
+
+
+def data_table(
+    columns: list[ft.DataColumn],
+    rows: list[ft.DataRow],
+    *,
+    show_checkbox_column: bool = False,
+    on_select_all: Callable[..., None] | None = None,
+) -> ft.Row:
+    """全 app 统一的表格样式，宽度铺满窗口。
+
+    管理页和分数线页各自写过一份 DataTable，边框、圆角、表头底色不一致；
+    收成一处，改一次两处都跟着变。
+
+    **返回的是包了一层 Row 的表格**，不是裸的 DataTable：``expand`` 是沿父容器
+    的主轴生效的，而这两处表格都放在 Column 里 —— 在 Column 里 expand 会往
+    **竖**向撑，横向依旧只有内容宽度。套一层 Row 之后主轴才是横向，expand
+    才等于「占满窗口宽度」（同 request.py 里 ``expand=True`` 的下拉框）。
+
+    也不要再往外面套 ``Row(scroll=AUTO)``：横向滚动的行宽度无界，expand 撑不出
+    约束，表格会缩回内容宽度。
+    """
+    return ft.Row([
+        ft.DataTable(
+            columns=columns,
+            rows=rows,
+            show_checkbox_column=show_checkbox_column,
+            on_select_all=on_select_all,
+            expand=True,
+            border=ft.Border.all(1, theme.HAIRLINE),
+            border_radius=8,
+            heading_row_color=theme.PRIMARY_TINT,
+        )
+    ])
 
 
 def metric_card(label: str, value: str, color: str) -> ft.Container:
