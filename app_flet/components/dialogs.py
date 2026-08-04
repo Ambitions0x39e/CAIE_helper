@@ -47,17 +47,51 @@ def show_score_dialog(
         label_style=theme.field_label_style(),
         keyboard_type=ft.KeyboardType.NUMBER,
         value="0",
+        on_change=lambda _: _revalidate(),
     )
     total_field = ft.TextField(
         label="满分",
         label_style=theme.field_label_style(),
         keyboard_type=ft.KeyboardType.NUMBER,
         value="100",
+        on_change=lambda _: _revalidate(),
     )
     error_text = ft.Text("", color=theme.DANGER, visible=False)
+    submit_btn = ft.Button("提交", style=theme.filled_button())
     dlg: ft.AlertDialog | None = None
 
+    def _check() -> str | None:
+        """Why the current input can't be submitted, or None if it can."""
+        try:
+            raw = float(raw_field.value or 0)
+            total = float(total_field.value or 0)
+        except ValueError:
+            return "得分与满分都必须是数字"
+        if raw < 0 or total < 0:
+            return "分数不能为负"
+        if total <= 0:
+            return "满分必须大于 0"
+        if raw > total:
+            return f"得分 {raw:g} 不能超过满分 {total:g}（不可超过 100%）"
+        return None
+
+    def _revalidate() -> None:
+        # Bar the button as the user types, rather than only rejecting the
+        # click: an impossible score can never be written to data.csv, and a
+        # disabled button says so before the attempt.
+        problem = _check()
+        submit_btn.disabled = problem is not None
+        error_text.value = problem or ""
+        error_text.visible = problem is not None
+        # Both fields, not just 得分 — the offending value may be either one.
+        raw_field.border_color = theme.DANGER if problem else None
+        total_field.border_color = theme.DANGER if problem else None
+        page.update()
+
     def on_submit(_: ft.ControlEvent) -> None:
+        if _check() is not None:
+            _revalidate()
+            return
         try:
             update = ScoreUpdate(
                 paper_id=paper_dropdown.value or "",
@@ -74,14 +108,22 @@ def show_score_dialog(
             page.update()
             return
 
-        manager = PaperManager(store=state.store)
-        result = manager.submit_score(update)
+        result = PaperManager(store=state.store).submit_score(update)
+        if not result.success:
+            # Keep the dialog open — closing it on failure used to discard
+            # both the typed scores and the reason they were rejected.
+            error_text.value = result.error or "提交失败"
+            error_text.visible = True
+            page.update()
+            return
+
         if dlg is not None:
             dlg.open = False
         page.update()
-
-        if result.success and refresh_cb:
+        if refresh_cb:
             refresh_cb()  # type: ignore[operator]
+
+    submit_btn.on_click = on_submit  # type: ignore[assignment]
 
     dlg = ft.AlertDialog(
         title=ft.Text("提交分数"),
@@ -99,11 +141,7 @@ def show_score_dialog(
                 "取消",
                 on_click=lambda _: _close_dialog(page, dlg),  # type: ignore[arg-type]
             ),
-            ft.Button(
-                "提交",
-                on_click=on_submit,  # type: ignore[arg-type]
-                style=theme.filled_button(),
-            ),
+            submit_btn,
         ],
     )
     page.overlay.append(dlg)

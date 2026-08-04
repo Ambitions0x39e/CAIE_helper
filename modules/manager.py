@@ -5,10 +5,23 @@ import platform
 import subprocess
 from pathlib import Path
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from core.models import PaperRecord
 from core.storage import CSVStore
+
+
+def _first_error(exc: ValidationError) -> str:
+    """The first validation message, without pydantic's URL//type noise."""
+    errors = exc.errors()
+    if not errors:
+        return str(exc)
+    return str(errors[0].get("msg", "")).removeprefix("Value error, ")
 
 # ---------------------------------------------------------------------------
 # Input schemas
@@ -144,20 +157,25 @@ class PaperManager:
                 error=f"paper_id '{update.paper_id}' not found in store.",
             )
 
+        # model_validate, NOT model_copy(update=...): model_copy skips every
+        # validator, so a score above the paper's total used to be written to
+        # data.csv without complaint — and then load_all(), which *does*
+        # validate, raised on that row forever after, taking the Analytics and
+        # Manage tabs down with it. Re-validating here means an impossible
+        # score can never reach the CSV in the first place.
         try:
-            updated = target.model_copy(
-                update={
-                    "score_raw": update.score_raw,
-                    "score_total": update.score_total,
-                    "status": "Completed",
-                    "timestamp": datetime.datetime.now(tz=datetime.UTC),
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
+            updated = PaperRecord.model_validate({
+                **target.model_dump(),
+                "score_raw": update.score_raw,
+                "score_total": update.score_total,
+                "status": "Completed",
+                "timestamp": datetime.datetime.now(tz=datetime.UTC),
+            })
+        except ValidationError as exc:
             return UpdateResult(
                 success=False,
                 paper_id=update.paper_id,
-                error=f"Failed to build updated record: {exc}",
+                error=_first_error(exc),
             )
 
         try:
