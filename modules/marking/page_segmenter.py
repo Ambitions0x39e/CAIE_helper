@@ -1132,6 +1132,113 @@ def segment_questions(
     return regions
 
 
+@dataclass(frozen=True)
+class ScannedDocument:
+    """The half of segmentation that depends only on the PDF.
+
+    Page layout, question-start boundaries and format metrics are all derived
+    without knowing which questions the paper contains — question ids first
+    matter in :func:`match_scanned`. Splitting the two lets a caller scan the
+    answer PDF *while* the mark scheme is still being parsed, instead of
+    waiting for the parse to hand over its question ids.
+    """
+
+    pages: list[_SegPage]
+    boundaries: list[_Boundary]
+    footer_y: float
+    top_margin: float
+    last_content_page: int
+    main_count: int
+    sub_count: int
+    subsub_count: int
+    char_map_size: int
+
+    @property
+    def page_count(self) -> int:
+        """Page total, so callers needn't load the PDF a second time."""
+        return len(self.pages)
+
+
+def scan_document(
+    source: str | bytes,
+    *,
+    skip_pages: set[int] | None = None,
+) -> ScannedDocument:
+    """Run every PDF-only phase of segmentation (the expensive half).
+
+    Args:
+        source: Path to, or raw bytes of, the PDF.
+        skip_pages: 0-indexed pages to skip (e.g. cover page).
+                    Defaults to ``{0}`` (skip first page).
+    """
+    if skip_pages is None:
+        skip_pages = {0}
+
+    pages = _load_pages(source)
+    boundaries = _extract_boundaries(pages, skip_pages=skip_pages)
+    char_map = _build_char_mapping(pages)
+    # A page-less / boundary-less PDF never reaches _build_regions (see
+    # match_scanned's early return), so these fall back to any valid params.
+    params = _FORMAT_PARAMS[
+        _detect_format(pages[0]) if pages else "a4"
+    ]
+    last_boundary_page = (
+        max(b.page_idx for b in boundaries) if boundaries else 0
+    )
+
+    return ScannedDocument(
+        pages=pages,
+        boundaries=boundaries,
+        footer_y=params["footer_y"],
+        top_margin=params["top_margin"],
+        last_content_page=_find_last_content_page(
+            pages, after=last_boundary_page,
+        ),
+        main_count=sum(
+            1 for b in boundaries if b.kind == _BoundaryKind.MAIN
+        ),
+        sub_count=sum(
+            1 for b in boundaries if b.kind == _BoundaryKind.SUB
+        ),
+        subsub_count=sum(
+            1 for b in boundaries if b.kind == _BoundaryKind.SUBSUB
+        ),
+        char_map_size=len(char_map) if char_map else 0,
+    )
+
+
+def match_scanned(
+    doc: ScannedDocument,
+    question_ids: list[str],
+) -> tuple[list[QuestionRegion], SegmentationReport]:
+    """Map an already-scanned PDF's boundaries onto the paper's questions.
+
+    The cheap half of segmentation — pure bookkeeping over what
+    :func:`scan_document` already extracted.
+    """
+    report = SegmentationReport(unmatched=list(question_ids))
+    report.main_count = doc.main_count
+    report.sub_count = doc.sub_count
+    report.subsub_count = doc.subsub_count
+    report.char_map_size = doc.char_map_size
+    if not doc.boundaries:
+        return [], report
+
+    matches = _match_boundaries(doc.boundaries, question_ids)
+    reasons: dict[str, str] = {}
+    regions = _build_regions(
+        matches, len(doc.pages), doc.footer_y, doc.top_margin,
+        last_content_page=doc.last_content_page,
+        reasons=reasons,
+    )
+
+    matched, unmatched = validate_regions(regions, question_ids)
+    report.matched = matched
+    report.unmatched = unmatched
+    report.reasons = reasons
+    return regions, report
+
+
 def segment_questions_report(
     source: str | bytes,
     question_ids: list[str],
@@ -1143,47 +1250,13 @@ def segment_questions_report(
     Use this when the caller needs to tell the user which questions could
     not be located — ``segment_questions`` alone cannot distinguish "not
     detected" from "detected but unusable".
+
+    This is :func:`scan_document` followed by :func:`match_scanned`; call
+    those two directly to overlap the scan with the mark-scheme parse.
     """
-    if skip_pages is None:
-        skip_pages = {0}
-
-    pages = _load_pages(source)
-    report = SegmentationReport(unmatched=list(question_ids))
-
-    boundaries = _extract_boundaries(pages, skip_pages=skip_pages)
-    report.main_count = sum(
-        1 for b in boundaries if b.kind == _BoundaryKind.MAIN
+    return match_scanned(
+        scan_document(source, skip_pages=skip_pages), question_ids,
     )
-    report.sub_count = sum(
-        1 for b in boundaries if b.kind == _BoundaryKind.SUB
-    )
-    report.subsub_count = sum(
-        1 for b in boundaries if b.kind == _BoundaryKind.SUBSUB
-    )
-    char_map = _build_char_mapping(pages)
-    report.char_map_size = len(char_map) if char_map else 0
-    if not boundaries:
-        return [], report
-
-    fmt = _detect_format(pages[0])
-    params = _FORMAT_PARAMS[fmt]
-
-    last_boundary_page = max(b.page_idx for b in boundaries)
-    last_content = _find_last_content_page(pages, after=last_boundary_page)
-
-    matches = _match_boundaries(boundaries, question_ids)
-    reasons: dict[str, str] = {}
-    regions = _build_regions(
-        matches, len(pages), params["footer_y"], params["top_margin"],
-        last_content_page=last_content,
-        reasons=reasons,
-    )
-
-    matched, unmatched = validate_regions(regions, question_ids)
-    report.matched = matched
-    report.unmatched = unmatched
-    report.reasons = reasons
-    return regions, report
 
 
 def validate_regions(

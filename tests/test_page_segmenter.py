@@ -24,7 +24,10 @@ from modules.marking.page_segmenter import (
     _match_boundaries,
     _SegPage,
     _SegWord,
+    match_scanned,
+    scan_document,
     segment_questions,
+    segment_questions_report,
     validate_regions,
 )
 
@@ -820,3 +823,59 @@ class TestSegmentQuestions:
         pdf_bytes = _make_pdf_bytes([[]])
         regions = segment_questions(pdf_bytes, ["Q1", "Q2"], skip_pages=set())
         assert regions == []
+
+
+class TestTwoPhaseSegmentation:
+    """scan_document + match_scanned must equal the one-shot call.
+
+    The Mark tab runs the scan concurrently with the mark-scheme parse and
+    only matches once the question ids arrive, so the split has to be exact.
+    """
+
+    def _pdf(self) -> bytes:
+        return _make_pdf_bytes([
+            _make_cie_page(
+                main_q="Q1",
+                subs=[
+                    (90.0, _readable_sub_label("a")),
+                    (400.0, _readable_sub_label("b")),
+                ],
+            ),
+            _make_cie_page(main_q="Q2"),
+        ])
+
+    def test_split_matches_one_shot(self) -> None:
+        pdf_bytes = self._pdf()
+        q_ids = ["Q1a", "Q1b", "Q2"]
+
+        expected, exp_report = segment_questions_report(
+            pdf_bytes, q_ids, skip_pages=set(),
+        )
+        doc = scan_document(pdf_bytes, skip_pages=set())
+        actual, act_report = match_scanned(doc, q_ids)
+
+        assert actual == expected
+        assert act_report == exp_report
+
+    def test_one_scan_serves_different_question_ids(self) -> None:
+        # The point of the split: the PDF is read once, then matched against
+        # whatever the mark scheme turns out to contain.
+        pdf_bytes = self._pdf()
+        doc = scan_document(pdf_bytes, skip_pages=set())
+
+        full, _ = match_scanned(doc, ["Q1a", "Q1b", "Q2"])
+        partial, report = match_scanned(doc, ["Q1a"])
+
+        assert [r.question_id for r in full] == ["Q1a", "Q1b", "Q2"]
+        assert [r.question_id for r in partial] == ["Q1a"]
+        assert report.unmatched == []
+
+    def test_page_count_needs_no_second_load(self) -> None:
+        doc = scan_document(self._pdf(), skip_pages=set())
+        assert doc.page_count == 2
+
+    def test_empty_pdf_scans_without_error(self) -> None:
+        doc = scan_document(_make_pdf_bytes([[]]), skip_pages=set())
+        regions, report = match_scanned(doc, ["Q1"])
+        assert regions == []
+        assert report.unmatched == ["Q1"]
