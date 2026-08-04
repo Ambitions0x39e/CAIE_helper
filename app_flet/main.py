@@ -145,9 +145,7 @@ def main(page: ft.Page) -> None:
         elif idx == 3:
             content_area.controls.append(
                 build_mark_tab(
-                    page, state, show_snack,
-                    ms_picker, answer_picker,
-                    refresh_cb=refresh_current_tab,
+                    page, state, show_snack, ms_picker, answer_picker,
                 )
             )
         elif idx == 4:
