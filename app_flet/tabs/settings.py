@@ -743,6 +743,6 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
         scroll=ft.ScrollMode.AUTO,
     )
 
-    return ft.Container(
-        body, padding=ft.Padding.symmetric(vertical=20, horizontal=24),
-    )
+    # 20 on all four sides, same as every other tab — horizontal used to be
+    # 24, which pushed this page's title 4px right of the others'.
+    return ft.Container(body, padding=20)

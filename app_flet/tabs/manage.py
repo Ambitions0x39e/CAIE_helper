@@ -5,11 +5,8 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from app_flet import theme
-from app_flet.components.dialogs import (
-    show_delete_dialog,
-    show_score_dialog,
-)
-from app_flet.components.widgets import status_badge
+from app_flet.components.dialogs import show_delete_dialog
+from app_flet.components.widgets import data_table, status_badge
 from core.models import PaperRecord
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import PaperManager
@@ -104,33 +101,15 @@ def build_manage_tab(
             )
 
         return [
-            ft.Row(
-                [
-                    ft.DataTable(
-                        columns=[
-                            ft.DataColumn(
-                                label=ft.Text("Paper ID"),
-                            ),
-                            ft.DataColumn(
-                                label=ft.Text("状态"),
-                            ),
-                            ft.DataColumn(
-                                label=ft.Text("分数"),
-                            ),
-                            ft.DataColumn(
-                                label=ft.Text("百分比"),
-                            ),
-                            ft.DataColumn(
-                                label=ft.Text("操作"),
-                            ),
-                        ],
-                        rows=rows,
-                        border=ft.Border.all(1, theme.HAIRLINE),
-                        border_radius=8,
-                        heading_row_color=theme.PRIMARY_TINT,
-                    ),
+            data_table(
+                columns=[
+                    ft.DataColumn(label=ft.Text("Paper ID")),
+                    ft.DataColumn(label=ft.Text("状态")),
+                    ft.DataColumn(label=ft.Text("分数")),
+                    ft.DataColumn(label=ft.Text("百分比")),
+                    ft.DataColumn(label=ft.Text("操作")),
                 ],
-                scroll=ft.ScrollMode.AUTO,
+                rows=rows,
             ),
         ]
 
