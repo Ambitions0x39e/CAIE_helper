@@ -1,33 +1,29 @@
+"""「按考季查询」子页：查一个考季的全部卷子，分列勾选、批量下载。"""
 from __future__ import annotations
 
-import datetime as dt
+from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 import flet as ft
 from pydantic import ValidationError
 
 from app_flet import theme
-from app_flet.components.widgets import error_banner, success_banner
+from app_flet.components.widgets import error_banner
+from app_flet.tabs.download.session_picker import build_session_picker
 from core.config_store import ConfigStore
 from modules.downloader import (
     DownloadRequest,
-    DownloadSource,
     PaperDownloader,
     QueryEntry,
+    QueryResult,
     QuerySeason,
     query_available,
 )
-from modules.mailer import GoodNotesMailer, MailRequest
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
 
-_SEASONS = [
-    ("m", "March"),
-    ("s", "Summer"),
-    ("w", "Winter"),
-]
-_FIRST_YEAR = 2004
+
 # 子行缩进：让分支图标挂在 QP 名字左下角
 _TREE_INDENT = 34
 _LEAF_ICON_SIZE = 14
@@ -36,13 +32,31 @@ _LEAF_ICON_SIZE = 14
 # 再往下压就会开始切字：14pt 的行盒约 19px，13pt 约 17px。
 _ROW_H = 24
 _LEAF_ROW_H = 16
-# 标签页内容区高度 = 窗口高 - (页头 64 + 页内标题 48 + 间距 8 + 底部导航 80)。
+# 标签页内容区高度 = 窗口高 - 它上面那些东西的高度。
 # 不能用 expand：外层 content_area 是 scroll=AUTO 的 Column，滚动容器里高度无界，
 # expand 撑不出约束，TabBarView 会按内在高度铺开 —— 那正是页面底下拖出一大截空白的原因。
 # 高度是算出来的，就必须跟着窗口走，见 build_download_tab 里的 on_resize。
-_TAB_CHROME_H = 210
-_TAB_MIN_H = 320
-_FALLBACK_PAGE_H = 800
+#
+# 拆成具名的几项而不是一个数：这个常量原本写死 210，其中 80 是**底部导航栏**。
+# 导航改到左边一列之后底部不再占垂直空间，那 80 就变成了页面底下一条白边，
+# 而一个光秃秃的 210 看不出哪一项该减。以后再动页头/标题就改对应那一项。
+#: 页头 Container：上下 padding 各 12 + Material 按钮 40。
+# ── 查询结果分列的表头 ────────────────────────────────────────────
+# 表头原本是一行自由折行的 Text。卷子名长短不一（"Mechanics" 一行、
+# "Probability & Statistics 1" 两行），折行数不同，下面的内容就从不同高度
+# 开始，列与列参差不齐。所以表头改成**定高**：同一次渲染里所有列用同一个
+# 行数，内容一定从同一条基线开始。
+_COL_SPACING = 16
+#: 13pt 行盒约 17px（见 _ROW_H 那条注释），留 1px 余量。
+_COL_HEADER_LINE_H = 18
+#: 挂了卷子名就给两行；窄到只剩「Paper X」时一行。
+_COL_HEADER_LINES = 2
+#: 列宽窄于此就只显示「Paper X」——名字挤成三四行反而更难看。
+#: 想让卷子名更早/更晚出现，调这一个数就够。
+_COL_DESC_MIN_W = 150
+#: 结果区可用宽度 = 窗口宽 - 左侧导航列 84 - 分隔线 1 - 本页左右 padding 40。
+_RESULT_CHROME_W = 125
+_FALLBACK_PAGE_W = 1024
 
 
 def _paper_digit(paper_id: str) -> str:
@@ -62,41 +76,21 @@ def build_request_tab(
     page: ft.Page,
     state: AppState,
     show_snack: object,
+    on_resize_hooks: list[Callable[[], bool]] | None = None,
 ) -> ft.Container:
+    def _fits_desc(n_cols: int) -> bool:
+        """Is each of *n_cols* columns wide enough to carry the paper's name?"""
+        if n_cols <= 0:
+            return True
+        avail = int(page.width or _FALLBACK_PAGE_W) - _RESULT_CHROME_W
+        per_col = (avail - _COL_SPACING * (n_cols - 1)) / n_cols
+        return per_col >= _COL_DESC_MIN_W
+
     syllabi = sorted(ConfigStore().load_all(), key=lambda s: s.syllabus_id)
-    current_year = dt.date.today().year
-
-    paper_type_dd = ft.Dropdown(
-        label="科目",
-        label_style=theme.field_label_style(),
-        options=[
-            ft.dropdown.Option(key=s.syllabus_id, text=f"{s.syllabus_id} — {s.name}")
-            for s in syllabi
-        ],
-        value=syllabi[0].syllabus_id if syllabi else None,
-        expand=True,
-    )
-
-    year_dd = ft.Dropdown(
-        label="年份",
-        label_style=theme.field_label_style(),
-        options=[
-            ft.dropdown.Option(key=str(y), text=str(y))
-            for y in range(current_year, _FIRST_YEAR - 1, -1)
-        ],
-        value=str(current_year),
-        expand=True,
-    )
-
-    season_dd = ft.Dropdown(
-        label="考季",
-        label_style=theme.field_label_style(),
-        options=[
-            ft.dropdown.Option(key=code, text=label)
-            for code, label in _SEASONS
-        ],
-        value=_SEASONS[0][0],
-        expand=True,
+    # 三个下拉框和「分数线」子页共用，见 session_picker.py。
+    picker = build_session_picker()
+    paper_type_dd, year_dd, season_dd = (
+        picker.syllabus, picker.year, picker.season,
     )
 
     progress_ring = ft.ProgressRing(visible=False, width=20, height=20)
@@ -109,6 +103,10 @@ def build_request_tab(
     # (勾选框, 右侧状态文字, 条目) — 只装可勾选的行（qp / gt）
     rows: list[tuple[ft.Checkbox, ft.Text, QueryEntry]] = []
     total_files = [0]  # 这一次查询返回的文件总数，含挂在 qp 下面的 ms
+    # 最近一次查询结果 + 它渲染时用的表头模式。留着是为了窗口变宽/变窄时能
+    # 就地重排，不必重新发一次网络查询。
+    last_result: list[QueryResult | None] = [None]
+    rendered_desc: list[bool | None] = [None]
 
     def _row_note(entry: QueryEntry) -> str:
         """右侧灰字：这行的状态。已下载不再单独打标，只在批量摘要里计跳过数。"""
@@ -121,10 +119,7 @@ def build_request_tab(
     def _leaf(text: str, *, color: str = theme.MUTED) -> ft.Row:
         """树的子行：子项图标 + 灰字，缩进到勾选框右边，不占选择列。
 
-        分支符号用 Material 图标而不是 ``╰─``：制表符（U+2570/U+2500）的
-        East Asian Width 是 Ambiguous，在全局那套中文字体（main.py 的
-        Microsoft YaHei）里按全角渲染，宽度和基线都跟旁边的半角文件名对不上，
-        看着歪。图标是矢量的，跟字体无关。
+        分支符号用 Material 图标
         """
         return ft.Row(
             [
@@ -231,6 +226,10 @@ def build_request_tab(
             page.update()
             return
 
+        last_result[0] = result
+        _render_result(result)
+
+    def _render_result(result: QueryResult) -> None:
         total_files[0] = len(result.entries)
         available = {e.paper_id for e in result.entries}
         nested_ms: set[str] = set()
@@ -249,15 +248,25 @@ def build_request_tab(
             selected_syllabus.paper_types_as_dict() if selected_syllabus else {}
         )
 
+        # 一次渲染只定一个表头行数，所有列共用 —— 逐列各算各的会重新引入
+        # 高低不齐（比如某一列没配卷子名就只有一行）。
+        show_desc = _fits_desc(len(groups))
+        header_lines = _COL_HEADER_LINES if show_desc else 1
+        rendered_desc[0] = show_desc
+
         columns: list[ft.Control] = []
         for digit in sorted(groups):
-            named = type_names.get(digit)
-            header = f"Paper {digit}" + (f" · {named}" if named else "")
+            named = type_names.get(digit) if show_desc else None
             col: list[ft.Control] = [
-                ft.Text(
-                    header,
-                    size=13,
-                    weight=ft.FontWeight.BOLD,
+                ft.Container(
+                    ft.Text(
+                        f"Paper {digit}" + (f" · {named}" if named else ""),
+                        size=13,
+                        weight=ft.FontWeight.BOLD,
+                        max_lines=header_lines,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    height=header_lines * _COL_HEADER_LINE_H,
                 ),
                 ft.Divider(height=9),
             ]
@@ -277,7 +286,7 @@ def build_request_tab(
             result_list.controls.append(
                 ft.Row(
                     columns,
-                    spacing=16,
+                    spacing=_COL_SPACING,
                     vertical_alignment=ft.CrossAxisAlignment.START,
                 )
             )
@@ -300,6 +309,36 @@ def build_request_tab(
         batch_bar.visible = True
         _refresh_status()
         page.update()
+
+    def _reflow_on_resize() -> bool:
+        """Re-lay the result columns when the window crosses the width cutoff.
+
+        Returns whether anything was rebuilt, so the caller can skip a
+        page.update() entirely on the (overwhelmingly common) resize events
+        that change nothing.
+        """
+        result = last_result[0]
+        if result is None:
+            return False
+        n_cols = len({
+            _paper_digit(e.paper_id) for e in result.entries if e.kind == "qp"
+        })
+        if _fits_desc(n_cols) == rendered_desc[0]:
+            return False
+
+        # Re-rendering builds fresh Checkboxes, so carry the ticks across —
+        # losing a careful selection to a window resize would be maddening.
+        ticked = {e.paper_id for cb, _, e in rows if cb.value}
+        rows.clear()
+        result_list.controls.clear()
+        _render_result(result)
+        for cb, _, entry in rows:
+            cb.value = entry.paper_id in ticked
+        _refresh_status()
+        return True
+
+    if on_resize_hooks is not None:
+        on_resize_hooks.append(_reflow_on_resize)
 
     def on_batch_download(_: ft.ControlEvent) -> None:
         picked = [(cb, note, e) for cb, note, e in rows if cb.value]
@@ -398,10 +437,7 @@ def build_request_tab(
     return ft.Container(
         ft.Column(
             [
-                ft.Row(
-                    [paper_type_dd, year_dd, season_dd],
-                    spacing=12,
-                ),
+                picker.row(),
                 ft.Container(height=12),
                 ft.Row(
                     [send_btn, progress_ring],
@@ -420,256 +456,4 @@ def build_request_tab(
             expand=True,
         ),
         padding=20,
-    )
-
-
-def build_by_id_tab(
-    page: ft.Page,
-    state: AppState,
-    show_snack: object,
-) -> ft.Container:
-
-    paper_id_field = ft.TextField(
-        label="Paper ID",
-        label_style=theme.field_label_style(),
-        hint_text="9702_s23_qp_11",
-        helper="格式: <科目>_<考期>_qp_<试卷>",
-        expand=True,
-    )
-
-    source_selector = ft.SegmentedButton(
-        segments=[
-            ft.Segment(value="CIEFrank", label=ft.Text("CIEFrank")),
-            ft.Segment(value="PapaCambridge", label=ft.Text("PapaCambridge")),
-        ],
-        selected=["CIEFrank"],
-        allow_multiple_selection=False,
-    )
-
-    result_area = ft.Column(visible=False)
-    progress_ring = ft.ProgressRing(visible=False, width=20, height=20)
-    gn_section = ft.Column(visible=False)
-
-    def _refresh_gn_section() -> None:
-        gn_section.controls.clear()
-        if state.last_downloaded_id and state.mail_config:
-            gn_section.controls.append(ft.Divider())
-            gn_section.controls.append(
-                ft.Row([
-                    ft.Text(
-                        f"准备发送: {state.last_downloaded_id}",
-                        size=12,
-                        color=theme.MUTED,
-                        expand=True,
-                    ),
-                    ft.Button(
-                        "发送到 GoodNotes",
-                        icon=ft.Icons.SEND,
-                        on_click=on_send_gn,  # type: ignore[arg-type]
-                        style=theme.filled_button(theme.ACCENT),
-                    ),
-                ])
-            )
-            gn_section.visible = True
-        else:
-            gn_section.visible = False
-
-    def on_download(_: ft.ControlEvent) -> None:
-        pid = paper_id_field.value or ""
-        if not pid.strip():
-            show_snack("请输入 Paper ID")  # type: ignore[operator]
-            return
-
-        src: DownloadSource = source_selector.selected[0]  # type: ignore[assignment]
-
-        try:
-            request = DownloadRequest(paper_id=pid.strip(), source=src)
-        except ValidationError as exc:
-            msgs = "; ".join(
-                e["msg"].removeprefix("Value error, ") for e in exc.errors()
-            )
-            show_snack(f"验证失败: {msgs}", theme.DANGER)  # type: ignore[operator]
-            return
-
-        progress_ring.visible = True
-        result_area.visible = False
-        page.update()
-
-        downloader = PaperDownloader(store=state.store)
-        dl = downloader.download(request)
-
-        progress_ring.visible = False
-        result_area.controls.clear()
-
-        if dl.success:
-            result_area.controls.append(
-                success_banner(
-                    f"已下载: {dl.paper_id}",
-                    [f"QP → {dl.qp_path}", f"MS → {dl.ms_path}"],
-                )
-            )
-            state.last_downloaded_id = dl.paper_id
-            state.last_downloaded_qp = dl.qp_path
-        else:
-            result_area.controls.append(error_banner(f"下载失败: {dl.error}"))
-
-        result_area.visible = True
-        _refresh_gn_section()
-        page.update()
-
-    def on_record(_: ft.ControlEvent) -> None:
-        pid = paper_id_field.value or ""
-        if not pid.strip():
-            show_snack("请输入 Paper ID")  # type: ignore[operator]
-            return
-
-        downloader = PaperDownloader(store=state.store)
-        dl = downloader.record_only(pid.strip())
-
-        result_area.controls.clear()
-        if dl.success:
-            result_area.controls.append(
-                success_banner(f"已记录 (无PDF): {dl.paper_id}")
-            )
-        else:
-            result_area.controls.append(error_banner(f"记录失败: {dl.error}"))
-        result_area.visible = True
-        page.update()
-
-    def on_send_gn(_: ft.ControlEvent) -> None:
-        if not state.last_downloaded_id or not state.mail_config:
-            return
-
-        try:
-            mail_req = MailRequest(
-                paper_id=state.last_downloaded_id,
-                qp_path=state.last_downloaded_qp or "",
-            )
-        except ValidationError as exc:
-            show_snack(  # type: ignore[operator]
-                f"验证失败: {exc.errors()[0]['msg']}",
-                theme.DANGER,
-            )
-            return
-
-        mailer = GoodNotesMailer(config=state.mail_config, store=state.store)
-        mail_result = mailer.send(mail_req)
-
-        if mail_result.success:
-            show_snack(  # type: ignore[operator]
-                f"✅ 已发送到 {mail_result.recipient}",
-                theme.SUCCESS,
-            )
-            state.last_downloaded_id = None
-            state.last_downloaded_qp = None
-            _refresh_gn_section()
-            page.update()
-        else:
-            show_snack(  # type: ignore[operator]
-                f"发送失败: {mail_result.error}",
-                theme.DANGER,
-            )
-
-    download_btn = ft.Button(
-        "下载",
-        icon=ft.Icons.DOWNLOAD,
-        on_click=on_download,  # type: ignore[arg-type]
-        style=theme.filled_button(),
-    )
-
-    record_btn = ft.Button(
-        "仅记录",
-        icon=ft.Icons.NOTE_ADD,
-        on_click=on_record,  # type: ignore[arg-type]
-        style=theme.filled_button(theme.NEUTRAL),
-    )
-
-    return ft.Container(
-        ft.Column(
-            [
-                ft.Row([paper_id_field], spacing=12),
-                ft.Row(
-                    [
-                        ft.Text("来源:", size=14),
-                        source_selector,
-                    ],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Container(height=8),
-                ft.Row(
-                    [download_btn, record_btn, progress_ring],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Container(height=12),
-                result_area,
-                gn_section,
-            ],
-            spacing=4,
-        ),
-        padding=20,
-    )
-
-
-def build_download_tab(
-    page: ft.Page,
-    state: AppState,
-    show_snack: object,
-) -> ft.Container:
-    # 见 _TAB_CHROME_H 注释：滚动父容器里必须给个确定高度，不能靠 expand。
-    def _tab_height() -> int:
-        return max(
-            _TAB_MIN_H, int(page.height or _FALLBACK_PAGE_H) - _TAB_CHROME_H
-        )
-
-    tabs: ft.Tabs = ft.Tabs(
-        length=2,
-        selected_index=0,
-        height=_tab_height(),
-        content=ft.Column(
-            expand=True,
-            controls=[
-                ft.TabBar(
-                    tabs=[
-                        ft.Tab(label="按考季查询"),
-                        ft.Tab(label="按 ID 下载"),
-                    ]
-                ),
-                ft.TabBarView(
-                    expand=True,
-                    controls=[
-                        build_request_tab(page, state, show_snack),
-                        build_by_id_tab(page, state, show_snack),
-                    ],
-                ),
-            ],
-        ),
-    )
-
-    # 高度是算出来的，就得跟着窗口走：不接 on_resize 的话，最大化之后标签页
-    # 还停在开窗时那个高度，下面留一大块白。page.on_resize 全仓没别人用
-    # （其它页都是建页时读 page.width 决定布局），这里独占。
-    def _on_page_resize(_: ft.ControlEvent) -> None:
-        tabs.height = _tab_height()
-        page.update()
-
-    page.on_resize = _on_page_resize  # type: ignore[assignment]
-
-    return ft.Container(
-        ft.Column(
-            [
-                ft.Container(
-                    ft.Text(
-                        "下载试卷",
-                        size=24,
-                        weight=ft.FontWeight.BOLD,
-                    ),
-                    padding=ft.Padding(left=20, right=20, top=16, bottom=0),
-                ),
-                tabs,
-            ],
-            spacing=8,
-        ),
-        padding=0,
     )
