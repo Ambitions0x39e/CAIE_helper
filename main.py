@@ -1,5 +1,10 @@
 import flet as ft
 
-from app_flet.main import main
 
-ft.app(main)
+def _main(page: ft.Page) -> None:
+    from app_flet.main import main
+
+    main(page)
+
+
+ft.app(_main)
