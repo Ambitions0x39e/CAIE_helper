@@ -113,6 +113,18 @@ exclude = [
 [tool.flet.dev_packages]
 flet-pdf-render = "extensions/flet_pdf_render"
 
+# 2026-08-05: connectivity_plus (a transitive Dart dep, pulled in by flet itself
+# for network-status detection) references NWPath.isUltraConstrained since
+# 7.1.0 — a macOS 26 SDK symbol gated by `#available(macOS 26.0, *)` at
+# runtime, but Swift still needs the symbol to exist in the SDK you compile
+# against, so it fails to build on Xcode < the one bundling the macOS 26 SDK
+# (Xcode 15.3 confirmed broken). Pin to the last version before that line
+# landed. Drop this once Xcode is upgraded past whatever ships the macOS 26
+# SDK — the pin is what silently loses macOS 26's "ultra constrained network"
+# detection, a cosmetic status field, not functionality.
+[tool.flet.flutter.pubspec.dependency_overrides]
+connectivity_plus = "7.0.0"
+
 [tool.uv.sources]
 flet-pdf-render = { path = "extensions/flet_pdf_render", editable = true }
 
