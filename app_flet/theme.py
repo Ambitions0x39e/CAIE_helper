@@ -37,6 +37,9 @@ ON_FILLED = ft.Colors.WHITE
 # ── 中性色 ────────────────────────────────────────────────────────
 #: 页面底色
 SURFACE = ft.Colors.WHITE
+#: 窗口/页面背景（浅灰白）。卡片仍然用 SURFACE——纯白卡片放在纯白页面上，
+#: 阴影会被背景吃掉看不见，页面单独深一档才能让卡片显得"浮起来"。
+PAGE_BG = "#F5F5F6"
 #: 正文文字。主题（main.py 的 text_theme / on_surface）已经把它设成默认色，
 #: 所以控件上**不要**再写一遍 —— 只有主题够不着的地方才需要，见
 #: field_label_style()。这里留一个名字，是为了主题定义自身也走同一个源头。
@@ -69,6 +72,12 @@ CARD_PURPLE = ft.Colors.PURPLE
 CARD_TEAL = ft.Colors.TEAL
 
 
+# ── 圆角 ──────────────────────────────────────────────────────────
+#: 卡片/面板统一圆角，取代原先 6/8/12 三档并存的写法。按钮走下面独立的
+#: SQUIRCLE_RADIUS，两者相差不到 1px，肉眼分不出来——按钮那档是刻意保留的
+#: 独立公式，不并进来。
+CARD_RADIUS = 10
+
 #: iOS app 图标那套 squircle 的圆角比例（圆角半径 / 边长）。Flet 的
 #: RoundedRectangleBorder 只画圆弧角，不是 Apple 那种连续曲率的超椭圆，
 #: 这里是用同样的比例去逼近观感，不是真 squircle 曲线。
@@ -76,6 +85,33 @@ SQUIRCLE_RADIUS_RATIO = 0.2237
 #: Material 3 默认按钮高度（dp），比例换算成像素半径要有个锚点。
 _BUTTON_HEIGHT = 40
 SQUIRCLE_RADIUS = round(_BUTTON_HEIGHT * SQUIRCLE_RADIUS_RATIO, 2)
+
+# ── 间距 scale ────────────────────────────────────────────────────
+#: 卡片内部紧凑间隙（比如 metric_card 标签→数值）
+SPACE_XS = 4
+#: 行间距、图标到文字的间隙
+SPACE_SM = 8
+#: 卡片内边距、区块间距
+SPACE_MD = 12
+#: banner 内边距、列表行内边距
+SPACE_LG = 16
+#: 页面级外边距
+SPACE_XL = 20
+
+# ── 字号 scale ────────────────────────────────────────────────────
+#: 仅页面标题（每个 tab 一个）。本轮不接线——section_title() 现在的 24 Bold
+#: 归 TITLE 还是 SECTION 要看各 tab 调用点，留字面量，是下一轮的事。
+TITLE = 24
+#: 所有区块/子区块标题
+SECTION = 18
+#: 需要强调的行/卡片标签，配 ft.FontWeight.W_600 使用
+SUBHEAD = 14
+#: 默认正文
+BODY = 13
+#: 提示/次要信息，配 theme.MUTED 颜色使用
+CAPTION = 12
+#: 仅例外场景（目前只有 mcq.py，本轮范围外）
+MICRO = 11
 
 
 def filled_button(bgcolor: str = PRIMARY) -> ft.ButtonStyle:
@@ -102,3 +138,30 @@ def field_label_style() -> ft.TextStyle:
     将来做深色模式，这个函数是那批标签唯一要改的地方。
     """
     return ft.TextStyle(color=TEXT_PRIMARY)
+
+
+def card_shadow() -> ft.BoxShadow:
+    """卡片档柔和阴影（metric_card 尺寸）。无描边——靠阴影和 PAGE_BG 的对比让
+    卡片显得"浮起来"，不再画 1px 描边。
+
+    每次返回新对象，理由同 field_label_style()：控件会持有并可能改写自己的
+    样式，共享同一个实例会串味。
+    """
+    return ft.BoxShadow(
+        blur_radius=16,
+        spread_radius=-2,
+        color=ft.Colors.with_opacity(0.12, ft.Colors.BLACK),
+        offset=ft.Offset(0, 4),
+    )
+
+
+def row_shadow() -> ft.BoxShadow:
+    """行档柔和阴影（列表行尺寸），比 card_shadow() 更轻。每次返回新对象，
+    理由同上。
+    """
+    return ft.BoxShadow(
+        blur_radius=14,
+        spread_radius=-3,
+        color=ft.Colors.with_opacity(0.10, ft.Colors.BLACK),
+        offset=ft.Offset(0, 2),
+    )

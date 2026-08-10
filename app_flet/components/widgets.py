@@ -34,8 +34,7 @@ def data_table(
             show_checkbox_column=show_checkbox_column,
             on_select_all=on_select_all,
             expand=True,
-            border=ft.Border.all(1, theme.HAIRLINE),
-            border_radius=8,
+            border_radius=theme.CARD_RADIUS,
             heading_row_color=theme.PRIMARY_TINT,
         )
     ])
@@ -48,7 +47,7 @@ def metric_card(label: str, value: str, color: str) -> ft.Container:
     return ft.Container(
         ft.Column(
             [
-                ft.Text(label, size=12, color=theme.MUTED),
+                ft.Text(label, size=theme.CAPTION, color=theme.MUTED),
                 ft.Text(
                     value,
                     size=24,
@@ -58,12 +57,12 @@ def metric_card(label: str, value: str, color: str) -> ft.Container:
                 ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=4,
+            spacing=theme.SPACE_XS,
         ),
         width=132,
-        border_radius=12,
-        border=ft.Border.all(1, theme.HAIRLINE),
-        padding=12,
+        border_radius=theme.CARD_RADIUS,
+        shadow=theme.card_shadow(),
+        padding=theme.SPACE_MD,
         alignment=ft.Alignment(0, 0),
     )
 
@@ -88,7 +87,7 @@ def section_title(text: str) -> ft.Text:
 def success_banner(message: str, details: list[str] | None = None) -> ft.Container:
     controls: list[ft.Control] = [
         ft.Row([
-            ft.Icon(ft.Icons.CHECK_CIRCLE, color=theme.SUCCESS),
+            ft.Icon(ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL, color=theme.SUCCESS),
             ft.Text(message, weight=ft.FontWeight.BOLD),
         ]),
     ]
@@ -97,18 +96,48 @@ def success_banner(message: str, details: list[str] | None = None) -> ft.Contain
     return ft.Container(
         content=ft.Column(controls),
         bgcolor=theme.SUCCESS_TINT,
-        border_radius=8,
-        padding=16,
+        border_radius=theme.CARD_RADIUS,
+        shadow=theme.row_shadow(),
+        padding=theme.SPACE_LG,
     )
 
 
 def error_banner(message: str) -> ft.Container:
     return ft.Container(
         content=ft.Row([
-            ft.Icon(ft.Icons.ERROR, color=theme.DANGER),
+            ft.Icon(ft.CupertinoIcons.XMARK_CIRCLE_FILL, color=theme.DANGER),
             ft.Text(message),
         ]),
         bgcolor=theme.DANGER_TINT,
-        border_radius=8,
-        padding=16,
+        border_radius=theme.CARD_RADIUS,
+        shadow=theme.row_shadow(),
+        padding=theme.SPACE_LG,
+    )
+
+
+def warning_banner(message: str, details: list[str] | None = None) -> ft.Container:
+    controls: list[ft.Control] = [
+        ft.Row([
+            ft.Icon(ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL, color=theme.WARNING),
+            ft.Text(message, weight=ft.FontWeight.BOLD),
+        ]),
+    ]
+    for d in details or []:
+        controls.append(ft.Text(d, size=12, color=theme.MUTED))
+    return ft.Container(
+        content=ft.Column(controls),
+        bgcolor=theme.WARNING_TINT,
+        border_radius=theme.CARD_RADIUS,
+        shadow=theme.row_shadow(),
+        padding=theme.SPACE_LG,
+    )
+
+
+def loading_row(label: str) -> ft.Row:
+    return ft.Row(
+        [
+            ft.ProgressRing(width=20, height=20),
+            ft.Text(label, size=theme.CAPTION, color=theme.MUTED),
+        ],
+        spacing=theme.SPACE_SM,
     )
