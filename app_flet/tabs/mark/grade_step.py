@@ -226,11 +226,14 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
             state.grading_confirmed = False
             if not outcome.ok:
                 # Keep the message on screen as a banner until the next
-                # grade — a toast auto-dismisses on a long run.
-                state.grading_error = (
-                    f"批改失败（{outcome.failed_question}）: {outcome.error}"
+                # grade — a toast auto-dismisses on a long run. Each
+                # question fails independently, so there can be several.
+                state.grading_error = "；".join(
+                    f"{f.question}: {f.error}" for f in outcome.failures
                 )
-                ctx.show_snack(f"批改失败: {outcome.error}", theme.DANGER)
+                ctx.show_snack(
+                    f"{len(outcome.failures)} 题批改失败", theme.DANGER,
+                )
         except Exception as exc:
             # to_pdf_bytes / renderer construction, i.e. before any question
             # was attempted.
