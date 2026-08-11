@@ -13,7 +13,9 @@ testable, so keep UI strings on the other side of the boundary.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -142,18 +144,40 @@ class Renderer(Protocol):
     ) -> list[bytes]: ...
 
 
+@dataclass(frozen=True)
+class QuestionFailure:
+    """One question that could not be rendered or graded.
+
+    Rendering and grading a question is independent of every other question,
+    so one failing must not stop the rest — see :func:`grade_paper`.
+    """
+
+    question: str
+    error: str
+
+
 @dataclass
 class GradeOutcome:
-    """Result of a grading run — partial results survive a mid-run failure."""
+    """Result of a grading run — each question succeeds or fails on its own.
+
+    ``results`` holds every question that graded cleanly, restored to
+    ``question_ids`` order (not completion order, which is nondeterministic
+    under concurrency). ``failures`` lists the rest.
+    """
 
     results: list[QuestionResult] = field(default_factory=list)
-    #: Question being graded when it blew up; ``None`` if the run completed.
-    failed_question: str | None = None
-    error: str | None = None
+    failures: list[QuestionFailure] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return self.error is None
+        return not self.failures
+
+
+# Caps how many questions render/grade at once. Each slot holds an HTTP
+# round trip open for up to the configured timeout (120-300s) — this bounds
+# load on the API and the render RPC, not CPU, so it doesn't need to track
+# core count (same reasoning as setup_step.py's concurrent MS-parse/scan).
+_MAX_CONCURRENT_QUESTIONS = 4
 
 
 def grade_paper(
@@ -167,22 +191,35 @@ def grade_paper(
     clips: Mapping[str, list[PageClip]],
     renderer: Renderer,
     on_progress: Callable[[int, int, str], None] | None = None,
+    max_workers: int = _MAX_CONCURRENT_QUESTIONS,
 ) -> GradeOutcome:
-    """Grade each question in turn, rendering its pages or clipped regions.
+    """Grade every question concurrently, rendering its pages or clips.
 
     Clips (from segmentation) are preferred over whole pages: they crop to
     the question, so the model sees less unrelated working.
 
-    A failure aborts the run but keeps whatever was already graded, and names
-    the question it died on — a stalled render or API call is otherwise very
-    hard to pin down from a toast.
+    Each question renders and grades on its own worker thread. A stalled
+    render or a failed API call is recorded against that question alone and
+    does not stop the others — unlike a plain sequential loop, where one
+    failure would abort every question queued behind it.
+
+    ``on_progress`` calls are serialised (never invoked concurrently from two
+    threads), so a caller that pushes them straight into a UI update doesn't
+    need its own locking.
     """
     outcome = GradeOutcome()
     total = len(question_ids)
-
-    for i, qid in enumerate(question_ids):
+    if total == 0:
         if on_progress is not None:
-            on_progress(i, total, qid)
+            on_progress(0, 0, "")
+        return outcome
+
+    results_by_qid: dict[str, QuestionResult] = {}
+    progress_lock = threading.Lock()
+    done = 0
+
+    def _grade_one(qid: str) -> None:
+        nonlocal done
         try:
             qcfg = paper_config.questions[qid]
             region_clips = clips.get(qid)
@@ -202,15 +239,30 @@ def grade_paper(
                 max_marks=qcfg.max_marks,
                 paper_type=paper_type,
             )
-            outcome.results.append(parse_grading_result(raw))
+            result: QuestionResult | None = parse_grading_result(raw)
+            failure: QuestionFailure | None = None
         except Exception as exc:  # noqa: BLE001 — reported, not swallowed
             # Log the traceback: a toast auto-dismisses, and the stack is
             # what pins down a render/API stall.
             _log.exception("grading failed on question %s", qid)
-            outcome.failed_question = qid
-            outcome.error = str(exc)
-            return outcome
+            result = None
+            failure = QuestionFailure(question=qid, error=str(exc))
 
+        with progress_lock:
+            if result is not None:
+                results_by_qid[qid] = result
+            if failure is not None:
+                outcome.failures.append(failure)
+            done += 1
+            if on_progress is not None:
+                on_progress(done, total, qid)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        list(pool.map(_grade_one, question_ids))
+
+    outcome.results = [
+        results_by_qid[qid] for qid in question_ids if qid in results_by_qid
+    ]
     if on_progress is not None:
         on_progress(total, total, "")
     return outcome

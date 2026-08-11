@@ -6,6 +6,7 @@ are the first tests it has ever had.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 import pytest
@@ -216,70 +217,119 @@ class TestGradePaper:
         renderer: _FakeRenderer,
         clips: dict[str, list[PageClip]],
         qids: tuple[str, ...] = ("Q1", "Q2"),
+        on_progress: object = None,
     ) -> workflow.GradeOutcome:
         return grade_paper(
             config=_FakeConfig(),  # type: ignore[arg-type]
             paper_config=_paper_config(*qids),
             paper_type=PaperType.MATH,
             pdf_bytes=b"%PDF",
+            # Distinct page per question so a renderer can single one out by
+            # the page number it was asked to render.
             question_ids=list(qids),
-            assignments={q: [1] for q in qids},
+            assignments={q: [i + 1] for i, q in enumerate(qids)},
             clips=clips,
             renderer=renderer,
+            on_progress=on_progress,  # type: ignore[arg-type]
         )
 
     def test_prefers_clips_over_whole_pages(
         self, _stub_grader: list[str],
     ) -> None:
         renderer = _FakeRenderer()
-        # Q1 has segmentation clips, Q2 does not.
+        # Q1 has segmentation clips, Q2 does not (assignments give it page 2).
         outcome = self._run(renderer, {"Q1": [_clip(0), _clip(1)]})
 
         assert outcome.ok
         assert len(outcome.results) == 2
         assert renderer.region_calls == ["2 clips"]
-        assert renderer.page_calls == [[1]]
+        assert renderer.page_calls == [[2]]
 
-    def test_progress_reports_each_question_then_completion(
+    def test_grades_questions_concurrently(
         self, _stub_grader: list[str],
     ) -> None:
-        seen: list[tuple[int, int, str]] = []
-        grade_paper(
-            config=_FakeConfig(),  # type: ignore[arg-type]
-            paper_config=_paper_config("Q1", "Q2"),
-            paper_type=PaperType.MATH,
-            pdf_bytes=b"%PDF",
-            question_ids=["Q1", "Q2"],
-            assignments={"Q1": [1], "Q2": [2]},
-            clips={},
-            renderer=_FakeRenderer(),
-            on_progress=lambda d, t, q: seen.append((d, t, q)),
-        )
-        assert seen == [(0, 2, "Q1"), (1, 2, "Q2"), (2, 2, "")]
+        """Three renders must be in flight at once, not one after another.
 
-    def test_failure_keeps_earlier_results_and_names_the_question(
-        self, _stub_grader: list[str],
-    ) -> None:
-        class _Boom(_FakeRenderer):
+        Each render blocks on a 3-party barrier before returning. A
+        sequential implementation only ever has one render in flight, so the
+        barrier never fills and every question times out; this only passes
+        when grade_paper genuinely runs the three concurrently.
+        """
+        barrier = threading.Barrier(3, timeout=2)
+
+        class _BarrierRenderer(_FakeRenderer):
             def render_pages(
                 self, source: bytes, page_numbers: list[int], dpi: int = 200,
             ) -> list[bytes]:
-                if len(self.page_calls) == 1:
+                barrier.wait()
+                return super().render_pages(source, page_numbers, dpi)
+
+        outcome = self._run(_BarrierRenderer(), {}, ("Q1", "Q2", "Q3"))
+
+        assert outcome.ok
+        assert len(outcome.results) == 3
+
+    def test_one_failure_does_not_stop_the_others(
+        self, _stub_grader: list[str],
+    ) -> None:
+        class _FailsOnPageTwo(_FakeRenderer):
+            def render_pages(
+                self, source: bytes, page_numbers: list[int], dpi: int = 200,
+            ) -> list[bytes]:
+                if page_numbers == [2]:
                     raise RuntimeError("render stalled")
                 return super().render_pages(source, page_numbers, dpi)
 
-        outcome = self._run(_Boom(), {}, ("Q1", "Q2", "Q3"))
+        outcome = self._run(_FailsOnPageTwo(), {}, ("Q1", "Q2", "Q3"))
 
         assert not outcome.ok
-        assert outcome.failed_question == "Q2"
-        assert outcome.error is not None
-        assert "render stalled" in outcome.error
-        # Q1 was already graded — that work is not thrown away.
-        assert [r.question for r in outcome.results] == ["Q1"]
+        assert outcome.failures == [
+            workflow.QuestionFailure(question="Q2", error="render stalled"),
+        ]
+        # Q1 and Q3 still got graded, in original order, despite Q2 failing.
+        assert [r.question for r in outcome.results] == ["Q1", "Q3"]
+
+    def test_multiple_failures_are_all_collected(
+        self, _stub_grader: list[str],
+    ) -> None:
+        class _AlwaysFails(_FakeRenderer):
+            def render_pages(
+                self, source: bytes, page_numbers: list[int], dpi: int = 200,
+            ) -> list[bytes]:
+                raise RuntimeError(f"boom {page_numbers}")
+
+        outcome = self._run(_AlwaysFails(), {}, ("Q1", "Q2"))
+
+        assert not outcome.ok
+        assert {f.question for f in outcome.failures} == {"Q1", "Q2"}
+        assert outcome.results == []
+
+    def test_progress_reports_each_completion_then_a_final_call(
+        self, _stub_grader: list[str],
+    ) -> None:
+        seen: list[tuple[int, int, str]] = []
+        lock = threading.Lock()
+
+        def _cb(done: int, total: int, qid: str) -> None:
+            with lock:
+                seen.append((done, total, qid))
+
+        outcome = self._run(_FakeRenderer(), {}, ("Q1", "Q2"), on_progress=_cb)
+
+        assert outcome.ok
+        # Two per-question completions (order not guaranteed under
+        # concurrency) plus one final "fully done" call.
+        assert len(seen) == 3
+        assert seen[-1] == (2, 2, "")
+        per_question = seen[:-1]
+        assert {qid for _, _, qid in per_question} == {"Q1", "Q2"}
+        assert sorted(done for done, _, _ in per_question) == [1, 2]
+        assert all(total == 2 for _, total, _ in per_question)
 
     def test_empty_question_list_is_a_clean_no_op(
         self, _stub_grader: list[str],
     ) -> None:
+        seen: list[tuple[int, int, str]] = []
         outcome = grade_paper(
             config=_FakeConfig(),  # type: ignore[arg-type]
             paper_config=_paper_config(),
@@ -289,6 +339,8 @@ class TestGradePaper:
             assignments={},
             clips={},
             renderer=_FakeRenderer(),
+            on_progress=lambda d, t, q: seen.append((d, t, q)),
         )
         assert outcome.ok
         assert outcome.results == []
+        assert seen == [(0, 0, "")]
