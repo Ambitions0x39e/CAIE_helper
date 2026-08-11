@@ -90,7 +90,7 @@ def main(page: ft.Page) -> None:
     page.padding = 0
     page.window.width = 960
     page.window.height = 700
-    page.bgcolor = theme.SURFACE
+    page.bgcolor = theme.PAGE_BG
     page.adaptive = False
 
     # ── Initialise ──────────────────────────────────────────────────
@@ -158,10 +158,9 @@ def main(page: ft.Page) -> None:
     # A hand-rolled rail rather than ft.NavigationRail: the destinations have
     # to cluster at the top with 设置 pinned to the bottom, and the built-in
     # rail spreads / groups them on its own terms.
-    #: 每个入口是一个圆角正方形：上 2/3 放图标，下 1/3 放文字。
+    #: 每个入口是一个圆角正方形：图标+文字打包成一组，整组在方形里居中——
+    #: 不再分上 2/3/下 1/3 两条带，那样图标和文字各自对齐，组合起来不居中。
     _NAV_BUTTON_SIZE = 64
-    _NAV_ICON_BAND = _NAV_BUTTON_SIZE * 2 / 3
-    _NAV_LABEL_BAND = _NAV_BUTTON_SIZE - _NAV_ICON_BAND
     _NAV_RADIUS = round(_NAV_BUTTON_SIZE * theme.SQUIRCLE_RADIUS_RATIO, 2)
     nav_icons: list[ft.Icon] = []
     nav_labels: list[ft.Text] = []
@@ -174,23 +173,15 @@ def main(page: ft.Page) -> None:
         label_ctl = ft.Text(label, size=12, no_wrap=True)
         button = ft.Container(
             ft.Column(
-                [
-                    ft.Container(
-                        icon_ctl,
-                        height=_NAV_ICON_BAND,
-                        alignment=ft.Alignment.CENTER,
-                    ),
-                    ft.Container(
-                        label_ctl,
-                        height=_NAV_LABEL_BAND,
-                        alignment=ft.Alignment.TOP_CENTER,
-                    ),
-                ],
-                spacing=0,
+                [icon_ctl, label_ctl],
+                spacing=theme.SPACE_XS // 2,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                tight=True,
             ),
             width=_NAV_BUTTON_SIZE,
             height=_NAV_BUTTON_SIZE,
             border_radius=_NAV_RADIUS,
+            alignment=ft.Alignment.CENTER,
             ink=True,
             on_click=lambda _: _switch_tab(idx),
         )
@@ -202,7 +193,9 @@ def main(page: ft.Page) -> None:
     def _apply_nav_selection() -> None:
         for i, button in enumerate(nav_buttons):
             active = i == selected_index
-            button.bgcolor = theme.PRIMARY_TINT if active else None
+            button.bgcolor = theme.SURFACE if active else None
+            button.border = ft.Border.all(1, theme.HAIRLINE) if active else None
+            button.shadow = theme.row_shadow() if active else None
             nav_icons[i].color = theme.PRIMARY if active else theme.MUTED
             nav_labels[i].color = theme.PRIMARY if active else theme.TEXT_PRIMARY
             nav_labels[i].weight = (
@@ -254,7 +247,8 @@ def main(page: ft.Page) -> None:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         padding=ft.Padding(left=20, right=12, top=12, bottom=12),
-        bgcolor=theme.PRIMARY_TINT,
+        bgcolor=theme.PAGE_BG,
+        border=ft.Border(bottom=ft.BorderSide(1, theme.HAIRLINE)),
     )
 
     # ── Layout ──────────────────────────────────────────────────────

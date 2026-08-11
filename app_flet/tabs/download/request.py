@@ -27,8 +27,9 @@ if TYPE_CHECKING:
 # 子行缩进：让分支图标挂在 QP 名字左下角
 _TREE_INDENT = 34
 _LEAF_ICON_SIZE = 14
-# 行高写死，把 Material 勾选框那圈 48px 点击热区留下的空档压掉，
-# 让 MS 子行贴到它的 QP 底下（配合 Checkbox 的 COMPACT 密度）。
+# 行高写死，把 Material 勾选框那圈 48px 点击热区留下的空档压掉（配合 Checkbox
+# 的 COMPACT 密度），让 MS 子行能贴在它的 QP 底下——QP+MS 打包进同一个
+# spacing=0 的内层 Column，跟其他内容之间的间距则由外层 Column 的 SPACE_SM 控制。
 # 再往下压就会开始切字：14pt 的行盒约 19px，13pt 约 17px。
 _ROW_H = 24
 _LEAF_ROW_H = 16
@@ -271,16 +272,19 @@ def build_request_tab(
                 ft.Divider(height=9),
             ]
             # QP 打头、对应 MS 作 ╰─ 子行挂在下面；MS 不单独占行、不占选择列，
-            # 因为 download() 本来就是 QP+MS 一起下。
+            # 因为 download() 本来就是 QP+MS 一起下。QP+MS 各自打包成一个内层
+            # Column（spacing=0，贴紧成一个整体）；这些整体之间、以及整体和上面
+            # 表头之间走外层 Column 的 SPACE_SM，跟其他内容的间距一致。
             for entry in groups[digit]:
                 ms_id = entry.paper_id.replace("_qp_", "_ms_")
-                col.append(_selectable_row(entry))
+                unit: list[ft.Control] = [_selectable_row(entry)]
                 if ms_id in available:
                     nested_ms.add(ms_id)
-                    col.append(_leaf(ms_id))
+                    unit.append(_leaf(ms_id))
                 else:
-                    col.append(_leaf("（没有对应 MS）"))
-            columns.append(ft.Column(col, spacing=0, expand=True))
+                    unit.append(_leaf("（没有对应 MS）"))
+                col.append(ft.Column(unit, spacing=0))
+            columns.append(ft.Column(col, spacing=theme.SPACE_SM, expand=True))
 
         if columns:
             result_list.controls.append(
@@ -437,14 +441,28 @@ def build_request_tab(
     return ft.Container(
         ft.Column(
             [
-                picker.row(),
-                ft.Container(height=12),
-                ft.Row(
-                    [send_btn, progress_ring],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Container(height=8),
+                ft.Row([
+                    ft.Container(
+                        ft.Column(
+                            [
+                                picker.row(),
+                                ft.Container(height=12),
+                                ft.Row(
+                                    [send_btn, progress_ring],
+                                    spacing=12,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                            ],
+                            spacing=4,
+                        ),
+                        expand=True,
+                        padding=theme.SPACE_MD,
+                        bgcolor=theme.SURFACE,
+                        border_radius=theme.CARD_RADIUS,
+                        border=ft.Border.all(1, theme.HAIRLINE),
+                        shadow=theme.card_shadow(),
+                    )
+                ]),
                 status_text,
                 # 批量下载栏放列表上面：列表可能很长，按钮别被顶到看不见的地方。
                 batch_bar,
@@ -455,5 +473,5 @@ def build_request_tab(
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         ),
-        padding=20,
+        padding=theme.SPACE_XL // 2,
     )

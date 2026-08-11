@@ -1,13 +1,18 @@
 """Settings tab — entry list that drills down into sub-pages.
 
 Settings-app-style menu: tapping "SMTP / GoodNotes", "Grader API" or "关于"
-pushes a full ``ft.View`` onto ``page.views``, which gives a native
-slide-in transition and AppBar back button on every platform (including
-iOS edge-swipe-back).
+swaps the tab's own content for the sub-page, with a back arrow + title row
+(``_sub_header``) standing in for a real AppBar. This used to push a full
+``ft.View`` onto ``page.views`` instead — that gave a native slide-in
+transition and AppBar back button (including iOS edge-swipe-back), but a
+pushed ``ft.View`` replaces the *entire* window, so the left-hand nav_rail
+and header from main.py disappeared behind it too. Embedding keeps the tab
+inside ``content_area`` like every other tab, at the cost of that native
+transition/gesture.
 
 Each sub-page loads its own config fresh on open and saves independently,
-so no global routing is involved: we push/pop ``page.views`` directly and
-never call ``page.go`` or touch ``on_route_change`` / ``on_view_pop``.
+so no global routing is involved here — no ``page.views``, ``page.go``,
+``on_route_change`` or ``on_view_pop``.
 
 Within a sub-page every setting is one row — label flush left, its control
 flush right, hairline between rows — collapsing to a stacked layout below
@@ -65,10 +70,15 @@ _HAIRLINE = theme.HAIRLINE
 # phones and iPad as well as desktop, so the side-by-side form is a
 # wide-window affordance, not the only layout.
 _NARROW_WIDTH = 560
+#: main.py's nav_rail (84px) + its 1px VerticalDivider — this tab now renders
+#: inside content_area, to the right of both, so page.width overstates the
+#: room actually available here by that much (same gap analytics.py's chart
+#: width had to account for).
+_NAV_CHROME_W = 85
 
 
 def _is_narrow(page: ft.Page) -> bool:
-    return (page.width or 1024) < _NARROW_WIDTH
+    return (page.width or 1024) - _NAV_CHROME_W < _NARROW_WIDTH
 
 
 def _tf(
@@ -166,22 +176,25 @@ def _actions(*controls: ft.Control) -> ft.Control:
     )
 
 
-def _push(page: ft.Page, view: ft.View) -> None:
-    page.views.append(view)
-    page.update()
-
-
-def _pop(page: ft.Page) -> None:
-    if len(page.views) > 1:
-        page.views.pop()
-        page.update()
+def _sub_header(title: str, on_back: Callable[[], None]) -> ft.Row:
+    """Stands in for the AppBar a pushed ``ft.View`` used to give us for
+    free: back arrow + bold title, same visual weight."""
+    return ft.Row(
+        [
+            ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda e: on_back()),
+            ft.Text(title, size=20, weight=ft.FontWeight.BOLD),
+        ],
+        spacing=4,
+    )
 
 
 # --------------------------------------------------------------------------
 # Sub-page: SMTP / GoodNotes
 # --------------------------------------------------------------------------
 
-def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
+def _build_mail_view(
+    page: ft.Page, state: AppState, on_back: Callable[[], None],
+) -> ft.Column:
     saved_mail = MailConfig.try_load()
     narrow = _is_narrow(page)
 
@@ -243,56 +256,43 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
         status_text.color = theme.SUCCESS
         page.update()
 
-    return ft.View(
-        route="/settings/mail",
-        appbar=ft.AppBar(
-            title=ft.Text("SMTP / GoodNotes"),
-            leading=ft.IconButton(
-                ft.Icons.ARROW_BACK, on_click=lambda e: _pop(page),
-            ),
-        ),
-        controls=[
-            ft.Container(
-                ft.Column(
-                    [
-                        _section("邮件服务器"),
-                        *_divided(
-                            _row("SMTP Server", smtp_server, narrow=narrow),
-                            _row("SMTP Port", smtp_port, narrow=narrow),
-                            _row("Sender Email", sender_email, narrow=narrow),
-                            _row(
-                                "App Password", sender_password,
-                                description=(
-                                    "邮箱服务商生成的 IMAP/SMTP 专用密码，"
-                                    "非邮箱密码"
-                                ),
-                                narrow=narrow,
-                            ),
-                        ),
-                        _section("GoodNotes"),
-                        *_divided(
-                            _row(
-                                "Import Email", goodnotes_email,
-                                description="试卷会发送到这个邮箱对应账户",
-                                narrow=narrow,
-                            ),
-                        ),
-                        _actions(
-                            status_text,
-                            ft.Button(
-                                "保存",
-                                icon=ft.Icons.SAVE,
-                                on_click=on_save,  # type: ignore[arg-type]
-                                style=theme.filled_button(),
-                            ),
-                        ),
-                    ],
-                    spacing=0,
-                    scroll=ft.ScrollMode.AUTO,
+    return ft.Column(
+        [
+            _sub_header("SMTP / GoodNotes", on_back),
+            _section("邮件服务器"),
+            *_divided(
+                _row("SMTP Server", smtp_server, narrow=narrow),
+                _row("SMTP Port", smtp_port, narrow=narrow),
+                _row("Sender Email", sender_email, narrow=narrow),
+                _row(
+                    "App Password", sender_password,
+                    description=(
+                        "邮箱服务商生成的 IMAP/SMTP 专用密码，"
+                        "非邮箱密码"
+                    ),
+                    narrow=narrow,
                 ),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=24),
+            ),
+            _section("GoodNotes"),
+            *_divided(
+                _row(
+                    "Import Email", goodnotes_email,
+                    description="试卷会发送到这个邮箱对应账户",
+                    narrow=narrow,
+                ),
+            ),
+            _actions(
+                status_text,
+                ft.Button(
+                    "保存",
+                    icon=ft.Icons.SAVE,
+                    on_click=on_save,  # type: ignore[arg-type]
+                    style=theme.filled_button(),
+                ),
             ),
         ],
+        spacing=0,
+        scroll=ft.ScrollMode.AUTO,
     )
 
 
@@ -300,7 +300,9 @@ def _build_mail_view(page: ft.Page, state: AppState) -> ft.View:
 # Sub-page: Grader API
 # --------------------------------------------------------------------------
 
-def _build_grader_view(page: ft.Page, state: AppState) -> ft.View:
+def _build_grader_view(
+    page: ft.Page, state: AppState, on_back: Callable[[], None],
+) -> ft.Column:
     saved_grader = GraderConfig.try_load()
     narrow = _is_narrow(page)
 
@@ -344,55 +346,44 @@ def _build_grader_view(page: ft.Page, state: AppState) -> ft.View:
         status_text.color = theme.SUCCESS
         page.update()
 
-    return ft.View(
-        route="/settings/grader",
-        appbar=ft.AppBar(
-            title=ft.Text("Grader API 设置"),
-            leading=ft.IconButton(
-                ft.Icons.ARROW_BACK, on_click=lambda e: _pop(page),
-            ),
-        ),
-        controls=[
-            ft.Container(
-                ft.Column(
-                    [
-                        _section("模型凭证"),
-                        *_divided(
-                            _row(
-                                "API Key", grader_api_key,
-                                # description="",
-                                narrow=narrow,
-                            ),
-                            _row("Base URL", grader_base_url, narrow=narrow),
-                            _row(
-                                "Model", grader_model,
-                                description="需支持图片输入的视觉/多模态模型",
-                                narrow=narrow,
-                            ),
-                        ),
-                        _actions(
-                            status_text,
-                            ft.Button(
-                                "保存",
-                                icon=ft.Icons.SAVE,
-                                on_click=on_save,  # type: ignore[arg-type]
-                                style=theme.filled_button(),
-                            ),
-                        ),
-                    ],
-                    spacing=0,
-                    scroll=ft.ScrollMode.AUTO,
+    return ft.Column(
+        [
+            _sub_header("Grader API 设置", on_back),
+            _section("模型凭证"),
+            *_divided(
+                _row(
+                    "API Key", grader_api_key,
+                    # description="",
+                    narrow=narrow,
                 ),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=24),
+                _row("Base URL", grader_base_url, narrow=narrow),
+                _row(
+                    "Model", grader_model,
+                    description="需支持图片输入的视觉/多模态模型",
+                    narrow=narrow,
+                ),
+            ),
+            _actions(
+                status_text,
+                ft.Button(
+                    "保存",
+                    icon=ft.Icons.SAVE,
+                    on_click=on_save,  # type: ignore[arg-type]
+                    style=theme.filled_button(),
+                ),
             ),
         ],
+        spacing=0,
+        scroll=ft.ScrollMode.AUTO,
     )
 
 # --------------------------------------------------------------------------
 # Sub-page: About & Feedback
 # --------------------------------------------------------------------------
 
-def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
+def _build_about_view(
+    page: ft.Page, state: AppState, on_back: Callable[[], None],
+) -> ft.Column:
     version = _app_version()
     icon_bytes = _app_icon_bytes()
     icon_control: ft.Control = (
@@ -612,55 +603,42 @@ def _build_about_view(page: ft.Page, state: AppState) -> ft.View:
         ft.Icons.SYSTEM_UPDATE_OUTLINED, on_update,
     )
 
-    return ft.View(
-        route="/settings/about",
-        appbar=ft.AppBar(
-            title=ft.Text("关于"),
-            leading=ft.IconButton(
-                ft.Icons.ARROW_BACK, on_click=lambda e: _pop(page),
-            ),
-        ),
-        controls=[
+    return ft.Column(
+        [
+            _sub_header("关于", on_back),
+            # Identity block stays centred; the rows below follow
+            # the same left/right rhythm as the other sub-pages, so
+            # the column must STRETCH rather than centre them.
+            ft.Container(height=24),
             ft.Container(
-                ft.Column(
-                    [
-                        # Identity block stays centred; the rows below follow
-                        # the same left/right rhythm as the other sub-pages, so
-                        # the column must STRETCH rather than centre them.
-                        ft.Container(height=24),
-                        ft.Container(
-                            icon_control, alignment=ft.Alignment.CENTER,
-                        ),
-                        ft.Container(height=14),
-                        ft.Text(
-                            _APP_NAME,
-                            size=20,
-                            weight=ft.FontWeight.BOLD,
-                            text_align=ft.TextAlign.CENTER,
-                        ),
-                        ft.Text(
-                            f"Version {version}" if version else "",
-                            size=13,
-                            color=theme.MUTED,
-                            text_align=ft.TextAlign.CENTER,
-                        ),
-                        ft.Container(height=20),
-                        ft.Divider(height=1, thickness=1, color=_HAIRLINE),
-                        *_divided(
-                            update_row,
-                            _menu_row(
-                                "反馈", "在 GitHub 提交问题或建议",
-                                ft.Icons.FEEDBACK_OUTLINED, open_feedback,
-                            ),
-                        ),
-                    ],
-                    spacing=0,
-                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                    scroll=ft.ScrollMode.AUTO,
+                icon_control, alignment=ft.Alignment.CENTER,
+            ),
+            ft.Container(height=14),
+            ft.Text(
+                _APP_NAME,
+                size=20,
+                weight=ft.FontWeight.BOLD,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            ft.Text(
+                f"Version {version}" if version else "",
+                size=13,
+                color=theme.MUTED,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            ft.Container(height=20),
+            ft.Divider(height=1, thickness=1, color=_HAIRLINE),
+            *_divided(
+                update_row,
+                _menu_row(
+                    "反馈", "在 GitHub 提交问题或建议",
+                    ft.Icons.FEEDBACK_OUTLINED, open_feedback,
                 ),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=24),
             ),
         ],
+        spacing=0,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        scroll=ft.ScrollMode.AUTO,
     )
 
 
@@ -702,18 +680,35 @@ def _menu_row(
 
 
 def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
+    # Swappable slot: menu vs. whichever sub-page is open, so this tab stays
+    # embedded in content_area (nav_rail visible) instead of pushing a
+    # separate ft.View that would cover the whole window — see module
+    # docstring.
+    content = ft.Column(expand=True)
+
+    def show_menu() -> None:
+        content.controls.clear()
+        content.controls.append(menu)
+        page.update()
+
     # Typed as the Container event rather than the looser ft.ControlEvent so
     # the handlers match Container.on_click exactly and need no type: ignore.
     def open_mail(_: ft.Event[ft.Container]) -> None:
-        _push(page, _build_mail_view(page, state))
+        content.controls.clear()
+        content.controls.append(_build_mail_view(page, state, show_menu))
+        page.update()
 
     def open_grader(_: ft.Event[ft.Container]) -> None:
-        _push(page, _build_grader_view(page, state))
+        content.controls.clear()
+        content.controls.append(_build_grader_view(page, state, show_menu))
+        page.update()
 
     def open_about(_: ft.Event[ft.Container]) -> None:
-        _push(page, _build_about_view(page, state))
+        content.controls.clear()
+        content.controls.append(_build_about_view(page, state, show_menu))
+        page.update()
 
-    body = ft.Column(
+    menu = ft.Column(
         [
             ft.Text(
                 "设置", size=24,
@@ -742,7 +737,11 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
         spacing=0,
         scroll=ft.ScrollMode.AUTO,
     )
+    content.controls.append(menu)
 
     # 20 on all four sides, same as every other tab — horizontal used to be
-    # 24, which pushed this page's title 4px right of the others'.
-    return ft.Container(body, padding=20)
+    # 24, which pushed this page's title 4px right of the others'. No
+    # explicit bgcolor: this Container (and every sub-page's) inherits
+    # content_area's — i.e. page.bgcolor — same as the rest of the app,
+    # instead of whatever default a pushed ft.View used to render with.
+    return ft.Container(content, padding=20)

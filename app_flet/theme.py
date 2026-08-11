@@ -19,8 +19,9 @@ from __future__ import annotations
 import flet as ft
 
 # ── 语义色 ────────────────────────────────────────────────────────
-#: 主操作：下载、查询、批量下载、确认
-PRIMARY = ft.Colors.BLUE
+#: 主操作：下载、查询、批量下载、确认。Tailwind slate-700——冷灰蓝，不用
+#: Material 的鲜蓝，跟卡片/边框那套克制的中性色调性一致。
+PRIMARY = "#334155"
 #: 成功：完成、已通过、正向指标
 SUCCESS = ft.Colors.GREEN
 #: 危险 / 失败：删除、报错
@@ -35,11 +36,11 @@ NEUTRAL = ft.Colors.GREY_600
 ON_FILLED = ft.Colors.WHITE
 
 # ── 中性色 ────────────────────────────────────────────────────────
-#: 页面底色
-SURFACE = ft.Colors.WHITE
-#: 窗口/页面背景（浅灰白）。卡片仍然用 SURFACE——纯白卡片放在纯白页面上，
-#: 阴影会被背景吃掉看不见，页面单独深一档才能让卡片显得"浮起来"。
-PAGE_BG = "#F5F5F6"
+#: 卡片/面板（"白色圆角矩形"）底色。不是纯白——微降一点点，配边框+柔和阴影用。
+SURFACE = "#FDFDFC"
+#: 窗口/页面背景，RGB 每个通道都比 SURFACE 深 3——用户在试这个量级下卡片是否
+#: 更容易被"看出来"，而不必靠边框+阴影单独扛对比。
+PAGE_BG = "#F9F9F8"
 #: 正文文字。主题（main.py 的 text_theme / on_surface）已经把它设成默认色，
 #: 所以控件上**不要**再写一遍 —— 只有主题够不着的地方才需要，见
 #: field_label_style()。这里留一个名字，是为了主题定义自身也走同一个源头。
@@ -54,7 +55,8 @@ HAIRLINE_FAINT = ft.Colors.GREY_100
 FIELD_BORDER = ft.Colors.GREY_400
 
 # ── 浅底色（横幅 / 表头）──────────────────────────────────────────
-PRIMARY_TINT = ft.Colors.BLUE_50
+#: Tailwind slate-50——跟新 PRIMARY 同一个色系的最浅档，不再是 Material BLUE_50。
+PRIMARY_TINT = "#F8FAFC"
 DANGER_TINT = ft.Colors.RED_50
 SUCCESS_TINT = ft.Colors.GREEN_50
 ACCENT_TINT = ft.Colors.AMBER_100
@@ -141,8 +143,9 @@ def field_label_style() -> ft.TextStyle:
 
 
 def card_shadow() -> ft.BoxShadow:
-    """卡片档柔和阴影（metric_card 尺寸）。无描边——靠阴影和 PAGE_BG 的对比让
-    卡片显得"浮起来"，不再画 1px 描边。
+    """卡片档阴影（metric_card 尺寸），配边框一起用——不透明度是原先阴影方案的
+    一半（12% → 6%），边框已经画出轮廓，阴影只用来补一点厚度感，不用扛全部
+    "浮起来"的视觉重量。
 
     每次返回新对象，理由同 field_label_style()：控件会持有并可能改写自己的
     样式，共享同一个实例会串味。
@@ -150,18 +153,18 @@ def card_shadow() -> ft.BoxShadow:
     return ft.BoxShadow(
         blur_radius=16,
         spread_radius=-2,
-        color=ft.Colors.with_opacity(0.12, ft.Colors.BLACK),
+        color=ft.Colors.with_opacity(0.06, ft.Colors.BLACK),
         offset=ft.Offset(0, 4),
     )
 
 
 def row_shadow() -> ft.BoxShadow:
-    """行档柔和阴影（列表行尺寸），比 card_shadow() 更轻。每次返回新对象，
-    理由同上。
+    """行档阴影（列表行尺寸），比 card_shadow() 更轻。不透明度同样减半
+    （10% → 5%）。每次返回新对象，理由同上。
     """
     return ft.BoxShadow(
         blur_radius=14,
         spread_radius=-3,
-        color=ft.Colors.with_opacity(0.10, ft.Colors.BLACK),
+        color=ft.Colors.with_opacity(0.05, ft.Colors.BLACK),
         offset=ft.Offset(0, 2),
     )
