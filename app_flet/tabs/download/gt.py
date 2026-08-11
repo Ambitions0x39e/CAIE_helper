@@ -152,7 +152,13 @@ def build_by_gt_tab(
         except ValueError:
             downloaded = set()
 
-        grades = sorted({g for o in doc.options for g in o.thresholds})
+        # 普通字符串排序会把 "A" 排在 "A*" 前面（"A" 是 "A*" 的前缀，更短的先来）；
+        # CIE 成绩里 A* 是最高档，惯例排在 A 前面。按去掉 "*" 的字母分组，同组内带
+        # "*" 的排前面，其余字母（B/C/D/E/U…）本来字母序就是成绩从高到低，不用动。
+        grades = sorted(
+            {g for o in doc.options for g in o.thresholds},
+            key=lambda g: (g.rstrip("*"), "*" not in g),
+        )
         prefix = f"{doc.syllabus_id}_{doc.session}_qp_"
 
         data_rows: list[ft.DataRow] = []
@@ -289,25 +295,40 @@ def build_by_gt_tab(
     return ft.Container(
         ft.Column(
             [
-                ft.Text(
-                    "选择考季，下载并解析这一场的分数线。",
-                    size=13, color=theme.MUTED,
-                ),
-                picker.row(),
-                ft.Container(height=4),
-                ft.Row(
-                    [
-                        ft.Button(
-                            "查询分数线",
-                            icon=ft.Icons.DOWNLOAD,
-                            style=theme.filled_button(),
-                            on_click=on_download,  # type: ignore[arg-type]
+                ft.Row([
+                    ft.Container(
+                        ft.Column(
+                            [
+                                ft.Text(
+                                    "选择考季，下载并解析这一场的分数线。",
+                                    size=13, color=theme.MUTED,
+                                ),
+                                picker.row(),
+                                ft.Container(height=4),
+                                ft.Row(
+                                    [
+                                        ft.Button(
+                                            "查询分数线",
+                                            icon=ft.Icons.DOWNLOAD,
+                                            style=theme.filled_button(),
+                                            on_click=on_download,  # type: ignore[arg-type]
+                                        ),
+                                        progress_ring,
+                                    ],
+                                    spacing=12,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                            ],
+                            spacing=12,
                         ),
-                        progress_ring,
-                    ],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
+                        expand=True,
+                        padding=theme.SPACE_MD,
+                        bgcolor=theme.SURFACE,
+                        border_radius=theme.CARD_RADIUS,
+                        border=ft.Border.all(1, theme.HAIRLINE),
+                        shadow=theme.card_shadow(),
+                    )
+                ]),
                 status_text,
                 batch_bar,
                 error_area,
@@ -317,7 +338,7 @@ def build_by_gt_tab(
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         ),
-        padding=20,
+        padding=theme.SPACE_XL // 2,
     )
 
 

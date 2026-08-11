@@ -21,10 +21,17 @@ _CHART_LEFT_PAD = 40
 _CHART_RIGHT_PAD = 20
 _CHART_TOP_PAD = 10
 _CHART_BOTTOM_PAD = 30
-_ACCENT_COLOR = "#1976D2"
+
+#: main.py's nav_rail (_NAV_BUTTON_SIZE 64 + 20 padding = 84) plus the 1px
+#: VerticalDivider beside it — page.width is the *whole window*, not the
+#: slice handed to content_area, so this has to come off before any width
+#: math here. Missing this made the chart width assume ~85px more room than
+#: content_area actually has, overflowing the right edge by ~9-10%.
+_NAV_CHROME_W = 85
 
 # Flexible chart/table layout. The tab has 20px padding each side and each
-# syllabus panel adds 16px each side → usable inner width ≈ page.width - 72.
+# syllabus panel adds 16px each side → usable inner width ≈
+# (page.width - _NAV_CHROME_W) - 72.
 _INNER_PADDING = 72
 # Side-by-side (table left, chart right) needs the table (~520px with
 # column_spacing=28) plus a chart of at least _CHART_MIN_WIDTH; below this
@@ -113,7 +120,7 @@ def _trend_chart(
         points=[ft.Offset(x, y) for x, y in coords],
         point_mode=cv.PointMode.POLYGON,
         paint=ft.Paint(
-            color=_ACCENT_COLOR,
+            color=theme.PRIMARY,
             stroke_width=2,
             style=ft.PaintingStyle.STROKE,
         ),
@@ -123,7 +130,7 @@ def _trend_chart(
     shapes.extend(
         cv.Circle(
             x, y, 4,
-            paint=ft.Paint(color=_ACCENT_COLOR, style=ft.PaintingStyle.FILL),
+            paint=ft.Paint(color=theme.PRIMARY, style=ft.PaintingStyle.FILL),
         )
         for x, y in coords
     )
@@ -251,7 +258,7 @@ def _build_syllabus_section(
         # right; otherwise → chart full-width on top, table below. Both
         # variants sit in horizontal scrollers so an estimate mismatch
         # scrolls instead of throwing a RenderFlex overflow.
-        page_w = int(page.width or 390)
+        page_w = int(page.width or 390) - _NAV_CHROME_W
         avail = page_w - _INNER_PADDING
         if page_w >= _SIDE_BY_SIDE_MIN_PAGE_W:
             chart_w = max(

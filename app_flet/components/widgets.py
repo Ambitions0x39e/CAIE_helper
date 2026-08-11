@@ -34,6 +34,7 @@ def data_table(
             show_checkbox_column=show_checkbox_column,
             on_select_all=on_select_all,
             expand=True,
+            border=ft.Border.all(1, theme.HAIRLINE),
             border_radius=theme.CARD_RADIUS,
             heading_row_color=theme.PRIMARY_TINT,
         )
@@ -60,7 +61,9 @@ def metric_card(label: str, value: str, color: str) -> ft.Container:
             spacing=theme.SPACE_XS,
         ),
         width=132,
+        bgcolor=theme.SURFACE,
         border_radius=theme.CARD_RADIUS,
+        border=ft.Border.all(1, theme.HAIRLINE),
         shadow=theme.card_shadow(),
         padding=theme.SPACE_MD,
         alignment=ft.Alignment(0, 0),
@@ -97,6 +100,7 @@ def success_banner(message: str, details: list[str] | None = None) -> ft.Contain
         content=ft.Column(controls),
         bgcolor=theme.SUCCESS_TINT,
         border_radius=theme.CARD_RADIUS,
+        border=ft.Border.all(1, theme.HAIRLINE),
         shadow=theme.row_shadow(),
         padding=theme.SPACE_LG,
     )
@@ -110,6 +114,7 @@ def error_banner(message: str) -> ft.Container:
         ]),
         bgcolor=theme.DANGER_TINT,
         border_radius=theme.CARD_RADIUS,
+        border=ft.Border.all(1, theme.HAIRLINE),
         shadow=theme.row_shadow(),
         padding=theme.SPACE_LG,
     )
@@ -128,6 +133,7 @@ def warning_banner(message: str, details: list[str] | None = None) -> ft.Contain
         content=ft.Column(controls),
         bgcolor=theme.WARNING_TINT,
         border_radius=theme.CARD_RADIUS,
+        border=ft.Border.all(1, theme.HAIRLINE),
         shadow=theme.row_shadow(),
         padding=theme.SPACE_LG,
     )

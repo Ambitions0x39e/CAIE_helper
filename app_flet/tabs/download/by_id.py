@@ -183,26 +183,40 @@ def build_by_id_tab(
     return ft.Container(
         ft.Column(
             [
-                ft.Row([paper_id_field], spacing=12),
-                ft.Row(
-                    [
-                        ft.Text("来源:", size=14),
-                        source_selector,
-                    ],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Container(height=8),
-                ft.Row(
-                    [download_btn, record_btn, progress_ring],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Container(height=12),
+                ft.Row([
+                    ft.Container(
+                        ft.Column(
+                            [
+                                ft.Row([paper_id_field], spacing=12),
+                                ft.Row(
+                                    [
+                                        ft.Text("来源:", size=14),
+                                        source_selector,
+                                    ],
+                                    spacing=12,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.Container(height=8),
+                                ft.Row(
+                                    [download_btn, record_btn, progress_ring],
+                                    spacing=12,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                            ],
+                            spacing=4,
+                        ),
+                        expand=True,
+                        padding=theme.SPACE_MD,
+                        bgcolor=theme.SURFACE,
+                        border_radius=theme.CARD_RADIUS,
+                        border=ft.Border.all(1, theme.HAIRLINE),
+                        shadow=theme.card_shadow(),
+                    )
+                ]),
                 result_area,
                 gn_section,
             ],
             spacing=4,
         ),
-        padding=20,
+        padding=theme.SPACE_XL // 2,
     )
