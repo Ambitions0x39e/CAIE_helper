@@ -299,10 +299,10 @@ def build_by_gt_tab(
                     ft.Container(
                         ft.Column(
                             [
-                                ft.Text(
-                                    "选择考季，下载并解析这一场的分数线。",
-                                    size=13, color=theme.MUTED,
-                                ),
+                                # ft.Text(
+                                #     "选择考季，下载并解析这一场的分数线。",
+                                #     size=13, color=theme.MUTED,
+                                # ),
                                 picker.row(),
                                 ft.Container(height=4),
                                 ft.Row(
