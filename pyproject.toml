@@ -3,7 +3,16 @@ name = "cie-helper"
 version = "1.3.0"
 description = "CIE/AP past paper automation and tracker"
 readme = "README.md"
-requires-python = ">=3.13"
+# The upper bound is what pins the BUNDLED CPython, not just the dev env.
+# `flet build` resolves the Python it packages from this specifier and takes
+# the HIGHEST supported version that satisfies it (flet_cli/utils/
+# python_versions.py::resolve_python_version). Bare ">=3.13" therefore
+# shipped 3.14 while the dev venv stayed on 3.13 — tested on one, shipped the
+# other. "<3.14" makes 3.13 the only match, on every machine, with no CLI flag
+# to remember. Moving to 3.14 later means changing this line (to
+# ">=3.14,<3.15" — keep an upper bound or 3.15 will silently take over the
+# moment flet supports it) and re-running the suite on 3.14.
+requires-python = ">=3.13,<3.14"
 
 dependencies = [
     # Runtime deps packaged for iOS — keep this list pure Python / iOS-wheel-safe.
@@ -39,13 +48,22 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "openai>=1.30.0",
     "pyyaml>=6.0",
-    "pypdf>=6.14.2",
-    # In-process PDF rasterizer for grading — avoids shipping the answer PDF
-    # over the Python↔Dart RPC, which hangs on large/scanned pages. Same
-    # PDFium engine as the native pdfrx renderer. Desktop only: no iOS wheel
-    # (the marker keeps `flet build ipa` working; iOS falls back to pdfrx).
-    "pypdfium2>=4.30 ; sys_platform != 'ios'",
-    "pillow>=10.0 ; sys_platform != 'ios'",
+    # 2026-08-12: pypdfium2, pillow and pypdf all dropped together. They existed
+    # only to work around the render RPC: the service took the PDF's *bytes*, so
+    # a 35MB scan stalled the transport, and the fix was an in-process pypdfium2
+    # rasterizer (+ pillow to crop/encode) with pypdf shrinking the payload to
+    # the touched pages. The service now takes a **path** — Python and Dart share
+    # a process, so the payload is constant-size and the workaround is moot.
+    #
+    # Removing them is what makes `flet build macos` produce a genuinely
+    # universal app. serious_python lipo-merges the two per-arch site-packages
+    # trees for `*.so` but NOT `*.dylib`, so every .dylib was silently left
+    # arm64-only: pypdfium2_raw/libpdfium.dylib plus pillow's 18 vendored
+    # PIL/.dylibs/*. Those 19 files were the only non-fat binaries in the whole
+    # bundle — everything else (pandas, numpy, pydantic-core, the app binary,
+    # Python.framework) was already x86_64+arm64. They were also a second,
+    # redundant copy of PDFium: pdfrx already ships a universal one in
+    # Contents/Frameworks/PDFium.framework.
 ]
 
 [project.optional-dependencies]

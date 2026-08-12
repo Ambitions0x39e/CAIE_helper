@@ -29,15 +29,21 @@ class PdfRenderer(ft.Service):
 
     async def render_regions(
         self,
-        pdf: bytes,
+        pdf_path: str,
         clips: list[RenderClip],
         dpi: int = 200,
     ) -> list[bytes]:
-        """Render each clip to a PNG. Returns one PNG (bytes) per clip."""
+        """Render each clip to a PNG. Returns one PNG (bytes) per clip.
+
+        *pdf_path* is a filesystem path, **not** the PDF's contents: Python and
+        Dart share a process, so the native side opens the file directly. The
+        earlier bytes-based signature stalled the RPC transport on large
+        answer exports (a 35MB scan hung with no result).
+        """
         result = await self._invoke_method(
             "render_regions",
             {
-                "pdf": pdf,
+                "pdf_path": pdf_path,
                 "clips": [
                     {"page": c.page, "y_top": c.y_top, "y_bottom": c.y_bottom}
                     for c in clips

@@ -10,7 +10,7 @@ from app_flet import theme
 from app_flet.tabs.mark.context import MarkTabContext
 from core.models import PaperType
 from core.settings import GraderConfig
-from modules.marking.renderer import NativeRenderer, to_pdf_bytes
+from modules.marking.renderer import NativeRenderer
 from modules.marking.workflow import collect_page_assignments, grade_paper
 
 _log = logging.getLogger("cie_helper.mark")
@@ -209,7 +209,9 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
                 config=grade_cfg,
                 paper_config=pc,
                 paper_type=PaperType(state.paper_type or "math"),
-                pdf_bytes=to_pdf_bytes(state.answer_pdf_path),  # type: ignore[arg-type]
+                # The path, not the bytes: the native renderer opens the file
+                # itself, so a 35MB scan never crosses the Python↔Dart RPC.
+                pdf_source=state.answer_pdf_path,  # type: ignore[arg-type]
                 question_ids=questions_to_grade,
                 assignments=assignments,
                 clips=state.auto_clips,
