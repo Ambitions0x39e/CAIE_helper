@@ -124,6 +124,29 @@ def on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
 
 
+# Faking sys.platform sends the code down the Windows branch, but that branch
+# needs things Windows *has*, not just claims to be: subprocess.CREATE_NO_WINDOW
+# / CREATE_NEW_PROCESS_GROUP (AttributeError elsewhere) and the `mbcs` codec the
+# relaunch script is written with (LookupError elsewhere — it is an alias for
+# the Windows ANSI codepage). So the tests that reach install()'s spawn path
+# can only run on Windows; off it they error on the platform itself, never
+# reaching what they mean to assert.
+#
+# Deliberately NOT on the `on_windows` fixture: 25 tests use it and only these
+# six get that far — the rest are check() tests, or install() calls that return
+# during validation, and they run fine everywhere.
+#
+# Deliberately not made portable either. `getattr(subprocess, "CREATE_NO_WINDOW",
+# 0)` would let the module import, but then the creationflags assertion below
+# degrades to `0 == 0` — a test that passes without testing anything. And
+# swapping `mbcs` for a portable encoding would change real Windows behaviour:
+# cmd.exe needs the .cmd file in the ANSI codepage.
+requires_windows = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="reaches the Windows-only spawn path (CREATE_NO_WINDOW / mbcs codec)",
+)
+
+
 @pytest.fixture
 def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail loudly if a test reaches the network instead of a fake."""
@@ -764,6 +787,7 @@ def _installer(tmp_path: Path, name: str) -> Path:
     return path
 
 
+@requires_windows
 def test_install_runs_inno_setup_silently_on_windows(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
     updates_dir: Path,
@@ -783,6 +807,7 @@ def test_install_runs_inno_setup_silently_on_windows(
     ]
 
 
+@requires_windows
 def test_install_chains_installer_then_relaunch_in_a_detached_cmd(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
     updates_dir: Path,
@@ -825,6 +850,7 @@ def test_install_chains_installer_then_relaunch_in_a_detached_cmd(
     )
 
 
+@requires_windows
 def test_install_still_installs_when_the_relaunch_script_cannot_be_written(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
     updates_dir: Path,
@@ -853,6 +879,7 @@ def test_current_executable_is_none_when_running_from_source() -> None:
     assert updater_mod.current_executable() is None
 
 
+@requires_windows
 def test_install_detaches_the_windows_installer_from_this_process(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
     updates_dir: Path,
@@ -945,6 +972,7 @@ def test_install_reports_a_missing_installer_file(
     assert calls == []
 
 
+@requires_windows
 def test_install_reports_os_error_from_spawn(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
 ) -> None:
@@ -966,6 +994,7 @@ def test_install_reports_os_error_from_spawn(
 # ---------------------------------------------------------------------------
 
 
+@requires_windows
 def test_check_download_install_round_trip_never_raises(
     monkeypatch: pytest.MonkeyPatch,
     on_windows: None,
