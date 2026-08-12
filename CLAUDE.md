@@ -32,17 +32,42 @@ uv run pytest
 The distributable app is built with `flet build <platform>` (`windows`, `macos`, `ipa`, `ios-simulator`, …). Two hard-won gotchas — see memory `reference_flet_build_windows.md` and `reference_flet_build_size.md`:
 
 ```bash
-# --python-version is the ONLY way to control the bundled CPython (0.86+).
-# Without it you get the serious_python default (3.14), not this project's 3.13.
+# The bundled CPython comes from `requires-python`, NOT from a CLI flag — see
+# the note below. No --python-version needed; passing one only overrides it.
 # Windows (Chinese/GBK console): force UTF-8 or rich crashes on emoji output.
 # CL=-utf-8 guarded MSVC against non-GBK chars in plugin sources (C4819→C2220);
 # flet 0.86.1 fixed that (#6686) so it is probably redundant now — kept until
 # someone verifies a build without it. Dash spelling, NOT /utf-8, which Git Bash
 # mangles into a Program Files path.
 # Build from a SHORT real path (deep worktree paths overflow MSBuild).
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows --python-version 3.13
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
 ```
 
+- **`requires-python` picks the bundled CPython — keep its upper bound.** An
+  earlier version of this file claimed `--python-version` was the only control.
+  It isn't: `flet_cli/utils/python_versions.py::resolve_python_version` resolves
+  `--python-version` → `[project].requires-python` → manifest default, and for
+  the specifier it takes the **highest supported version that satisfies it**
+  (supported today: 3.12, 3.13, 3.14). So bare `>=3.13` bundled **3.14** while
+  the dev venv stayed on 3.13 — the suite ran on one Python and users got
+  another, silently. The project is pinned to `>=3.13,<3.14`; verified mapping:
+
+  | `requires-python` | bundles |
+  |---|---|
+  | `>=3.13` | 3.14 |
+  | `>=3.13,<3.14` | 3.13 |
+  | `>=3.14` | 3.14 |
+
+  Never leave the bound open: the day flet supports 3.15, an open `>=` jumps to
+  it on the next build with no diff to show for it. Moving to 3.14 is a
+  deliberate change — bump this specifier, `[tool.ruff] target-version` and
+  `[tool.mypy] python_version` together, then re-run the suite on 3.14. Runtime
+  deps all have cp314 dual-arch macOS wheels already; the one snag is dev-only
+  `watchdog` (6.0.0 tops out at cp313 on macOS, so it may need an sdist build).
+- **Switching Python versions self-cleans.** 0.86 records the version in
+  `build/.python-version` and forces a rebuild when it changes ("bad magic
+  number" from mixed `.pyc` is what this prevents), so no manual `flet clean`
+  for a version switch — unlike a *toolchain* bump, below.
 - **After any toolchain bump, `uv run flet clean` first.** 0.86 ships Flutter 3.44.8; a `build/` left over from an older Flutter holds `hook.dill` files compiled by the previous Dart SDK, and the new one dies on them with `Can't load Kernel binary: Invalid kernel binary format version (expected 130, found 127)`. The failure names `package:objective_c`, which makes it look like a plugin problem — it isn't, it's a stale cache.
 - **What ships**: `flet build` installs `[project.dependencies]` FRESH into the bundle (`build/windows/site-packages`). Separately it copies the **entire working directory** and **ignores `.gitignore`** — only top-level names in `[tool.flet.app].exclude` are left out.
 - **No more `app.zip`.** serious_python 4.x (via flet 0.86) ships the app **unpacked** at `build/windows/app/`, compiled to `.pyc`, alongside `site-packages` — there is no first-launch extraction and no `%APPDATA%\…\flet\app\` copy. `pyproject.toml` still ships next to the sources, so `current_app_version()` keeps working.

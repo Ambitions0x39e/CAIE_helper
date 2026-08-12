@@ -28,6 +28,8 @@ from modules.marking.grader import (
 from modules.marking.mcq_parser import is_valid_manual_answer
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from core.settings import GraderConfig
     from modules.marking.ms_parser import PaperConfig
     from modules.marking.page_segmenter import PageClip, QuestionRegion
@@ -136,11 +138,17 @@ class Renderer(Protocol):
     """
 
     def render_regions(
-        self, source: bytes, clips: list[PageClip], dpi: int = ...,
+        self,
+        source: str | bytes | Path,
+        clips: list[PageClip],
+        dpi: int = ...,
     ) -> list[bytes]: ...
 
     def render_pages(
-        self, source: bytes, page_numbers: list[int], dpi: int = ...,
+        self,
+        source: str | bytes | Path,
+        page_numbers: list[int],
+        dpi: int = ...,
     ) -> list[bytes]: ...
 
 
@@ -185,7 +193,7 @@ def grade_paper(
     config: GraderConfig,
     paper_config: PaperConfig,
     paper_type: PaperType,
-    pdf_bytes: bytes,
+    pdf_source: str | bytes | Path,
     question_ids: list[str],
     assignments: Mapping[str, list[int]],
     clips: Mapping[str, list[PageClip]],
@@ -225,11 +233,11 @@ def grade_paper(
             region_clips = clips.get(qid)
             if region_clips:
                 images = renderer.render_regions(
-                    pdf_bytes, region_clips, config.dpi,
+                    pdf_source, region_clips, config.dpi,
                 )
             else:
                 images = renderer.render_pages(
-                    pdf_bytes, list(assignments[qid]), config.dpi,
+                    pdf_source, list(assignments[qid]), config.dpi,
                 )
             raw = grade_question(
                 config=config,

@@ -7,8 +7,14 @@ import 'package:pdfrx/pdfrx.dart';
 /// Headless PDF renderer service.
 ///
 /// Handles the "render_regions" method invoked from Python: opens a PDF from
-/// bytes and renders each clip (full-width vertical slice, in PDF points,
-/// top-origin) to a PNG at the requested dpi. Returns one PNG per clip.
+/// a filesystem path and renders each clip (full-width vertical slice, in PDF
+/// points, top-origin) to a PNG at the requested dpi. Returns one PNG per clip.
+///
+/// The PDF arrives as a **path, not bytes**. Python and Dart are two sides of
+/// one process, so the file is already reachable here; shipping its contents
+/// over the Flet RPC instead used to stall the transport on a large answer
+/// export (a 35MB GoodNotes scan hung with no result and no error). A path is
+/// ~100 bytes no matter how big the document is.
 class PdfRendererService extends FletService {
   PdfRendererService({required super.control});
 
@@ -30,12 +36,12 @@ class PdfRendererService extends FletService {
   Future<List<Uint8List>> _renderRegions(dynamic args) async {
     await pdfrxFlutterInitialize();
 
-    final pdfBytes = convertToUint8List(args["pdf"])!;
+    final pdfPath = args["pdf_path"] as String;
     final clips = (args["clips"] as List);
     final dpi = (args["dpi"] as num).toDouble();
     final scale = dpi / 72.0;
 
-    final doc = await PdfDocument.openData(pdfBytes);
+    final doc = await PdfDocument.openFile(pdfPath);
     try {
       final out = <Uint8List>[];
       for (final c in clips) {

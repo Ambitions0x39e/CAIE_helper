@@ -388,9 +388,8 @@ def _parse_all_vl(
     Raises:
         RuntimeError: If extraction fails or returns no questions.
     """
-    pdf_bytes = to_pdf_bytes(pdf_path)
-    pages = list(range(start_page, page_count(pdf_bytes) + 1))
-    all_pngs = renderer.render_pages(pdf_bytes, pages, dpi=grader_config.dpi)
+    pages = list(range(start_page, page_count(pdf_path) + 1))
+    all_pngs = renderer.render_pages(pdf_path, pages, dpi=grader_config.dpi)
     if not all_pngs:
         raise RuntimeError(
             f"No pages to render from page {start_page} onward"

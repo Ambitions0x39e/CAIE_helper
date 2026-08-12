@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -172,13 +173,19 @@ class _FakeRenderer:
         self.page_calls: list[list[int]] = []
 
     def render_regions(
-        self, source: bytes, clips: list[PageClip], dpi: int = 200,
+        self,
+        source: str | bytes | Path,
+        clips: list[PageClip],
+        dpi: int = 200,
     ) -> list[bytes]:
         self.region_calls.append(f"{len(clips)} clips")
         return [b"png"]
 
     def render_pages(
-        self, source: bytes, page_numbers: list[int], dpi: int = 200,
+        self,
+        source: str | bytes | Path,
+        page_numbers: list[int],
+        dpi: int = 200,
     ) -> list[bytes]:
         self.page_calls.append(list(page_numbers))
         return [b"png"]
@@ -223,7 +230,7 @@ class TestGradePaper:
             config=_FakeConfig(),  # type: ignore[arg-type]
             paper_config=_paper_config(*qids),
             paper_type=PaperType.MATH,
-            pdf_bytes=b"%PDF",
+            pdf_source=b"%PDF",
             # Distinct page per question so a renderer can single one out by
             # the page number it was asked to render.
             question_ids=list(qids),
@@ -259,7 +266,10 @@ class TestGradePaper:
 
         class _BarrierRenderer(_FakeRenderer):
             def render_pages(
-                self, source: bytes, page_numbers: list[int], dpi: int = 200,
+                self,
+        source: str | bytes | Path,
+        page_numbers: list[int],
+        dpi: int = 200,
             ) -> list[bytes]:
                 barrier.wait()
                 return super().render_pages(source, page_numbers, dpi)
@@ -274,7 +284,10 @@ class TestGradePaper:
     ) -> None:
         class _FailsOnPageTwo(_FakeRenderer):
             def render_pages(
-                self, source: bytes, page_numbers: list[int], dpi: int = 200,
+                self,
+        source: str | bytes | Path,
+        page_numbers: list[int],
+        dpi: int = 200,
             ) -> list[bytes]:
                 if page_numbers == [2]:
                     raise RuntimeError("render stalled")
@@ -294,7 +307,10 @@ class TestGradePaper:
     ) -> None:
         class _AlwaysFails(_FakeRenderer):
             def render_pages(
-                self, source: bytes, page_numbers: list[int], dpi: int = 200,
+                self,
+        source: str | bytes | Path,
+        page_numbers: list[int],
+        dpi: int = 200,
             ) -> list[bytes]:
                 raise RuntimeError(f"boom {page_numbers}")
 
@@ -334,7 +350,7 @@ class TestGradePaper:
             config=_FakeConfig(),  # type: ignore[arg-type]
             paper_config=_paper_config(),
             paper_type=PaperType.MATH,
-            pdf_bytes=b"%PDF",
+            pdf_source=b"%PDF",
             question_ids=[],
             assignments={},
             clips={},

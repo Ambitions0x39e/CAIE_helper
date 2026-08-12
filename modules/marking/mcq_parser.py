@@ -228,8 +228,7 @@ def detect_student_answers(
     skip = _resolve_skip_pages(stem)
     q_ids = list(answer_key.questions.keys())
 
-    pdf_bytes = to_pdf_bytes(path)
-    page_batches = _build_page_batches(page_count(pdf_bytes), skip)
+    page_batches = _build_page_batches(page_count(path), skip)
 
     raw_detected: dict[str, str] = {}  # "1" → "C"
     total = len(page_batches)
@@ -237,7 +236,7 @@ def detect_student_answers(
     for idx, page_idxs in enumerate(page_batches):
         if on_progress:
             on_progress(idx + 1, total)
-        images = renderer.render_pages(pdf_bytes, [p + 1 for p in page_idxs], dpi=dpi)
+        images = renderer.render_pages(path, [p + 1 for p in page_idxs], dpi=dpi)
         batch_result = _call_vl(grader_config, images)
         raw_detected.update(batch_result)
 
