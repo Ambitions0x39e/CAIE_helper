@@ -660,15 +660,57 @@ def _build_about_view(
 # Sub-page: 大纲 Topic 库
 # --------------------------------------------------------------------------
 
+def _compact_ids(ids: list[str]) -> str:
+    """``1..22`` → ``"1–22"``, ``1,2,5,6,7`` → ``"1–2, 5–7"``.
+
+    A science paper covers 22 or 37 topics; spelling every id out overflows
+    the row and buries the one thing worth reading, which is the range.
+    Non-numeric ids (the math family's ``N.M``) are left alone — those lists
+    are short and a range over them would be a lie.
+    """
+    if not ids:
+        return "（空）"
+    if not all(i.isdigit() for i in ids):
+        return ", ".join(ids)
+    nums = sorted(int(i) for i in ids)
+    runs: list[tuple[int, int]] = []
+    start = previous = nums[0]
+    for num in nums[1:]:
+        if num == previous + 1:
+            previous = num
+            continue
+        runs.append((start, previous))
+        start = previous = num
+    runs.append((start, previous))
+    return ", ".join(
+        str(lo) if lo == hi else f"{lo}–{hi}" for lo, hi in runs
+    )
+
+
+def _stacked(label: str, body: ft.Control) -> ft.Control:
+    """Label above, content below, both full width.
+
+    Not ``_row``: that puts the control hard right of the label on one line,
+    which is right for a switch or a short value and wrong for a block. Given
+    a block it squeezes the label column to nothing — literally one glyph per
+    line — and lets the content run off the right edge.
+    """
+    return ft.Container(
+        ft.Column([ft.Text(label, size=15), body], spacing=8),
+        padding=ft.Padding.symmetric(vertical=12),
+    )
+
+
 def _syllabus_body(
     page: ft.Page, info: SyllabusInfo, on_changed: Callable[[], None],
 ) -> list[ft.Control]:
     """One stored syllabus: where it lives, what it maps, every topic."""
+    del page  # the caller owns the refresh
     mapping = ft.Column(
         [
             ft.Text(
-                f"Paper {paper} → {', '.join(ids)}",
-                size=13, selectable=True,
+                f"Paper {paper} → {_compact_ids(ids)}",
+                size=13, selectable=True, expand=True,
             )
             for paper, ids in sorted(info.component_topics.items())
         ] or [ft.Text("（没有 component 映射）", size=13, color=theme.MUTED)],
@@ -679,7 +721,7 @@ def _syllabus_body(
             ft.Text(
                 f"{topic.topic_id}  {topic.name}"
                 + (f"   [{topic.category}]" if topic.category else ""),
-                size=12, color=theme.MUTED, selectable=True,
+                size=12, color=theme.MUTED, selectable=True, expand=True,
             )
             for topic in info.topics.values()
         ],
@@ -693,7 +735,7 @@ def _syllabus_body(
     return [
         _section(f"{info.subject_id}"),
         *_divided(
-            _row(
+            _stacked(
                 "存储位置",
                 ft.Text(
                     str(syllabus_path(info.subject_id)),
@@ -708,8 +750,8 @@ def _syllabus_body(
                     size=13,
                 ),
             ),
-            _row("Paper → topic", mapping),
-            _row("Topic 全表", topics),
+            _stacked("Paper → topic", mapping),
+            _stacked("Topic 全表", topics),
         ),
         _actions(ft.Button(
             "删除并重新解析",
