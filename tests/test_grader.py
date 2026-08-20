@@ -140,6 +140,77 @@ def test_an_empty_topic_list_is_treated_as_no_syllabus(
     assert _TOPIC_HEADING not in sent_prompts[0]
 
 
+def test_parse_grading_result_repairs_latex_backslashes() -> None:
+    """The model writes LaTeX in `reason`; `\\S` is not a JSON escape.
+
+    Verbatim from a real failing response — the question had been graded
+    correctly and was reported as a failure purely on the encoding.
+    """
+    raw = (
+        '{"question": "Q2b", '
+        '"marks": [{"code": "M1", "awarded": true, '
+        r'"reason": "正确使用了展开公式 $\Sigma y^2 = (\Sigma y)^2 - 2\Sigma xy$"}], '
+        '"total": 2, "max": 2, "comment": "准确应用了韦达定理"}'
+    )
+
+    result = parse_grading_result(raw)
+
+    assert result.total == 2
+    assert result.marks[0].awarded is True
+    # The text survives with its backslashes, rather than being dropped.
+    assert r"\Sigma y^2" in result.marks[0].reason
+
+
+def test_parse_grading_result_leaves_a_valid_response_alone() -> None:
+    """Valid JSON parses on the first try — the repair never runs."""
+    raw = json.dumps({
+        "question": "Q1",
+        "marks": [{
+            "code": "B1", "awarded": True,
+            "reason": 'path C:\\temp, quote ", newline\nhere',
+        }],
+        "total": 1, "max": 1,
+    })
+
+    result = parse_grading_result(raw)
+
+    assert result.marks[0].reason == 'path C:\\temp, quote ", newline\nhere'
+
+
+def test_parse_grading_result_repairs_only_the_invalid_escapes() -> None:
+    """One reason carrying both a valid escape and an invalid one.
+
+    This is what separates a correct repair from the naive "double every
+    backslash" pass: the latter turns the already-correct ``\\\\`` into
+    ``\\\\\\\\``, so the path comes back with two backslashes instead of one.
+    A response that is *only* malformed cannot tell the two apart, because a
+    fully valid response never reaches the repair at all.
+    """
+    raw = (
+        '{"question": "Q1", '
+        '"marks": [{"code": "M1", "awarded": true, '
+        r'"reason": "路径 C:\\temp 与公式 $\Sigma y$"}], '
+        '"total": 1, "max": 1}'
+    )
+
+    result = parse_grading_result(raw)
+
+    assert result.marks[0].reason == "路径 C:\\temp 与公式 $\\Sigma y$"
+
+
+def test_parse_grading_result_still_rejects_real_garbage() -> None:
+    """Repairing escapes must not turn "unparseable" into "silently wrong"."""
+    with pytest.raises(ValueError, match="Failed to parse"):
+        parse_grading_result('{"question": "Q1", "marks": [,,,}')
+
+
+def test_prompt_forbids_latex(sent_prompts: list[str]) -> None:
+    """Belt and braces: the repair is the net, this is the instruction."""
+    _grade(None)
+
+    assert "不要在任何字段里写 LaTeX 或反斜杠" in sent_prompts[0]
+
+
 def test_parse_grading_result_reads_the_topic_field() -> None:
     raw = json.dumps({
         "question": "Q1",
