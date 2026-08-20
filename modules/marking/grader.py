@@ -70,6 +70,9 @@ _MATH_GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷�
 - reason 字段必须是一句话 (不超过 40 个字)，只写结论，不要写推理过程。
   正确示范: "正确使用了 (α-1)²+(β-1)²+(γ-1)² 展开公式"
   错误示范: "学生写了……但是……然而……因此……" (这种长段落不允许)
+- **不要在任何字段里写 LaTeX 或反斜杠**。要写数学符号就直接用 Unicode
+  (Σ、√、≤、α、²)，不要写 $\\Sigma$、\\frac{{a}}{{b}} 这类命令 ——
+  反斜杠不是合法的 JSON 转义，整个回复会因此解析失败。
 - total 必须等于所有 awarded=true 的采分点的**分值之和**，
   而不是采分点的个数之和 —— 分值就是 code 里字母后面那个数字。
   例: 给了 B2 和 M1 → total = 2 + 1 = 3 (不是 2)。
@@ -196,6 +199,21 @@ def grade_question(
     return str(response.choices[0].message.content)
 
 
+#: Matches a *valid* JSON escape first, so an already-correct ``\\`` is
+#: consumed as one unit and left alone; a lone backslash falls through to the
+#: second branch. Scanning for lone backslashes without that first branch
+#: would turn a correct ``\\`` into ``\\\``, corrupting good responses while
+#: fixing bad ones.
+_JSON_ESCAPE_RE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})|\\')
+
+
+def _escape_stray_backslashes(text: str) -> str:
+    """Escape backslashes that JSON would reject, leaving valid ones intact."""
+    return _JSON_ESCAPE_RE.sub(
+        lambda m: m.group(0) if m.group(1) else "\\\\", text
+    )
+
+
 def parse_grading_result(raw: str) -> QuestionResult:
     """Parse the API response JSON into a QuestionResult."""
     cleaned = raw.strip()
@@ -205,10 +223,19 @@ def parse_grading_result(raw: str) -> QuestionResult:
 
     try:
         data = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Failed to parse API response as JSON: {e}\nRaw response:\n{raw}"
-        ) from e
+    except json.JSONDecodeError:
+        # Second chance for the one malformation the model reliably produces:
+        # LaTeX inside `reason` ("$\Sigma y^2 = (\Sigma y)^2$"). ``\S`` is not
+        # a JSON escape, so the whole response is rejected and a question that
+        # was graded correctly is reported as a failure. Repairing beats
+        # discarding — the alternative costs another paid API round trip.
+        try:
+            data = json.loads(_escape_stray_backslashes(cleaned))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Failed to parse API response as JSON: {e}\n"
+                f"Raw response:\n{raw}"
+            ) from e
 
     required = {"question", "marks", "total", "max"}
     missing = required - set(data.keys())
