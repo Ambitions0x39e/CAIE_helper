@@ -30,7 +30,11 @@ from modules.marking.page_segmenter import (
     scan_document,
 )
 from modules.marking.renderer import NativeRenderer
-from modules.marking.syllabus_parser import SyllabusParseError, parse_syllabus
+from modules.marking.syllabus_parser import (
+    SyllabusParseError,
+    load_syllabus,
+    parse_syllabus,
+)
 from modules.marking.workflow import regions_to_page_map
 
 if TYPE_CHECKING:
@@ -291,6 +295,28 @@ def _syllabus_status(ctx: MarkTabContext) -> ft.Text:
     )
 
 
+def _sync_syllabus_to_subject(ctx: MarkTabContext) -> None:
+    """Point ``ctx.syllabus_info`` at the *selected* subject's syllabus.
+
+    Two things depend on this, both of which were wrong without it:
+
+    * a syllabus parsed in an earlier session is picked up from the store, so
+      the user uploads each subject's PDF once, not once per app start;
+    * switching the subject dropdown drops the previous subject's topics.
+      Keeping them would hand 9709's topic list to a 9231 paper and tag every
+      question against the wrong syllabus — silently, since the ids overlap.
+    """
+    if ctx.syllabus_parsing:
+        return
+    subject = ctx.selected_syllabus or ""
+    current = ctx.syllabus_info
+    if current is not None and current.subject_id == subject:
+        return
+    ctx.syllabus_info = load_syllabus(subject) if subject else None
+    ctx.syllabus_error = None
+    ctx.syllabus_path = None
+
+
 def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
     """The 大纲 PDF picker plus a link to where one is downloaded.
 
@@ -301,6 +327,7 @@ def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
     """
     if ctx.ms_source != "downloaded" or ctx.paper_type != PaperType.MATH:
         return []
+    _sync_syllabus_to_subject(ctx)
 
     row: list[ft.Control] = [
         ft.Button(
@@ -359,7 +386,10 @@ def _start_syllabus_parse(ctx: MarkTabContext, path: str) -> None:
 
     def _run() -> None:
         try:
-            ctx.syllabus_info = parse_syllabus(path, subject_id)
+            # force: picking a file by hand is an explicit "use this one".
+            # Without it a corrected PDF would be swallowed by the copy
+            # already in the store.
+            ctx.syllabus_info = parse_syllabus(path, subject_id, force=True)
         except SyllabusParseError as exc:
             ctx.syllabus_error = str(exc)
         except Exception as exc:  # noqa: BLE001 — reported, not swallowed

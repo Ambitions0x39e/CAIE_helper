@@ -149,8 +149,21 @@ class AppSettings(BaseSettings):
         return self.base_dir / "mistakes.csv"
 
     @property
-    def syllabus_cache_dir(self) -> Path:
-        """Parsed syllabus topic lists, one JSON per subject id."""
+    def syllabus_dir(self) -> Path:
+        """Parsed syllabus topic lists, one JSON per subject id.
+
+        Deliberately *not* under ``.cache``: re-deriving one costs the user
+        another manual PDF hunt and upload, so this is durable data that a
+        cache sweep must not take with it.
+        """
+        return self.base_dir / "syllabus"
+
+    @property
+    def legacy_syllabus_cache_dir(self) -> Path:
+        """Where parsed syllabuses lived before they moved out of ``.cache``.
+
+        Read-and-migrate only — see ``syllabus_parser.load_syllabus``.
+        """
         return self.base_dir / ".cache" / "syllabus"
 
     @property
@@ -163,7 +176,7 @@ class AppSettings(BaseSettings):
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.pdfs_dir.mkdir(parents=True, exist_ok=True)
         self.ms_cache_dir.mkdir(parents=True, exist_ok=True)
-        self.syllabus_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.syllabus_dir.mkdir(parents=True, exist_ok=True)
         self.updates_dir.mkdir(parents=True, exist_ok=True)
 
 

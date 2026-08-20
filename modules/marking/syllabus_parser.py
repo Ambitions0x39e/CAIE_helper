@@ -519,32 +519,82 @@ def _parse_math_geometry(
     return topics, component_topics
 
 
-# ── Cache ─────────────────────────────────────────────────────────
+# ── Store ─────────────────────────────────────────────────────────
+#
+# A parsed syllabus outlives the session that produced it: the user had to
+# find and upload a PDF for it, so re-deriving it is manual work, not a
+# recomputation. One JSON per subject id under ``~/.cie_helper/syllabus/``.
 
 
-def _cache_path_for(subject_id: str) -> Path:
-    return app_settings.syllabus_cache_dir / f"{subject_id}.json"
+def syllabus_path(subject_id: str) -> Path:
+    """Where this subject's parsed syllabus is stored."""
+    return app_settings.syllabus_dir / f"{subject_id}.json"
 
 
-def _load_cached(subject_id: str) -> SyllabusInfo | None:
-    path = _cache_path_for(subject_id)
+def _read(path: Path) -> SyllabusInfo | None:
     if not path.exists():
         return None
     try:
         return SyllabusInfo.model_validate_json(path.read_text("utf-8"))
     except Exception:
+        # A truncated or hand-edited file reads as "not stored" rather than
+        # taking the Mark tab down with it.
         return None
 
 
-def _save_cache(info: SyllabusInfo) -> None:
-    path = _cache_path_for(info.subject_id)
+def _save(info: SyllabusInfo) -> None:
+    path = syllabus_path(info.subject_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(info.model_dump_json(indent=2), "utf-8")
 
 
-def syllabus_cache_exists(subject_id: str) -> bool:
-    """Whether :func:`parse_syllabus` would hit its cache for this subject."""
-    return _cache_path_for(subject_id).exists()
+def load_syllabus(subject_id: str) -> SyllabusInfo | None:
+    """The stored syllabus for a subject, or None if there isn't one.
+
+    Migrates an entry left in the old ``.cache/syllabus`` location on read,
+    so an upgrade doesn't silently ask the user to upload the PDF again.
+    """
+    info = _read(syllabus_path(subject_id))
+    if info is not None:
+        return info
+
+    legacy = app_settings.legacy_syllabus_cache_dir / f"{subject_id}.json"
+    info = _read(legacy)
+    if info is not None:
+        with contextlib.suppress(OSError):
+            _save(info)
+            legacy.unlink()
+    return info
+
+
+def stored_syllabuses() -> list[SyllabusInfo]:
+    """Every stored syllabus, subject id order — for the settings view."""
+    found: dict[str, SyllabusInfo] = {}
+    for directory in (
+        app_settings.legacy_syllabus_cache_dir,
+        app_settings.syllabus_dir,
+    ):
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.json")):
+            info = _read(path)
+            if info is not None:
+                found[info.subject_id] = info  # current dir wins
+    return [found[key] for key in sorted(found)]
+
+
+def delete_syllabus(subject_id: str) -> bool:
+    """Forget a subject's syllabus. True if anything was removed."""
+    removed = False
+    for path in (
+        syllabus_path(subject_id),
+        app_settings.legacy_syllabus_cache_dir / f"{subject_id}.json",
+    ):
+        if path.exists():
+            with contextlib.suppress(OSError):
+                path.unlink()
+                removed = True
+    return removed
 
 
 # ── Public API ────────────────────────────────────────────────────
@@ -591,16 +641,18 @@ def parse_syllabus(
     Args:
         pdf_path: A syllabus PDF the user uploaded.
         subject_id: Four-digit syllabus code, e.g. ``"9709"``. Also the
-            cache key — one syllabus per subject.
-        force: Skip the cache and re-parse (the result is re-cached).
+            store key — one syllabus per subject.
+        force: Re-parse even if one is stored, and replace it. Picking a PDF
+            by hand is exactly this case: without it, uploading a corrected
+            document would be a no-op against the stored copy.
 
     Raises:
         SyllabusParseError: The PDF matches neither known layout.
     """
     if not force:
-        cached = _load_cached(subject_id)
-        if cached is not None:
-            return cached
+        stored = load_syllabus(subject_id)
+        if stored is not None:
+            return stored
 
     # Geometry first for the math family — see this module's docstring for
     # what the flowed text gets wrong on the real document. Text is the
@@ -614,7 +666,7 @@ def parse_syllabus(
         )
     else:
         info = parse_syllabus_text(extract_text(str(pdf_path)), subject_id)
-    # An unwritable cache must not fail the parse.
+    # An unwritable store must not fail the parse.
     with contextlib.suppress(OSError):
-        _save_cache(info)
+        _save(info)
     return info
