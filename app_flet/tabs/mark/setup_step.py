@@ -30,12 +30,27 @@ from modules.marking.page_segmenter import (
     scan_document,
 )
 from modules.marking.renderer import NativeRenderer
+from modules.marking.syllabus_parser import SyllabusParseError, parse_syllabus
 from modules.marking.workflow import regions_to_page_map
 
 if TYPE_CHECKING:
     from modules.marking.ms_parser import PaperConfig
 
 _log = logging.getLogger("cie_helper.mark")
+
+#: Where the user goes to fetch a syllabus PDF by hand. There is deliberately
+#: no download code: the site serves its app shell instead of the file unless
+#: the request carries the right headers, so a scraper would "succeed" with
+#: HTML — see the design doc's Non-Goals.
+_SYLLABUS_SLUGS: dict[str, str] = {
+    "9709": "mathematics-9709",
+    "9231": "further-mathematics-9231",
+    "9702": "physics-9702",
+    "9701": "chemistry-9701",
+    "9700": "biology-9700",
+    "9696": "geography-9696",
+}
+_SYLLABUS_URL = "https://pastpapers.co/caie/a-level/{slug}/syllabus-%26-specimen"
 
 
 def _async_click(
@@ -88,6 +103,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
 
     if ctx.ms_source == "downloaded":
         controls.extend(_build_paper_selector(ctx))
+        controls.extend(_build_syllabus_row(ctx))
     else:
         upload_label = (
             ctx.ms_upload_path.split("\\")[-1].split("/")[-1]
@@ -251,6 +267,109 @@ def _build_paper_selector(ctx: MarkTabContext) -> list[ft.Control]:
             on_select=lambda e: _on_paper_select(ctx, e),
         ),
     ], spacing=12)]
+
+
+# ── Syllabus (optional, for topic tagging) ────────────────────────
+
+def _syllabus_status(ctx: MarkTabContext) -> ft.Text:
+    if ctx.syllabus_parsing:
+        return ft.Text("正在解析大纲…", size=12, color=theme.MUTED)
+    if ctx.syllabus_error:
+        return ft.Text(
+            f"大纲解析失败: {ctx.syllabus_error}", size=12, color=theme.DANGER,
+        )
+    info = ctx.syllabus_info
+    if info is None:
+        return ft.Text(
+            "未选择（不影响批改，仅用于给错题打 topic 标签）",
+            size=12, color=theme.MUTED,
+        )
+    return ft.Text(
+        f"{info.subject_id}: 已识别 {len(info.topics)} 个 topic，"
+        f"{len(info.component_topics)} 个 component",
+        size=12, color=theme.MUTED,
+    )
+
+
+def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
+    """The 大纲 PDF picker plus a link to where one is downloaded.
+
+    Only shown for the downloaded-MS Math flow: MCQ papers are graded
+    deterministically and never call the VL model, and an uploaded mark
+    scheme has no paper id to resolve a component against — both cases would
+    show a control that could not do anything.
+    """
+    if ctx.ms_source != "downloaded" or ctx.paper_type != PaperType.MATH:
+        return []
+
+    row: list[ft.Control] = [
+        ft.Button(
+            "选择大纲 PDF",
+            icon=ft.Icons.MENU_BOOK,
+            disabled=ctx.syllabus_parsing,
+            on_click=_async_click(_on_syllabus_upload_click, ctx),
+        ),
+        _syllabus_status(ctx),
+    ]
+    slug = _SYLLABUS_SLUGS.get(ctx.selected_syllabus or "")
+    if slug:
+        row.append(ft.TextButton(
+            "去官网下载",
+            icon=ft.Icons.OPEN_IN_NEW,
+            on_click=_launch_syllabus_url(ctx, slug),
+        ))
+    return [ft.Row(row, spacing=8, wrap=True)]
+
+
+def _launch_syllabus_url(
+    ctx: MarkTabContext, slug: str,
+) -> Callable[[ft.Event[ft.TextButton]], None]:
+    url = _SYLLABUS_URL.format(slug=slug)
+
+    async def _open() -> None:
+        await ctx.page.launch_url(url)
+
+    def _handler(_: ft.Event[ft.TextButton]) -> None:
+        ctx.page.run_task(_open)
+
+    return _handler
+
+
+async def _on_syllabus_upload_click(ctx: MarkTabContext) -> None:
+    if ctx.syllabus_picker is None:
+        ctx.syllabus_picker = ft.FilePicker()
+        ctx.page.services.append(ctx.syllabus_picker)
+    files = await ctx.syllabus_picker.pick_files(
+        allowed_extensions=["pdf"],
+        dialog_title="选择大纲 (Syllabus) PDF",
+    )
+    if not files or not files[0].path:
+        return
+    _start_syllabus_parse(ctx, files[0].path)
+
+
+def _start_syllabus_parse(ctx: MarkTabContext, path: str) -> None:
+    """Parse the syllabus off the UI thread; a failure is never fatal."""
+    subject_id = ctx.selected_syllabus or ""
+    ctx.syllabus_path = path
+    ctx.syllabus_error = None
+    ctx.syllabus_info = None
+    ctx.syllabus_parsing = True
+    ctx.rebuild()
+
+    def _run() -> None:
+        try:
+            ctx.syllabus_info = parse_syllabus(path, subject_id)
+        except SyllabusParseError as exc:
+            ctx.syllabus_error = str(exc)
+        except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+            _log.exception("syllabus parse failed")
+            ctx.syllabus_error = str(exc)
+        finally:
+            ctx.syllabus_parsing = False
+            ctx.rebuild()
+
+    ctx.page.run_thread(_run)
 
 
 # ── Handlers ──────────────────────────────────────────────────────

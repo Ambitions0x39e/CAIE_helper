@@ -49,7 +49,7 @@ _MATH_GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷�
 5. 仔细辨认手写内容，注意区分容易混淆的字符 (如 3/5, 1/7, 6/0)
 6. 如果学生的方法与 Mark Scheme 不同但数学上等价且正确，
    应视为可接受的替代方法 (alternative method)
-
+{topic_block}
 ## 输出要求:
 只输出严格的 JSON，不要任何其他文字:
 {{
@@ -85,6 +85,27 @@ GRADING_PROMPTS: dict[PaperType, str] = {
     PaperType.MATH: _MATH_GRADING_PROMPT,
 }
 
+# Spliced into ``{topic_block}`` only when the caller knows which topics the
+# paper can cover. Without a syllabus the whole section — the list *and* the
+# instruction to emit a "topic" field — is absent, rather than present and
+# empty: an empty list would invite the model to invent a label.
+_TOPIC_BLOCK_TEMPLATE = """
+## 该 Paper 覆盖的 Topic 列表:
+{topics}
+
+在输出 JSON 里新增一个字段 "topic": 从上面列表里选最贴合这道题内容的 topic_id
+(只填 id，例如 "1.2" 或 "7")。如果题目跨多个 topic，选主要考察的那一个；
+如果实在无法归入任何一个，"topic" 填 null。
+"""
+
+
+def _render_topic_block(topic_list: dict[str, str] | None) -> str:
+    """Render the topic section, or "" when there is nothing to render."""
+    if not topic_list:
+        return ""
+    topics = "\n".join(f"{tid}: {name}" for tid, name in topic_list.items())
+    return _TOPIC_BLOCK_TEMPLATE.format(topics=topics)
+
 
 class MarkDetail(BaseModel):
     code: str
@@ -98,6 +119,10 @@ class QuestionResult(BaseModel):
     total: int
     max: int
     comment: str = ""
+    # Syllabus topic id the model picked for this question. None whenever no
+    # syllabus was available, the paper's component isn't in it, or the model
+    # could not place the question — all three land in 未分类 downstream.
+    topic: str | None = None
 
 
 class GradingReport(BaseModel):
@@ -114,11 +139,16 @@ def grade_question(
     mark_scheme: str,
     max_marks: int,
     paper_type: PaperType = PaperType.MATH,
+    topic_list: dict[str, str] | None = None,
 ) -> str:
     """Send question images + mark scheme to multimodal API for grading.
 
     Selects the prompt template from GRADING_PROMPTS based on paper_type.
     Returns raw API response text (should be JSON).
+
+    ``topic_list`` maps topic_id → name for the topics this paper can cover.
+    When it is None or empty the prompt carries no topic section at all and
+    the model is never asked for a ``"topic"`` field.
     """
     template = GRADING_PROMPTS.get(paper_type)
     if template is None:
@@ -147,6 +177,7 @@ def grade_question(
         question_id=question_id,
         max_marks=max_marks,
         mark_scheme=mark_scheme,
+        topic_block=_render_topic_block(topic_list),
     )
     content.append({"type": "text", "text": prompt})
 
@@ -185,10 +216,15 @@ def parse_grading_result(raw: str) -> QuestionResult:
         raise ValueError(f"Missing fields in result: {missing}")
 
     marks = [MarkDetail(**m) for m in data["marks"]]
+    topic = data.get("topic")
     return QuestionResult(
         question=data["question"],
         marks=marks,
         total=data["total"],
         max=data["max"],
         comment=data.get("comment", ""),
+        # "topic" is optional: prompts built without a topic list never ask
+        # for it, and the model may answer null when it cannot place the
+        # question. Anything else is coerced to str so a numeric id parses.
+        topic=None if topic is None else str(topic),
     )

@@ -31,7 +31,7 @@ def test_subject_mapping_unknown_returns_none() -> None:
 def test_grader_config_defaults() -> None:
     cfg = GraderConfig(api_key="test-key")
     assert cfg.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert cfg.model == "qwen3-vl-flash"
+    assert cfg.model == "qwen3.6-flash"
     assert cfg.api_key.get_secret_value() == "test-key"
 
 
