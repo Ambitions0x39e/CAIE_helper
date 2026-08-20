@@ -18,6 +18,7 @@ import flet as ft
 
 from app_flet import theme
 from app_flet.tabs.mark.context import MarkTabContext
+from core.config_store import grading_type_for_paper
 from core.models import PaperType
 from modules.marking.ms_parser import (
     ms_cache_exists,
@@ -95,6 +96,14 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         on_change=lambda e: _on_source_change(ctx, e),
     ))
 
+    # Built before the type radio even though it renders after it: choosing
+    # the paper is what resolves the default selection, and the configured
+    # grading type follows from the paper.
+    selector = (
+        _build_paper_selector(ctx) if ctx.ms_source == "downloaded" else []
+    )
+    _sync_paper_type(ctx)
+
     # Paper type radio
     controls.append(ft.RadioGroup(
         content=ft.Row([
@@ -106,7 +115,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     ))
 
     if ctx.ms_source == "downloaded":
-        controls.extend(_build_paper_selector(ctx))
+        controls.extend(selector)
         controls.extend(_build_syllabus_row(ctx))
     else:
         upload_label = (
@@ -295,6 +304,28 @@ def _syllabus_status(ctx: MarkTabContext) -> ft.Text:
     )
 
 
+def _sync_paper_type(ctx: MarkTabContext) -> None:
+    """Set the grading path from ``syllabus_config.json`` for this paper.
+
+    Picking it by hand every time is both a chore and a silent trap: grading
+    a structured paper in MCQ mode takes the deterministic answer-key path,
+    which never calls the VL model, so the paper comes back with no topics
+    and no mistake records and nothing says why.
+
+    The user still wins — moving the radio sets ``paper_type_overridden``
+    and that stands until they select a different paper.
+    """
+    if ctx.ms_source != "downloaded" or ctx.paper_type_overridden:
+        return
+    paper_id = ctx.selected_paper
+    if not paper_id or paper_id == ctx.paper_type_synced_for:
+        return
+    ctx.paper_type_synced_for = paper_id
+    configured = grading_type_for_paper(paper_id)
+    if configured is not None:
+        ctx.paper_type = configured
+
+
 def _sync_syllabus_to_subject(ctx: MarkTabContext) -> None:
     """Point ``ctx.syllabus_info`` at the *selected* subject's syllabus.
 
@@ -417,6 +448,8 @@ def _on_type_change(
     ctx.paper_type = (
         PaperType.MCQ if str(e.data) == "mcq" else PaperType.MATH
     )
+    # Their choice outranks the configured one until they change papers.
+    ctx.paper_type_overridden = True
     ctx.rebuild()
 
 
@@ -445,6 +478,8 @@ def _on_paper_select(
     ctx: MarkTabContext, e: ft.Event[ft.Dropdown],
 ) -> None:
     ctx.selected_paper = str(e.data) if e.data else None
+    # A different paper gets its own configured type, override cleared.
+    ctx.paper_type_overridden = False
     ctx.rebuild()
 
 
