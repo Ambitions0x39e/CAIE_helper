@@ -16,6 +16,7 @@ from app_flet.tabs.analytics import build_analytics_tab
 from app_flet.tabs.download import build_download_tab
 from app_flet.tabs.manage import build_manage_tab
 from app_flet.tabs.mark import build_mark_tab
+from app_flet.tabs.mistakes import build_mistakes_tab
 from app_flet.tabs.settings import build_settings_tab
 from core.settings import GraderConfig, MailConfig, app_settings
 
@@ -106,8 +107,13 @@ def main(page: ft.Page) -> None:
     # ── Shared services (created once, reused) ──────────────────────
     ms_picker = ft.FilePicker()
     answer_picker = ft.FilePicker()
+    # Save-dialog for the 错题本's CSV export. Created here, once, like the
+    # other pickers — building one per tab visit would stack up services.
+    mistake_export_picker = ft.FilePicker()
     pdf_renderer = PdfRenderer()  # native pdfrx renderer (iOS-safe)
-    page.services.extend([ms_picker, answer_picker, pdf_renderer])
+    page.services.extend(
+        [ms_picker, answer_picker, mistake_export_picker, pdf_renderer]
+    )
     state.pdf_renderer = pdf_renderer
 
     def show_snack(msg: str, color: str = theme.ACCENT) -> None:
@@ -149,6 +155,12 @@ def main(page: ft.Page) -> None:
                 )
             )
         elif idx == 4:
+            content_area.controls.append(
+                build_mistakes_tab(
+                    page, state, show_snack, mistake_export_picker,
+                )
+            )
+        elif idx == 5:
             content_area.controls.append(
                 build_settings_tab(page, state)
             )
@@ -207,8 +219,9 @@ def main(page: ft.Page) -> None:
         _make_nav_button(1, ft.Icons.LIST_ALT, "管理"),
         _make_nav_button(2, ft.Icons.BAR_CHART, "统计"),
         _make_nav_button(3, ft.Icons.EDIT, "批改"),
+        _make_nav_button(4, ft.Icons.MENU_BOOK, "错题本"),
     ]
-    _settings_nav = _make_nav_button(4, ft.Icons.SETTINGS, "设置")
+    _settings_nav = _make_nav_button(5, ft.Icons.SETTINGS, "设置")
     _apply_nav_selection()
 
     nav_rail = ft.Container(

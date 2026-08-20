@@ -30,6 +30,51 @@ def detect_paper_type(paper_id: str) -> PaperType | None:
     return SUBJECT_PAPER_TYPES.get(subject)
 
 
+class MistakeRecord(BaseModel):
+    """One question a grading run did not award full marks for.
+
+    Append-only: re-grading a paper writes a second set of rows rather than
+    replacing the first, and a question that later scores full marks does not
+    remove its earlier row (see the design doc's Edge Cases).
+    """
+
+    model_config = {"strict": True}
+
+    paper_id: str
+    question_id: str
+    topic_id: str | None = None
+    topic_name: str | None = None
+    score: float
+    max_score: float
+    comment: str = ""
+    timestamp: datetime.datetime
+
+    @field_validator("paper_id", "question_id")
+    @classmethod
+    def ids_must_be_non_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("paper_id and question_id cannot be empty")
+        return v
+
+    @field_validator("score", "max_score", mode="before")
+    @classmethod
+    def marks_must_be_non_negative(cls, v: object) -> object:
+        if not isinstance(v, (int, float)):
+            raise TypeError(f"Expected a number, got {type(v).__name__}")
+        if v < 0:
+            raise ValueError("Mark values cannot be negative")
+        return float(v)
+
+    @model_validator(mode="after")
+    def score_must_not_exceed_max(self) -> MistakeRecord:
+        if self.score > self.max_score:
+            raise ValueError(
+                f"score ({self.score}) cannot exceed max_score ({self.max_score})"
+            )
+        return self
+
+
 class PaperRecord(BaseModel):
     """Represents a single past paper entry in the tracker."""
 

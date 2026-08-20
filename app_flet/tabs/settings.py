@@ -316,8 +316,8 @@ def _build_grader_view(
         hint=_DEFAULT_BASE_URL,
     )
     grader_model = _tf(
-        saved_grader.model if saved_grader else "qwen3-vl-flash",
-        hint="qwen3-vl-flash",
+        saved_grader.model if saved_grader else "qwen3.6-flash",
+        hint="qwen3.6-flash",
     )
 
     status_text = ft.Text("", size=13)
@@ -332,7 +332,7 @@ def _build_grader_view(
             gc = GraderConfig(
                 api_key=grader_api_key.value or "",
                 base_url=grader_base_url.value or _DEFAULT_BASE_URL,
-                model=grader_model.value or "qwen3-vl-flash",
+                model=grader_model.value or "qwen3.6-flash",
             )
             gc.save_to_env()
             state.grader_config = gc

@@ -88,7 +88,7 @@ class GraderConfig(BaseSettings):
 
     api_key: SecretStr
     base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    model: str = "qwen3-vl-flash"
+    model: str = "qwen3.6-flash"
     dpi: int = Field(default=200, ge=72, le=600)
     enable_thinking: bool = False
 
@@ -144,6 +144,16 @@ class AppSettings(BaseSettings):
         return self.base_dir / ".cache" / "ms"
 
     @property
+    def mistakes_csv(self) -> Path:
+        """Backing file for the mistake notebook — see ``MistakeStore``."""
+        return self.base_dir / "mistakes.csv"
+
+    @property
+    def syllabus_cache_dir(self) -> Path:
+        """Parsed syllabus topic lists, one JSON per subject id."""
+        return self.base_dir / ".cache" / "syllabus"
+
+    @property
     def updates_dir(self) -> Path:
         """Where downloaded app installers land before being handed to the OS."""
         return self.base_dir / "updates"
@@ -153,6 +163,7 @@ class AppSettings(BaseSettings):
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.pdfs_dir.mkdir(parents=True, exist_ok=True)
         self.ms_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.syllabus_cache_dir.mkdir(parents=True, exist_ok=True)
         self.updates_dir.mkdir(parents=True, exist_ok=True)
 
 

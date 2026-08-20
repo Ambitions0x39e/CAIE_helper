@@ -21,6 +21,7 @@ from core.models import PaperType
 if TYPE_CHECKING:
     from app_flet.state import AppState
     from modules.marking.page_segmenter import ScannedDocument
+    from modules.marking.syllabus_parser import SyllabusInfo
 
 
 def _noop() -> None:
@@ -58,6 +59,20 @@ class MarkTabContext:
     #: Last ``scan_document`` result, keyed by path — re-pressing 解析 after
     #: only the mark scheme changed shouldn't re-read the whole answer PDF.
     scanned: tuple[str, ScannedDocument] | None = None
+
+    # ── Step 1 — syllabus topics (optional) ────────────────────────
+    #: Picked syllabus PDF and what parsing it produced. All optional: a
+    #: paper grades exactly as before without one, its questions simply come
+    #: back untagged.
+    syllabus_path: str | None = None
+    syllabus_info: SyllabusInfo | None = None
+    #: Message from the last failed parse, shown next to the picker.
+    syllabus_error: str | None = None
+    syllabus_parsing: bool = False
+    #: Created on first use by ``setup_step`` and registered on
+    #: ``page.services``, rather than handed in like ``ms_picker`` —
+    #: ``build_mark_tab``'s signature is owned by the app shell.
+    syllabus_picker: ft.FilePicker | None = None
 
     # ── Step 1 — analysis in flight ────────────────────────────────
     #: While an analysis runs, the tab collapses to Step 1 plus these

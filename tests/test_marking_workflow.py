@@ -17,14 +17,17 @@ from modules.marking import workflow
 from modules.marking.grader import MarkDetail, QuestionResult
 from modules.marking.ms_parser import PaperConfig, QuestionConfig
 from modules.marking.page_segmenter import PageClip, QuestionRegion
+from modules.marking.syllabus_parser import SyllabusInfo, SyllabusTopic
 from modules.marking.workflow import (
     ScoreSummary,
     collect_page_assignments,
+    component_paper_number,
     grade_paper,
     merge_mcq_answers,
     parse_page_spec,
     regions_to_page_map,
     summarise_scores,
+    topics_for_paper,
 )
 
 # ── Page specs ────────────────────────────────────────────────────
@@ -360,3 +363,167 @@ class TestGradePaper:
         assert outcome.ok
         assert outcome.results == []
         assert seen == [(0, 0, "")]
+
+
+# ── Syllabus topics ───────────────────────────────────────────────
+
+def _syllabus() -> SyllabusInfo:
+    """A 9709-shaped syllabus: paper 1 → section 1, paper 4 → section 4."""
+    names = {
+        "1.1": "Quadratics",
+        "1.2": "Functions",
+        "4.1": "Forces and equilibrium",
+    }
+    return SyllabusInfo(
+        subject_id="9709",
+        topics={
+            tid: SyllabusTopic(topic_id=tid, name=name)
+            for tid, name in names.items()
+        },
+        component_topics={"1": ["1.1", "1.2"], "4": ["4.1"]},
+    )
+
+
+class TestComponentPaperNumber:
+    @pytest.mark.parametrize(
+        ("paper_id", "expected"),
+        [
+            ("9709_s25_qp_12", "1"),
+            ("9701_s25_qp_21", "2"),
+            ("9709_w24_qp_43", "4"),
+        ],
+    )
+    def test_first_digit_of_the_component(
+        self, paper_id: str, expected: str
+    ) -> None:
+        assert component_paper_number(paper_id) == expected
+
+    @pytest.mark.parametrize(
+        "paper_id", ["9709/12/M/J/25", "9709_s25_gt", "", "nonsense"]
+    )
+    def test_shapes_that_are_not_a_downloaded_id(self, paper_id: str) -> None:
+        assert component_paper_number(paper_id) is None
+
+
+class TestTopicsForPaper:
+    def test_named_topics_for_the_papers_component(self) -> None:
+        assert topics_for_paper(_syllabus(), "9709_s25_qp_12") == {
+            "1.1": "Quadratics",
+            "1.2": "Functions",
+        }
+
+    @pytest.mark.parametrize(
+        ("info", "paper_id"),
+        [
+            (None, "9709_s25_qp_12"),          # no syllabus uploaded
+            (_syllabus(), None),               # MS was uploaded, not downloaded
+            (_syllabus(), "9709/12/M/J/25"),   # cover-page id, not a file id
+            (_syllabus(), "9709_s25_qp_31"),   # component the syllabus omits
+        ],
+    )
+    def test_every_unresolvable_case_is_none_not_empty(
+        self, info: SyllabusInfo | None, paper_id: str | None
+    ) -> None:
+        """None, so the prompt drops the section; {} would render a heading."""
+        assert topics_for_paper(info, paper_id) is None
+
+
+@pytest.fixture
+def _grader_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Record every keyword ``grade_paper`` passes to ``grade_question``."""
+    calls: list[dict[str, object]] = []
+
+    def _fake_grade(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return (
+            f'{{"question": "{kwargs["question_id"]}", "marks": [], '
+            f'"total": 3, "max": 5, "topic": "1.1"}}'
+        )
+
+    monkeypatch.setattr(workflow, "grade_question", _fake_grade)
+    return calls
+
+
+class TestGradePaperTopicPlumbing:
+    """What reaches ``grade_question``, not what comes back from it.
+
+    Asserting on the returned ``QuestionResult.topic`` would pass just as
+    well if ``grade_paper`` never forwarded anything, since the stubbed reply
+    carries a topic of its own.
+    """
+
+    def _run(
+        self,
+        calls_fixture: list[dict[str, object]],
+        **kwargs: object,
+    ) -> workflow.GradeOutcome:
+        return grade_paper(
+            config=_FakeConfig(),  # type: ignore[arg-type]
+            paper_config=_paper_config("Q1", "Q2"),
+            paper_type=PaperType.MATH,
+            pdf_source=b"%PDF",
+            question_ids=["Q1", "Q2"],
+            assignments={"Q1": [1], "Q2": [2]},
+            clips={},
+            renderer=_FakeRenderer(),
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    def test_every_question_is_graded_against_its_papers_topics(
+        self, _grader_calls: list[dict[str, object]],
+    ) -> None:
+        self._run(
+            _grader_calls,
+            syllabus_info=_syllabus(),
+            paper_id="9709_s25_qp_12",
+        )
+
+        assert len(_grader_calls) == 2
+        assert [c["question_id"] for c in _grader_calls] == ["Q1", "Q2"]
+        for call in _grader_calls:
+            assert call["topic_list"] == {
+                "1.1": "Quadratics",
+                "1.2": "Functions",
+            }
+
+    def test_another_component_gets_that_components_topics(
+        self, _grader_calls: list[dict[str, object]],
+    ) -> None:
+        """Not a fixed list: paper 4 must get section 4, not section 1."""
+        self._run(
+            _grader_calls,
+            syllabus_info=_syllabus(),
+            paper_id="9709_s25_qp_43",
+        )
+
+        for call in _grader_calls:
+            assert call["topic_list"] == {"4.1": "Forces and equilibrium"}
+
+    def test_without_a_syllabus_nothing_is_passed(
+        self, _grader_calls: list[dict[str, object]],
+    ) -> None:
+        self._run(_grader_calls, paper_id="9709_s25_qp_12")
+
+        assert _grader_calls
+        for call in _grader_calls:
+            assert call["topic_list"] is None
+
+    def test_an_uploaded_mark_scheme_has_no_paper_id_and_no_topics(
+        self, _grader_calls: list[dict[str, object]],
+    ) -> None:
+        self._run(_grader_calls, syllabus_info=_syllabus())
+
+        assert _grader_calls
+        for call in _grader_calls:
+            assert call["topic_list"] is None
+
+    def test_the_topic_the_model_returns_reaches_the_result(
+        self, _grader_calls: list[dict[str, object]],
+    ) -> None:
+        outcome = self._run(
+            _grader_calls,
+            syllabus_info=_syllabus(),
+            paper_id="9709_s25_qp_12",
+        )
+
+        assert [r.topic for r in outcome.results] == ["1.1", "1.1"]

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import datetime
 from collections.abc import Callable
 
 import flet as ft
@@ -11,8 +12,14 @@ import flet as ft
 from app_flet import theme
 from app_flet.components.widgets import metric_card, success_banner
 from app_flet.tabs.mark.context import MarkTabContext
+from core.storage import MistakeStore
 from modules.manager import PaperManager, ScoreUpdate
-from modules.marking.workflow import ScoreSummary, summarise_scores
+from modules.marking.mistakes import mistakes_from_results
+from modules.marking.workflow import (
+    ScoreSummary,
+    summarise_scores,
+    topics_for_paper,
+)
 
 
 def record_score(ctx: MarkTabContext, totals: ScoreSummary) -> bool:
@@ -56,6 +63,35 @@ def record_score(ctx: MarkTabContext, totals: ScoreSummary) -> bool:
         theme.SUCCESS,
     )
     return True
+
+
+def record_mistakes(ctx: MarkTabContext) -> None:
+    """File every question that lost marks into the 错题本.
+
+    Gated on ``ms_source == "downloaded"`` exactly like :func:`record_score`,
+    and for the same reason: an uploaded mark scheme has no real paper_id,
+    and paper_id is how the notebook reconstructs subject / session /
+    component downstream.
+
+    Failure here never blocks the score that was just recorded — the mistake
+    notebook is a bonus, so a broken CSV gets a warning, not an error path.
+    """
+    if ctx.ms_source != "downloaded" or not ctx.selected_paper:
+        return
+    records = mistakes_from_results(
+        ctx.state.grading_results,
+        paper_id=ctx.selected_paper,
+        topics=topics_for_paper(ctx.syllabus_info, ctx.selected_paper),
+        timestamp=datetime.datetime.now(),
+    )
+    if not records:
+        return
+    try:
+        MistakeStore().append_many(records)
+    except (OSError, ValueError) as exc:
+        ctx.show_snack(f"错题记录写入失败: {exc}", theme.WARNING)
+        return
+    ctx.show_snack(f"已记入错题本 {len(records)} 题", theme.SUCCESS)
 
 
 # ── View ──────────────────────────────────────────────────────────
@@ -218,4 +254,8 @@ def _on_confirm_click(ctx: MarkTabContext) -> None:
     totals = summarise_scores(results, ctx.state.score_overrides)
     if record_score(ctx, totals):
         ctx.state.grading_confirmed = True
+        # Hooked to the confirm button, not to the end of grading: a re-grade
+        # the user never confirms shouldn't leave rows behind, and the store
+        # is append-only (no dedup) so every extra write would show up.
+        record_mistakes(ctx)
     ctx.rebuild()
