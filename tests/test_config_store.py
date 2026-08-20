@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from core.config_store import PaperPageConfig, get_paper_page_config
+from core.config_store import (
+    PaperPageConfig,
+    get_paper_page_config,
+    grading_type_for_paper,
+)
+from core.models import PaperType
 
 
 def test_paper_page_config_is_a_pydantic_model() -> None:
@@ -92,3 +97,74 @@ def test_real_paper_page_config_resolves_expected_values(
     cfg = get_paper_page_config(subject_id, component)
     assert cfg.qp_skip_pages == expected_skip
     assert cfg.ms_start_page == expected_ms_start
+
+
+# ---------------------------------------------------------------------------
+# grading_type_for_paper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("paper_id", "expected"),
+    [
+        # Chemistry: Paper 1 is the only MCQ; every other component is a
+        # structured paper the VL grader handles.
+        ("9701_s25_qp_11", PaperType.MCQ),
+        ("9701_s25_qp_14", PaperType.MCQ),   # a variant of the same paper
+        ("9701_s25_qp_21", PaperType.MATH),
+        ("9701_s25_qp_31", PaperType.MATH),
+        ("9701_s25_qp_41", PaperType.MATH),
+        ("9701_s25_qp_54", PaperType.MATH),
+        ("9702_s25_qp_11", PaperType.MCQ),
+        ("9709_s25_qp_12", PaperType.MATH),
+        ("9709_s25_qp_61", PaperType.MATH),
+        ("9231_s25_qp_43", PaperType.MATH),
+    ],
+)
+def test_grading_type_for_real_paper_ids(
+    paper_id: str, expected: PaperType
+) -> None:
+    """Pins the real data/syllabus_config.json: picking the grading path is
+    what saves the user from grading a structured paper on the MCQ path,
+    which silently yields no topics and no mistake records."""
+    assert grading_type_for_paper(paper_id) == expected
+
+
+@pytest.mark.parametrize(
+    "paper_id",
+    [
+        "9702_s25_qp_41",   # component not recorded (only papers 1-3 are)
+        "9700_s25_qp_21",   # subject has no paper_types at all
+        "9999_s25_qp_11",   # unknown subject
+        "9701_s25_gt",      # not a question paper
+        "9701/21/M/J/25",   # the mark scheme's own cover-page id
+        "",
+    ],
+)
+def test_grading_type_is_none_when_not_recorded(paper_id: str) -> None:
+    """None leaves the Mark tab's radio alone — an unrecorded paper must not
+    be guessed at, since guessing wrong is silent."""
+    assert grading_type_for_paper(paper_id) is None
+
+
+def test_grading_type_reads_the_given_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "syllabus_config.json"
+    config_path.write_text(
+        json.dumps([{
+            "syllabus_id": "9999",
+            "name": "Test",
+            "paper_types": [
+                {"digit": "1", "name": "MCQ", "grading": "mcq"},
+                {"digit": "2", "name": "Structured"},
+            ],
+        }]),
+        encoding="utf-8",
+    )
+
+    assert grading_type_for_paper(
+        "9999_s25_qp_12", config_path=config_path
+    ) == PaperType.MCQ
+    # Recorded name but no grading recorded → still None.
+    assert grading_type_for_paper(
+        "9999_s25_qp_21", config_path=config_path
+    ) is None

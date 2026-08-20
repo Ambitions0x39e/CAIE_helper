@@ -47,6 +47,13 @@ class MarkTabContext:
     # ── Step 1 — what to analyse ───────────────────────────────────
     ms_source: str = "downloaded"
     paper_type: PaperType = PaperType.MATH
+    #: True once the user has moved the paper-type radio themselves, which
+    #: stops the configured type from overriding them. Reset when they pick
+    #: a different paper.
+    paper_type_overridden: bool = False
+    #: The paper whose configured type has already been applied, so the sync
+    #: runs once per selection instead of on every rebuild.
+    paper_type_synced_for: str | None = None
     #: ``None`` = auto-detect from the MS PDF; a number is a manual override.
     start_page: int | None = None
     selected_syllabus: str | None = None
