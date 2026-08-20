@@ -59,12 +59,20 @@ def _lines_pdf(path: Path, pages: list[list[str]]) -> Path:
 
 def _placed_pdf(path: Path, cells: list[tuple[float, float, str]]) -> Path:
     """Draw each (x, y, text) at that exact spot — one page, no flowing."""
+    return _placed_pages_pdf(path, [cells])
+
+
+def _placed_pages_pdf(
+    path: Path, pages: list[list[tuple[float, float, str]]]
+) -> Path:
+    """Same, one inner list per page."""
     pdf = FPDF(unit="pt", format=(612, 792))
     pdf.set_auto_page_break(auto=False)
     pdf.set_font("Helvetica", size=9)
-    pdf.add_page()
-    for x, y, text in cells:
-        pdf.text(x, y, text)
+    for cells in pages:
+        pdf.add_page()
+        for x, y, text in cells:
+            pdf.text(x, y, text)
     pdf.output(str(path))
     return path
 
@@ -136,6 +144,127 @@ def _real_shaped_math_pdf(path: Path) -> Path:
         (569.9, 760, "9"),
     ]
     return _placed_pdf(path, cells)
+
+
+# Science column offsets, again copied from the real document (9701's
+# content overview and assessment overview pages).
+_SCI_LEFT_X = 62.4
+_SCI_RIGHT_X = 313.9
+_SCI_RIGHT_HEAD_X = 315.6   # the heading sits 1.7pt right of its own column
+_SCI_PAPER_RIGHT_X = 319.7
+
+
+def _real_shaped_science_pdf(path: Path) -> Path:
+    """The science overview as pdfminer reports it: two columns, interleaved.
+
+    Read off the real 9701 pages. Three traps, all of which the flowed-text
+    reader fell into:
+
+    * AS topics are the left column and A Level topics the right one, but
+      they arrive interleaved row by row, so the "current category" from one
+      column lands on the other's topics — on the real document that put
+      topics 10–12 under "Analysis" instead of "Inorganic chemistry";
+    * the contents page repeats both level headings, so "the first page that
+      mentions them" is the wrong page;
+    * Paper 1 and Paper 4 are printed side by side, so their two content
+      statements ("based on the AS Level syllabus content." / "…the A Level
+      syllabus content…") end up adjacent in the text with nothing to say
+      which belongs to which.
+    """
+    contents = [
+        (56.7, 60, "Contents"),
+        (56.7, 90, "2  Syllabus overview  ........................... 9"),
+        (69.4, 106, "Content overview"),
+        (69.4, 122, "AS Level subject content"),
+        (69.4, 138, "A Level subject content"),
+        (56.7, 154, "3  Subject content  ............................ 15"),
+    ]
+    overview = [
+        (_SCI_LEFT_X, 60, "AS Level subject content"),
+        (_SCI_RIGHT_HEAD_X, 60, "A Level subject content"),
+        (_SCI_LEFT_X, 90, "Physical chemistry"),
+        (_SCI_RIGHT_X, 90, "Physical chemistry"),
+        (_SCI_LEFT_X, 106, "1  Atomic structure"),
+        (_SCI_RIGHT_X, 106, "6  Chemical energetics"),
+        (_SCI_LEFT_X, 122, "2  Chemical bonding"),
+        (_SCI_RIGHT_X, 122, "7  Equilibria"),
+        (_SCI_LEFT_X, 140, "Inorganic chemistry"),
+        (_SCI_RIGHT_X, 140, "Inorganic chemistry"),
+        (_SCI_LEFT_X, 156, "3  Group 2"),
+        (_SCI_RIGHT_X, 156, "8  Chemistry of transition elements"),
+        # The right column's next heading sits *above* the left column's
+        # last Inorganic topic: in reading order it is the most recent
+        # heading when topic 4 arrives, which is what mislabelled it.
+        (_SCI_RIGHT_X, 172, "Analysis"),
+        (_SCI_LEFT_X, 188, "4  Group 17"),
+        (_SCI_RIGHT_X, 188, "9  Analytical techniques"),
+        (_SCI_LEFT_X, 210, "Analysis"),
+        (_SCI_LEFT_X, 226, "5  Analytical techniques"),
+        # Reads like a category heading (letters and spaces only) but is a
+        # sentence fragment about a level.
+        (_SCI_LEFT_X, 260, "AS Level candidates also study practical"),
+        (564.3, 760, "10"),
+    ]
+    assessment = [
+        (_SCI_LEFT_X, 60, "Paper 1"),
+        (_SCI_PAPER_RIGHT_X, 60, "Paper 4"),
+        (_SCI_LEFT_X, 80, "Multiple Choice"),
+        (_SCI_PAPER_RIGHT_X, 80, "A Level Structured Questions"),
+        (_SCI_LEFT_X, 100, "Questions are based on the AS Level syllabus"),
+        (_SCI_PAPER_RIGHT_X, 100, "Questions are based on the A Level syllabus"),
+        (_SCI_LEFT_X, 116, "content."),
+        (
+            _SCI_PAPER_RIGHT_X, 116,
+            "content; knowledge of material from the AS Level",
+        ),
+        (_SCI_PAPER_RIGHT_X, 132, "syllabus content will be required."),
+        (_SCI_LEFT_X, 170, "Paper 2"),
+        (_SCI_PAPER_RIGHT_X, 170, "Paper 5"),
+        (_SCI_LEFT_X, 190, "AS Level Structured Questions"),
+        (_SCI_PAPER_RIGHT_X, 190, "Planning, Analysis and Evaluation"),
+        (_SCI_LEFT_X, 206, "Questions are based on the AS Level syllabus"),
+        (
+            _SCI_PAPER_RIGHT_X, 206,
+            "Questions are based on the experimental skills of",
+        ),
+        (_SCI_LEFT_X, 222, "content."),
+        (_SCI_PAPER_RIGHT_X, 222, "planning, analysis and evaluation."),
+        (_SCI_LEFT_X, 260, "Paper 3"),
+        (_SCI_LEFT_X, 280, "Advanced Practical Skills"),
+        (
+            _SCI_LEFT_X, 296,
+            "Questions are based on the experimental skills in",
+        ),
+        (
+            _SCI_LEFT_X, 312,
+            "the Practical assessment section of the syllabus.",
+        ),
+    ]
+    return _placed_pages_pdf(path, [contents, overview, assessment])
+
+
+def _stacked_science_pdf(path: Path) -> Path:
+    """The same two lists stacked in one column instead of side by side.
+
+    Then the column offset says nothing and only the vertical position
+    separates the AS list from the A Level one.
+    """
+    overview = [
+        (56.7, 60, "AS Level subject content"),
+        (56.7, 84, "Physical chemistry"),
+        (56.7, 100, "1  Atomic structure"),
+        (56.7, 116, "2  Chemical bonding"),
+        (56.7, 150, "A Level subject content"),
+        (56.7, 174, "Physical chemistry"),
+        (56.7, 190, "3  Chemical energetics"),
+    ]
+    assessment = [
+        (56.7, 60, "Paper 1"),
+        (56.7, 80, "Questions are based on the AS Level syllabus content."),
+        (56.7, 120, "Paper 4"),
+        (56.7, 140, "Questions are based on the A Level syllabus content."),
+    ]
+    return _placed_pages_pdf(path, [overview, assessment])
 
 
 _INDENT = " " * 46
@@ -466,6 +595,86 @@ class TestScienceFamily:
         # which the caller treats the same as "no syllabus".
         assert "3" not in info.component_topics
         assert "5" not in info.component_topics
+
+
+class TestScienceGeometry:
+    """The two-column overview, read off the page instead of the text flow."""
+
+    def test_categories_come_from_the_topics_own_column(
+        self, tmp_path: Path
+    ) -> None:
+        info = parse_syllabus(
+            _real_shaped_science_pdf(tmp_path / "9701.pdf"), "9701"
+        )
+
+        # The one the flowed read got wrong: the right column's "Analysis"
+        # heading is the most recent one in reading order when topic 4
+        # arrives, but topic 4 is in the left column, under Inorganic.
+        assert info.topics["4"].name == "Group 17"
+        assert info.topics["4"].category == "Inorganic chemistry"
+        assert info.topics["3"].category == "Inorganic chemistry"
+        assert info.topics["5"].category == "Analysis"
+        # …and the right column keeps its own headings.
+        assert info.topics["8"].category == "Inorganic chemistry"
+        assert info.topics["9"].category == "Analysis"
+        assert info.topics["6"].category == "Physical chemistry"
+
+    def test_topics_are_listed_in_order(self, tmp_path: Path) -> None:
+        """Interleaved columns used to come back 1-8, 23-28, 9, 29-37, 10-22."""
+        info = parse_syllabus(
+            _real_shaped_science_pdf(tmp_path / "9701.pdf"), "9701"
+        )
+
+        assert list(info.topics) == [str(i) for i in range(1, 10)]
+
+    def test_side_by_side_papers_keep_their_own_statements(
+        self, tmp_path: Path
+    ) -> None:
+        """Paper 1 and Paper 4 are printed side by side; only the column
+        each statement sits in says which paper it belongs to."""
+        info = parse_syllabus(
+            _real_shaped_science_pdf(tmp_path / "9701.pdf"), "9701"
+        )
+
+        as_ids = ["1", "2", "3", "4", "5"]
+        assert info.component_topics["1"] == as_ids
+        assert info.component_topics["2"] == as_ids
+        # A Level = the AS topics plus its own column's.
+        assert info.component_topics["4"] == [str(i) for i in range(1, 10)]
+
+    def test_practical_papers_are_left_unmapped(self, tmp_path: Path) -> None:
+        """Paper 3 and Paper 5 examine experimental skills, not content —
+        the syllabus says so in as many words, so there is no topic list to
+        give them and their questions land in 未分类."""
+        info = parse_syllabus(
+            _real_shaped_science_pdf(tmp_path / "9701.pdf"), "9701"
+        )
+
+        assert "3" not in info.component_topics
+        assert "5" not in info.component_topics
+
+    def test_the_contents_page_is_not_mistaken_for_the_overview(
+        self, tmp_path: Path
+    ) -> None:
+        """It lists both level headings too, several pages earlier."""
+        info = parse_syllabus(
+            _real_shaped_science_pdf(tmp_path / "9701.pdf"), "9701"
+        )
+
+        assert len(info.topics) == 9
+        assert all("....." not in t.name for t in info.topics.values())
+
+    def test_one_column_splits_the_levels_by_position(
+        self, tmp_path: Path
+    ) -> None:
+        """Stacked lists: the column offset says nothing, only the y does."""
+        info = parse_syllabus(
+            _stacked_science_pdf(tmp_path / "9700.pdf"), "9700"
+        )
+
+        assert info.component_topics["1"] == ["1", "2"]
+        assert info.component_topics["4"] == ["1", "2", "3"]
+        assert info.topics["3"].name == "Chemical energetics"
 
 
 # ── Shared behaviour ──────────────────────────────────────────────

@@ -519,6 +519,185 @@ def _parse_math_geometry(
     return topics, component_topics
 
 
+# ── Science family, read from the page geometry ───────────────────
+#
+# Same lesson as the math table, a different shape. The science content
+# overview is two side-by-side columns — AS topics on the left, A Level on
+# the right — and pdfminer emits them interleaved by row, so a flowed read
+# hands a heading from one column to a topic in the other. Verified on the
+# real 9701 document, where topics 10–12 came out under "Analysis" (the
+# right column's last heading) instead of "Inorganic chemistry".
+#
+# The assessment overview has the same problem: Paper 1 and Paper 4 sit side
+# by side, so "Questions are based on the AS Level syllabus content." and its
+# A Level twin land adjacent in the text with nothing to say which is whose.
+
+_LEVEL_HEADING_LINE_RE = re.compile(
+    r"^(AS|A)\s+Level\s+subject\s+content\b", re.IGNORECASE
+)
+#: "10  Group 2" — one entry of a flat list, id and name on one line.
+_SCIENCE_TOPIC_CELL_RE = re.compile(r"^(\d{1,2})\s+(\S.*)$")
+#: "Paper 3" alone on its line — a heading, not a mention in prose.
+_PAPER_HEADING_RE = re.compile(r"^Paper\s+(\d{1,2})$", re.IGNORECASE)
+#: A line belongs to a heading's block if it starts within this of its x.
+_COLUMN_TOL = 12.0
+#: Prose that reads like a category heading ("AS Level candidates also study
+#: practical") but is a sentence fragment about a level.
+_LEVEL_PREFIX_RE = re.compile(r"^AS?\s+Level\b", re.IGNORECASE)
+#: Dot leaders. The table of contents lists the same headings the real
+#: section does ("A Level subject content ....... 10"), so without this the
+#: contents page parses as a content overview holding six chapter titles.
+_DOT_LEADER_RE = re.compile(r"\.{4,}")
+
+
+def _nearest(x: float, anchors: list[float]) -> float:
+    """The column anchor a line at *x* belongs to.
+
+    Nearest rather than "greatest anchor at or left of x": a column's body
+    can start a point or two left of its own heading (313.9 under a heading
+    at 315.6 on the real document).
+    """
+    return min(anchors, key=lambda a: abs(a - x))
+
+
+def _read_level_columns(
+    overview: list[_Line],
+) -> tuple[dict[str, SyllabusTopic], dict[str, list[str]]] | None:
+    """Topics and their level, read column by column."""
+    heads = [
+        (line, match.group(1).upper())
+        for line in overview
+        if (match := _LEVEL_HEADING_LINE_RE.match(line.text))
+    ]
+    if not heads:
+        return None
+    anchors = sorted({line.x0 for line, _ in heads})
+
+    topics: dict[str, SyllabusTopic] = {}
+    by_level: dict[str, list[str]] = {}
+    # A heading owns its column *from its own baseline down* to the next
+    # heading in that column. Two-column layouts (9701) put the levels side
+    # by side and the y bound never bites; a single-column one stacks them,
+    # and then the y bound is the only thing separating AS from A Level.
+    for head, level in heads:
+        anchor = _nearest(head.x0, anchors)
+        floor = max(
+            (
+                other.top for other, _ in heads
+                if _nearest(other.x0, anchors) == anchor
+                and other.top < head.top
+            ),
+            default=float("-inf"),
+        )
+        category: str | None = None
+        column = [
+            line for line in overview
+            if _nearest(line.x0, anchors) == anchor
+            and floor < line.top < head.top
+        ]
+        for line in sorted(column, key=lambda ln: -ln.top):
+            if _DOT_LEADER_RE.search(line.text):
+                continue
+            if _LEVEL_HEADING_LINE_RE.match(line.text):
+                category = None
+                continue
+            match = _SCIENCE_TOPIC_CELL_RE.match(line.text)
+            if match:
+                topic_id = match.group(1)
+                topics.setdefault(
+                    topic_id,
+                    SyllabusTopic(
+                        topic_id=topic_id,
+                        name=match.group(2).strip(),
+                        category=category,
+                    ),
+                )
+                by_level.setdefault(level, []).append(topic_id)
+            elif _looks_like_category(line.text) and not _LEVEL_PREFIX_RE.match(
+                line.text
+            ):
+                category = line.text
+    if not topics:
+        return None
+    ordered = {
+        tid: topics[tid] for tid in sorted(topics, key=_topic_sort_key)
+    }
+    return ordered, by_level
+
+
+def _paper_levels(pages: list[list[_Line]]) -> dict[str, str]:
+    """Paper number → "AS" / "A", from each paper's own block.
+
+    A paper's block is what sits under its heading *in its own column*, which
+    is the only thing that separates Paper 1's content statement from Paper
+    4's when the two are printed side by side.
+    """
+    levels: dict[str, str] = {}
+    for lines in pages:
+        heads = [
+            (line, match.group(1))
+            for line in lines
+            if (match := _PAPER_HEADING_RE.match(line.text))
+        ]
+        for head, number in heads:
+            if number in levels:
+                continue
+            floor = max(
+                (
+                    other.top for other, _ in heads
+                    if abs(other.x0 - head.x0) <= _COLUMN_TOL
+                    and other.top < head.top
+                ),
+                default=float("-inf"),
+            )
+            block = " ".join(
+                line.text
+                for line in sorted(lines, key=lambda ln: -ln.top)
+                if abs(line.x0 - head.x0) <= _COLUMN_TOL
+                and floor < line.top < head.top
+            )
+            if _A_CONTENT_PHRASE in block:
+                levels[number] = "A"
+            elif _AS_CONTENT_PHRASE in block:
+                levels[number] = "AS"
+    return levels
+
+
+def _parse_science_geometry(
+    pdf_path: Path | str,
+) -> tuple[dict[str, SyllabusTopic], dict[str, list[str]]] | None:
+    """Read the science content overview off the page. None if absent."""
+    pages = [_page_lines(layout) for layout in extract_pages(str(pdf_path))]
+    # The richest page wins rather than the first: the contents page repeats
+    # the same headings, and (dot leaders stripped) still yields a handful of
+    # chapter titles that look like topics.
+    candidates = [
+        read
+        for lines in pages
+        if any(_LEVEL_HEADING_LINE_RE.match(ln.text) for ln in lines)
+        and (read := _read_level_columns(lines)) is not None
+    ]
+    if not candidates:
+        return None
+    topics, by_level = max(candidates, key=lambda c: len(c[0]))
+
+    as_ids = sorted(set(by_level.get("AS", [])), key=_topic_sort_key)
+    # "A Level candidates study the AS topics and the following topics" —
+    # the A Level column lists only what it adds.
+    a_ids = sorted(
+        set(by_level.get("A", [])) | set(as_ids), key=_topic_sort_key
+    )
+
+    component_topics: dict[str, list[str]] = {}
+    for number, level in _paper_levels(pages).items():
+        ids = a_ids if level == "A" else as_ids
+        if ids:
+            component_topics[number] = ids
+    if not component_topics:
+        return None
+    return topics, component_topics
+
+
 # ── Store ─────────────────────────────────────────────────────────
 #
 # A parsed syllabus outlives the session that produced it: the user had to
@@ -654,10 +833,12 @@ def parse_syllabus(
         if stored is not None:
             return stored
 
-    # Geometry first for the math family — see this module's docstring for
-    # what the flowed text gets wrong on the real document. Text is the
-    # fallback, and the only reading for the science family's flat lists.
-    geometry = _parse_math_geometry(pdf_path)
+    # Geometry first for both families — see this module's docstring for what
+    # the flowed text gets wrong on the real documents. Text is the fallback,
+    # for a layout neither geometry reader recognises.
+    geometry = _parse_math_geometry(pdf_path) or _parse_science_geometry(
+        pdf_path
+    )
     if geometry is not None:
         info = SyllabusInfo(
             subject_id=subject_id,
