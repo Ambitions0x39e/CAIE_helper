@@ -31,8 +31,12 @@ from fpdf import FPDF
 from core.settings import app_settings
 from modules.marking.syllabus_parser import (
     SyllabusParseError,
+    delete_syllabus,
+    load_syllabus,
     parse_syllabus,
     parse_syllabus_text,
+    stored_syllabuses,
+    syllabus_path,
 )
 
 # ── Fixture builders ──────────────────────────────────────────────
@@ -301,7 +305,7 @@ def _science_pdf(path: Path) -> Path:
 def _temp_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Keep every parse's cache inside tmp_path, never ~/.cie_helper."""
     monkeypatch.setattr(app_settings, "base_dir", tmp_path / "home")
-    app_settings.syllabus_cache_dir.mkdir(parents=True, exist_ok=True)
+    app_settings.syllabus_dir.mkdir(parents=True, exist_ok=True)
 
 
 # ── Math family ───────────────────────────────────────────────────
@@ -505,3 +509,70 @@ def test_second_parse_comes_from_the_cache(tmp_path: Path) -> None:
     pdf.unlink()
 
     assert parse_syllabus(pdf, "9709") == first
+
+
+# ── The store ─────────────────────────────────────────────────────
+#
+# A parsed syllabus has to outlive the session: the user found and uploaded a
+# PDF for it, so "re-derive it" means asking them to do that again.
+
+
+class TestStore:
+    def test_nothing_stored_is_none_not_an_error(self) -> None:
+        assert load_syllabus("9709") is None
+        assert stored_syllabuses() == []
+
+    def test_a_parse_is_readable_without_the_pdf(self, tmp_path: Path) -> None:
+        """What makes it survive a restart: no path needed to get it back."""
+        parsed = parse_syllabus(_math_pdf(tmp_path / "9709.pdf"), "9709")
+
+        assert load_syllabus("9709") == parsed
+
+    def test_every_subject_is_listed(self, tmp_path: Path) -> None:
+        parse_syllabus(_math_pdf(tmp_path / "m.pdf"), "9709")
+        parse_syllabus(_science_pdf(tmp_path / "s.pdf"), "9701")
+
+        assert [i.subject_id for i in stored_syllabuses()] == ["9701", "9709"]
+
+    def test_force_replaces_the_stored_copy(self, tmp_path: Path) -> None:
+        """Re-uploading a corrected PDF must not be swallowed by the store."""
+        parse_syllabus(_math_pdf(tmp_path / "m.pdf"), "9709")
+        assert len(load_syllabus("9709").topics) == 14  # type: ignore[union-attr]
+
+        parse_syllabus(_science_pdf(tmp_path / "s.pdf"), "9709", force=True)
+
+        stored = load_syllabus("9709")
+        assert stored is not None
+        assert len(stored.topics) == 30
+
+    def test_delete_forgets_it(self, tmp_path: Path) -> None:
+        parse_syllabus(_math_pdf(tmp_path / "9709.pdf"), "9709")
+
+        assert delete_syllabus("9709") is True
+        assert load_syllabus("9709") is None
+        assert delete_syllabus("9709") is False
+
+    def test_an_entry_left_in_the_old_cache_dir_is_migrated(
+        self, tmp_path: Path
+    ) -> None:
+        """Upgrading must not silently ask for the PDF again."""
+        parsed = parse_syllabus(_math_pdf(tmp_path / "9709.pdf"), "9709")
+        legacy_dir = app_settings.legacy_syllabus_cache_dir
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy = legacy_dir / "9709.json"
+        legacy.write_text(
+            syllabus_path("9709").read_text("utf-8"), encoding="utf-8"
+        )
+        syllabus_path("9709").unlink()
+
+        assert load_syllabus("9709") == parsed
+        # …and it moved, so the next read doesn't go looking there again.
+        assert syllabus_path("9709").exists()
+        assert not legacy.exists()
+
+    def test_a_corrupt_file_reads_as_absent(self) -> None:
+        """A hand-edited store must not take the Mark tab down with it."""
+        syllabus_path("9709").write_text("{ not json", encoding="utf-8")
+
+        assert load_syllabus("9709") is None
+        assert stored_syllabuses() == []

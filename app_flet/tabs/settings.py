@@ -30,9 +30,15 @@ from pydantic import ValidationError
 
 from app_flet import theme
 from core.settings import GraderConfig, MailConfig
+from modules.marking.syllabus_parser import (
+    delete_syllabus,
+    stored_syllabuses,
+    syllabus_path,
+)
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
+    from modules.marking.syllabus_parser import SyllabusInfo
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _APP_NAME = "CIE Helper"
@@ -543,9 +549,13 @@ def _build_about_view(
                         size=13,
                         color=theme.MUTED,
                     ),
-                    ft.Text(
+                    ft.Markdown(
                         result.release_notes or "（本次发布没有填写更新说明）",
-                        size=13,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                        selectable=True,
+                        md_style_sheet=ft.MarkdownStyleSheet(
+                            p_text_style=ft.TextStyle(size=13),
+                        ),
                     ),
                     ft.Text(
                         "下载完成后会自动安装。安装时应用会自动退出，"
@@ -646,6 +656,103 @@ def _build_about_view(
 # Menu row helper + entry point (this is what gets embedded as the "设置" tab)
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Sub-page: 大纲 Topic 库
+# --------------------------------------------------------------------------
+
+def _syllabus_body(
+    page: ft.Page, info: SyllabusInfo, on_changed: Callable[[], None],
+) -> list[ft.Control]:
+    """One stored syllabus: where it lives, what it maps, every topic."""
+    mapping = ft.Column(
+        [
+            ft.Text(
+                f"Paper {paper} → {', '.join(ids)}",
+                size=13, selectable=True,
+            )
+            for paper, ids in sorted(info.component_topics.items())
+        ] or [ft.Text("（没有 component 映射）", size=13, color=theme.MUTED)],
+        spacing=4,
+    )
+    topics = ft.Column(
+        [
+            ft.Text(
+                f"{topic.topic_id}  {topic.name}"
+                + (f"   [{topic.category}]" if topic.category else ""),
+                size=12, color=theme.MUTED, selectable=True,
+            )
+            for topic in info.topics.values()
+        ],
+        spacing=2,
+    )
+
+    def _forget(_: ft.Event[ft.Button]) -> None:
+        delete_syllabus(info.subject_id)
+        on_changed()
+
+    return [
+        _section(f"{info.subject_id}"),
+        *_divided(
+            _row(
+                "存储位置",
+                ft.Text(
+                    str(syllabus_path(info.subject_id)),
+                    size=12, color=theme.MUTED, selectable=True,
+                ),
+            ),
+            _row(
+                "规模",
+                ft.Text(
+                    f"{len(info.topics)} topic · "
+                    f"{len(info.component_topics)} component",
+                    size=13,
+                ),
+            ),
+            _row("Paper → topic", mapping),
+            _row("Topic 全表", topics),
+        ),
+        _actions(ft.Button(
+            "删除并重新解析",
+            icon=ft.Icons.DELETE_OUTLINE,
+            on_click=_forget,
+            style=theme.filled_button(theme.DANGER),
+            tooltip="删掉这份记录，下次在批改页重新上传大纲 PDF 时会重新解析",
+        )),
+    ]
+
+
+def _build_syllabus_view(
+    page: ft.Page, state: AppState, on_back: Callable[[], None],
+) -> ft.Control:
+    """Read-only dump of every parsed syllabus — the debug surface for it.
+
+    The parse runs once per subject and its result then silently steers every
+    graded question's topic tag, so there has to be somewhere to look at what
+    it actually produced.
+    """
+    del state  # every sub-page takes it; this one reads only the store
+    body = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def _render() -> None:
+        body.controls.clear()
+        stored = stored_syllabuses()
+        if not stored:
+            body.controls.append(ft.Text(
+                "还没有解析过任何大纲。在「批改」页选好科目后上传大纲 PDF，"
+                "解析结果会存到 ~/.cie_helper/syllabus/ 并在这里列出。",
+                size=13, color=theme.MUTED,
+            ))
+        for info in stored:
+            body.controls.extend(_syllabus_body(page, info, _render))
+        page.update()
+
+    _render()
+    return ft.Column(
+        [_sub_header("大纲 Topic 库", on_back), body],
+        expand=True,
+    )
+
+
 def _menu_row(
     title: str,
     subtitle: str,
@@ -703,6 +810,11 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
         content.controls.append(_build_grader_view(page, state, show_menu))
         page.update()
 
+    def open_syllabus(_: ft.Event[ft.Container]) -> None:
+        content.controls.clear()
+        content.controls.append(_build_syllabus_view(page, state, show_menu))
+        page.update()
+
     def open_about(_: ft.Event[ft.Container]) -> None:
         content.controls.clear()
         content.controls.append(_build_about_view(page, state, show_menu))
@@ -727,6 +839,10 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
                 _menu_row(
                     "Grader API 设置", "批改用的多模态模型凭证",
                     ft.Icons.SMART_TOY_OUTLINED, open_grader,
+                ),
+                _menu_row(
+                    "大纲 Topic 库", "已解析的大纲：topic 列表与 paper 映射",
+                    ft.Icons.MENU_BOOK_OUTLINED, open_syllabus,
                 ),
                 _menu_row(
                     "关于", "版本信息与反馈",
