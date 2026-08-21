@@ -19,6 +19,8 @@ first expand, the same as 统计's syllabus panels.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 import flet as ft
@@ -26,7 +28,8 @@ import flet as ft
 from app_flet import theme
 from app_flet.components.widgets import data_table
 from core.models import MistakeRecord
-from core.storage import MistakeStore
+from core.storage import CSVStore, MistakeStore
+from modules.marking.mistake_pdf import build_export
 from modules.marking.mistakes import (
     UNCLASSIFIED,
     distinct_topic_keys,
@@ -45,9 +48,12 @@ if TYPE_CHECKING:
 
     from app_flet.state import AppState
 
+_log = logging.getLogger("cie_helper.mistakes")
+
 _BY_PAPER = "paper"
 _BY_TOPIC = "topic"
 _EXPORT_FILENAME = "mistakes.csv"
+_EXPORT_PDF_FILENAME = "mistakes.pdf"
 
 # ── Column widths ─────────────────────────────────────────────────
 #
@@ -539,8 +545,54 @@ def build_mistakes_tab(
         if path:
             show_snack(f"已导出 {len(chosen)} 题 → {path}", theme.SUCCESS)
 
-    def _on_export_click(_: ft.Event[ft.Button]) -> None:
+    def _on_export_click(_: ft.Event[ft.TextButton]) -> None:
         page.run_task(_do_export)
+
+    async def _do_export_pdf() -> None:
+        chosen = [records[i] for i in sorted(selected)]
+        if not chosen:
+            show_snack("请先勾选要导出的错题", theme.WARNING)
+            return
+        try:
+            qp_of = {r.paper_id: r.qp_path for r in CSVStore().load_all()}
+        except ValueError as exc:
+            show_snack(f"读取试卷记录失败: {exc}", theme.DANGER)
+            return
+
+        show_snack("正在从原卷裁剪题目…", theme.ACCENT)
+        try:
+            # Two pdfminer passes per paper — off the event loop, or the
+            # window freezes for the duration.
+            data, warnings = await asyncio.to_thread(
+                build_export, chosen, qp_of
+            )
+        except ValueError as exc:
+            show_snack(f"导出失败: {exc}", theme.DANGER)
+            return
+        except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+            _log.exception("mistake PDF export failed")
+            show_snack(f"导出失败: {exc}", theme.DANGER)
+            return
+
+        path = await export_picker.save_file(
+            dialog_title="导出所选错题（PDF）",
+            file_name=_EXPORT_PDF_FILENAME,
+            allowed_extensions=["pdf"],
+            src_bytes=data,
+        )
+        if not path:
+            return
+        if warnings:
+            show_snack(
+                f"已导出 → {path}；{len(warnings)} 项未包含: "
+                f"{'；'.join(warnings)}",
+                theme.WARNING,
+            )
+        else:
+            show_snack(f"已导出 → {path}", theme.SUCCESS)
+
+    def _on_export_pdf_click(_: ft.Event[ft.Button]) -> None:
+        page.run_task(_do_export_pdf)
 
     # ── Shell ─────────────────────────────────────────────────────
 
@@ -575,10 +627,16 @@ def build_mistakes_tab(
                         weight=ft.FontWeight.BOLD),
                 ft.Container(expand=True),
                 count_text,
-                ft.Button(
-                    "导出所选",
+                ft.TextButton(
+                    "导出 CSV",
                     icon=ft.CupertinoIcons.ARROW_DOWN_DOC,
                     on_click=_on_export_click,
+                ),
+                ft.Button(
+                    "导出 PDF",
+                    icon=ft.CupertinoIcons.DOC_ON_CLIPBOARD,
+                    tooltip="把所选题目从原卷裁下来，一道大题一页（不含答题横线）",
+                    on_click=_on_export_pdf_click,
                     style=theme.filled_button(),
                 ),
             ],
