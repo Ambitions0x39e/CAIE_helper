@@ -135,22 +135,32 @@ class TestPlanPages:
 # ── Dropping the answer space ─────────────────────────────────────
 
 
+#: Where a real paper puts things, measured on both papers to hand: the
+#: question number in a gutter at x62-72, the writing column (body text and
+#: answer ruling alike) at x94, and the margin bar down the side at x26-45.
+_NUMBER_X = 62.0
+_COLUMN_X = 94.0
+_BAR_X = 26.0
+
+
 def _paper_pdf(path: Path) -> Path:
     """A page shaped like a real one: stem, ruled table, then answer space."""
     pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
     pdf.set_auto_page_break(auto=False)
     pdf.set_font("Helvetica", size=10)
     pdf.add_page()
+    pdf.rect(_BAR_X, 0, 20, _PAGE_H)            # the margin bar CIE prints
     pdf.text(36, 36, "8")                       # page number, above the region
-    pdf.text(62, 60, "4  A scientist is investigating butterflies.")
-    pdf.text(62, 74, "The table shows the observed frequencies.")
+    pdf.text(_NUMBER_X, 60, "4")                # the number, in its gutter
+    pdf.text(_COLUMN_X, 60, "A scientist is investigating butterflies.")
+    pdf.text(_COLUMN_X, 74, "The table shows the observed frequencies.")
     pdf.rect(104, 100, 420, 40)                 # the table: graphics, not text
-    pdf.text(62, 170, "(a)  Find the values of p and q.")
+    pdf.text(_COLUMN_X, 170, "(a)  Find the values of p and q.")
     for i in range(10):                         # answer space
-        pdf.text(62, 195 + i * 24, "." * 90)
-    pdf.text(62, 450, "(b)  Carry out a goodness of fit test.")
+        pdf.text(_COLUMN_X, 195 + i * 24, "." * 90)
+    pdf.text(_COLUMN_X, 450, "(b)  Carry out a goodness of fit test.")
     for i in range(8):
-        pdf.text(62, 475 + i * 24, "." * 90)
+        pdf.text(_COLUMN_X, 475 + i * 24, "." * 90)
     pdf.output(str(path))
     return path
 
@@ -291,8 +301,9 @@ class TestComposePdf:
 
         rect = _clip_rects(out)[0][0].split()
         x, width = float(rect[0]), float(rect[2])
-        assert x > 40           # the margin bar at x26-45 is outside
-        assert width < _PAGE_W  # and so is whatever sits down the right
+        assert x > _BAR_X + 20      # the margin bar is outside the crop
+        assert x < _NUMBER_X        # …but the question number is inside it
+        assert width < _PAGE_W - x  # and so is whatever sits down the right
 
     def test_pages_keep_the_source_size(self, tmp_path: Path) -> None:
         source = _paper_pdf(tmp_path / "qp.pdf")
