@@ -311,6 +311,47 @@ class TestBuildExport:
 
         assert any("9702_s25_qp_21" in w for w in warnings)
 
+    def test_an_untrimmable_paper_says_so(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Some papers embed fonts with no ToUnicode map: pdfminer reports
+        every glyph as "(cid:155)" and cannot group them into lines, so the
+        answer ruling is indistinguishable from the question. Measured on a
+        real 2025 paper — 10k cid tokens, zero readable words. The export
+        falls back to the whole region and has to admit it."""
+        source = _paper_pdf(tmp_path / "qp.pdf")
+
+        def _fake(
+            paper_id: str, qp_path: str, wanted: list[str]
+        ) -> tuple[list[QuestionCrop], list[str]]:
+            return [
+                QuestionCrop(paper_id, q, qp_path, [
+                    Band(page_idx=0, y_top=60.0, y_bottom=700.0),
+                ], trimmed=False)
+                for q in wanted
+            ], []
+
+        monkeypatch.setattr(
+            "modules.marking.mistake_pdf.crops_for_paper", _fake
+        )
+
+        _, warnings = build_export(
+            [_record("Q1")], {"9231_s22_qp_41": str(source)}
+        )
+
+        assert len(warnings) == 1
+        assert "乱码" in warnings[0]
+        assert "整题区域" in warnings[0]
+
+    def test_a_trimmed_paper_warns_about_nothing(
+        self, _stub_crops: Path
+    ) -> None:
+        _, warnings = build_export(
+            [_record("Q1")], {"9231_s22_qp_41": str(_stub_crops)}
+        )
+
+        assert warnings == []
+
     def test_one_page_per_main_question_across_papers(
         self, _stub_crops: Path
     ) -> None:
