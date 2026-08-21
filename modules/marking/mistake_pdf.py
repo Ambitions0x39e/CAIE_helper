@@ -19,6 +19,7 @@ import io
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from statistics import median
 from typing import TYPE_CHECKING
 
 from pypdf import PdfReader, PdfWriter, Transformation
@@ -211,10 +212,12 @@ _REPEAT_SHARE = 0.8
 #: CIE draws down the side of every page is 99% of it. A real diagram never
 #: comes close.
 _FURNITURE_RATIO = 0.7
-#: Fallback split distance, for space left blank rather than ruled. Blocks
-#: are normally separated by *where a ruling was* — a measured fact — and
-#: only fall back on this when the paper left the space empty.
-_MERGE_GAP = 40.0
+#: Two ruling rows further apart than this are not the same block of answer
+#: space, so the gap between them is not used to estimate the row pitch.
+_MAX_PITCH = 60.0
+#: Pitch to assume when a band holds a single ruling row and there is no
+#: spacing to measure. Both papers measured here rule at 24.5pt.
+_DEFAULT_PITCH = 24.5
 #: Breathing room around a block, so glyphs are not flush with the crop edge.
 _PAD = 3.0
 #: An element grazing the edge of a region belongs to its neighbour. Without
@@ -225,6 +228,10 @@ _INSIDE_RATIO = 0.6
 _MIN_BAND = 6.0
 #: Keep this much of the region and the trim achieved nothing worth claiming.
 _TRIM_THRESHOLD = 0.9
+#: A line that came out as an actual word rather than a run of glyph codes.
+#: One of these on a page is enough to trust its text layer — the papers that
+#: fail this produce *zero* across the whole document, not a few.
+_READABLE_RE = re.compile(r"[A-Za-z]{3,}")
 
 
 def _is_filler(line: object) -> bool:
@@ -263,12 +270,17 @@ def _is_filler(line: object) -> bool:
 
 def _content_spans(
     layout: object, y_top: float, y_bottom: float, page_height: float
-) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
-    """(content, filler) spans in the band, both top-down.
+) -> tuple[list[tuple[float, float]], list[tuple[float, float]], int]:
+    """(content, filler, readable) — spans top-down, plus a legibility count.
 
     The filler spans are kept, not discarded: where a ruling *was* is the
     honest place to break one block from the next. Judging it by distance
     alone mistakes a paper's own paragraph spacing for answer space.
+
+    ``readable`` counts lines that came out as actual words. It is what says
+    whether this page's text layer can be trusted to say where a question
+    ends: on a paper embedded without a ToUnicode map it is zero, and then
+    the gaps between rulings have to be kept whole.
     """
     from pdfminer.layout import (
         LTCurve,
@@ -282,6 +294,7 @@ def _content_spans(
 
     content: list[tuple[float, float]] = []
     filler: list[tuple[float, float]] = []
+    readable = 0
 
     def _add(element: object, into: list[tuple[float, float]]) -> None:
         top = page_height - element.y1  # type: ignore[attr-defined]
@@ -301,42 +314,70 @@ def _content_spans(
             for line in element:
                 if not isinstance(line, LTTextLine):
                     continue
-                _add(line, filler if _is_filler(line) else content)
+                if _is_filler(line):
+                    _add(line, filler)
+                    continue
+                _add(line, content)
+                if _READABLE_RE.search(line.get_text()):
+                    readable += 1
         elif isinstance(
             element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
         ) and element.height <= _FURNITURE_RATIO * page_height:
             # Taller than that and it is the margin bar CIE draws down every
             # page, not part of any question.
             _add(element, content)
-    return content, filler
+    return content, filler, readable
 
 
-def _merge_spans(
-    spans: Sequence[tuple[float, float]],
-    filler: Sequence[tuple[float, float]] = (),
-    gap: float = _MERGE_GAP,
+def _ruling_blocks(
+    rows: Sequence[tuple[float, float]],
 ) -> list[tuple[float, float]]:
-    """Join content spans into blocks, breaking where the answer space was."""
-    merged: list[tuple[float, float]] = []
-    for top, bottom in sorted(spans):
-        if merged:
-            previous_top, previous_bottom = merged[-1]
-            ruled_between = any(
-                previous_bottom <= f_top < top for f_top, _ in filler
-            )
-            if not ruled_between and top - previous_bottom <= gap:
-                merged[-1] = (previous_top, max(previous_bottom, bottom))
-                continue
-        merged.append((top, bottom))
-    return merged
+    """Rows of ruling → the solid blocks of answer space they make up.
+
+    Each row is stretched down to the next one, because the blank *under* a
+    ruling is as much answer space as the ruling itself; consecutive rows
+    then merge into one block. The stretch is the measured row pitch, not a
+    constant — papers rule at their own spacing (24.5pt on the two measured
+    here) and a wrong guess either leaves slivers between rows or eats into
+    the question below.
+    """
+    if not rows:
+        return []
+    ordered = sorted(rows)
+    tops = [top for top, _ in ordered]
+    gaps = [
+        b - a for a, b in zip(tops, tops[1:], strict=False)
+        if 0 < b - a < _MAX_PITCH
+    ]
+    pitch = median(gaps) if gaps else _DEFAULT_PITCH
+
+    blocks: list[list[float]] = []
+    for top, bottom in ordered:
+        stretched = max(bottom, top + pitch)
+        if blocks and top - blocks[-1][1] <= pitch * 0.6:
+            blocks[-1][1] = max(blocks[-1][1], stretched)
+        else:
+            blocks.append([top, stretched])
+    return [(top, bottom) for top, bottom in blocks]
 
 
 def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
-    """Shrink each band to just the content in it, dropping answer space.
+    """Cut the answer space out of each band, keeping everything else.
 
-    One question's four pages of ruling collapse to the couple of blocks that
-    actually say something, which is what makes "a question per page" fit.
-    Bands with no content at all (a page of pure answer space) disappear.
+    Cutting out the ruling rather than hunting for the question is what makes
+    this work on both kinds of paper. Detecting ruling is reliable — it is
+    one glyph repeated across a line, whatever the font encoding says that
+    glyph is. Detecting *content* is not: on the 2025 papers the text layer
+    holds almost nothing but the ruling (page 3 of 9709 s25 P3: 4 305 ruling
+    glyphs, 385 others, none forming a sentence), so "keep what looks like
+    content" kept nothing and the trim silently did nothing.
+
+    A gap between rulings is kept whole rather than shrunk to the text in it:
+    on a paper whose question text isn't in the text layer, shrinking would
+    cut away the question itself.
+
+    Bands with nothing but ruling disappear, which is the point — a page of
+    pure answer space contributes no pages to the export.
     """
     from pdfminer.high_level import extract_pages
 
@@ -359,18 +400,57 @@ def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
         if page_layout is None:
             continue
         height = heights[band.page_idx]
-        spans, filler = _content_spans(
+        content, filler, readable = _content_spans(
             page_layout, band.y_top, band.y_bottom, height
         )
-        for top, bottom in _merge_spans(spans, filler):
-            trimmed = Band(
-                page_idx=band.page_idx,
-                y_top=max(band.y_top, top - _PAD),
-                y_bottom=min(band.y_bottom, bottom + _PAD),
+        cursor = band.y_top
+        for ruled_top, ruled_bottom in _ruling_blocks(filler):
+            _keep(
+                out, band, cursor, min(ruled_top, band.y_bottom),
+                content, readable,
             )
-            if trimmed.height >= _MIN_BAND:
-                out.append(trimmed)
+            cursor = max(cursor, ruled_bottom)
+        _keep(out, band, cursor, band.y_bottom, content, readable)
     return out
+
+
+def _keep(
+    out: list[Band],
+    band: Band,
+    top: float,
+    bottom: float,
+    content: Sequence[tuple[float, float]],
+    readable: int,
+) -> None:
+    """Add the gap between two rulings, if it holds anything at all.
+
+    An empty gap is dropped — on a page of pure answer space the strip above
+    the first ruling is blank, and it would otherwise come through as a
+    sliver.
+
+    A gap is then closed up around its content, but **only when the page's
+    text layer is legible**. Where it isn't, the text positions say nothing
+    about where the question really is, and tightening the band on them
+    would crop away the very thing being exported.
+    """
+    if bottom - top < _MIN_BAND:
+        return
+    inside = [
+        (c_top, c_bottom) for c_top, c_bottom in content
+        if top <= (c_top + c_bottom) / 2 <= bottom
+    ]
+    if not inside:
+        return
+    if readable:
+        top = max(top, min(t for t, _ in inside) - _PAD)
+        bottom = min(bottom, max(b for _, b in inside) + _PAD)
+        if bottom - top < _MIN_BAND:
+            return
+    out.append(Band(
+        page_idx=band.page_idx,
+        y_top=max(band.y_top, top),
+        y_bottom=min(band.y_bottom, bottom),
+    ))
 
 
 def compose_pdf(crops: Sequence[QuestionCrop]) -> bytes:
