@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from statistics import median
 from typing import TYPE_CHECKING
@@ -26,7 +27,7 @@ from pypdf import PdfReader, PdfWriter, Transformation
 from pypdf.generic import RectangleObject
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from core.models import MistakeRecord
     from modules.marking.page_segmenter import PageClip
@@ -171,6 +172,7 @@ def crops_for_paper(
     ]
     regions, _ = match_scanned(doc, every)
     by_id = {region.question_id: region for region in regions}
+    column = document_column(qp_path)
 
     crops: list[QuestionCrop] = []
     missing: list[str] = []
@@ -180,7 +182,7 @@ def crops_for_paper(
             missing.append(question_id)
             continue
         whole = clips_to_bands(region.clips)
-        trimmed = content_bands(qp_path, whole)
+        trimmed = content_bands(qp_path, whole, column)
         kept = sum(b.height for b in trimmed)
         total = sum(b.height for b in whole)
         # Some papers embed their fonts with no ToUnicode map: pdfminer then
@@ -255,14 +257,28 @@ _TRIM_THRESHOLD = 0.9
 #: One of these on a page is enough to trust its text layer — the papers that
 #: fail this produce *zero* across the whole document, not a few.
 _READABLE_RE = re.compile(r"[A-Za-z]{3,}")
-#: How far outside the ruling's own width a diagram may reach and still count
-#: as part of the question. Wide enough for a table that overhangs the text,
-#: narrow enough to leave the margin marks out (measured: ruling starts at
-#: x94, the marks sit at x33).
-_COLUMN_SLACK = 30.0
+#: Breathing room on the right of the writing column.
+_COLUMN_PAD = 6.0
+#: A ruling position used by fewer than this share of a paper's rulings is
+#: an oddity (the cover page's name line), not part of the template.
+_EDGE_SHARE = 0.1
 #: Column to fall back on when a paper rules nothing at all — a plain inset,
 #: as a share of the page width.
 _COLUMN_INSET = 0.1
+#: The gutter left of the writing column where CIE prints question numbers.
+#: Measured: the ruling starts at x94; the number sits at x72 on one paper
+#: and x62 on the other; the margin bar ends at x46. 36 clears both numbers
+#: and still leaves 12pt before the bar. Fixed rather than inferred from
+#: content — six of ten questions lost their number when it was inferred,
+#: because a two-glyph number doesn't always group into a line pdfminer
+#: reports inside the band.
+_NUMBER_GUTTER = 36.0
+#: Text below this size is page furniture, not question content: the barcode
+#: strips CIE prints at the top and bottom of every page come out at 4.7 and
+#: 7.5pt against a 10.8pt body. Sizing it out beats guessing a header height
+#: — the top barcode sits at y51-56 and the first question at y60, which is
+#: too fine a margin to cut on.
+_MIN_TEXT_SIZE = 8.0
 
 
 def _is_filler(line: object) -> bool:
@@ -353,6 +369,8 @@ def _content_spans(
                 if _is_filler(line):
                     _add(line, filler)
                     continue
+                if _text_size(line) < _MIN_TEXT_SIZE:
+                    continue  # barcode / running head, not question content
                 _add(line, content)
                 if _READABLE_RE.search(line.get_text()):
                     readable += 1
@@ -375,8 +393,20 @@ class _Span:
     x1: float
 
 
+def _text_size(line: object) -> float:
+    """The largest glyph on the line — 0 when it has none."""
+    from pdfminer.layout import LTChar
+
+    sizes = [
+        char.size
+        for char in line  # type: ignore[attr-defined]
+        if isinstance(char, LTChar) and char.get_text().strip()
+    ]
+    return max(sizes) if sizes else 0.0
+
+
 def _writing_column(
-    content: Sequence[_Span], filler: Sequence[_Span], page_width: float
+    filler: Sequence[_Span], page_width: float
 ) -> tuple[float, float]:
     """The x range worth cropping to: the ruled writing column.
 
@@ -389,16 +419,35 @@ def _writing_column(
     if not ruled:
         return page_width * _COLUMN_INSET, page_width * (1 - _COLUMN_INSET)
 
-    left = median([span.x0 for span in ruled])
-    right = median([span.x1 for span in ruled])
-    near = [
-        span for span in content
-        if span.x0 >= left - _COLUMN_SLACK and span.x1 <= right + _COLUMN_SLACK
-    ]
-    if near:
-        left = min(left, min(span.x0 for span in near))
-        right = max(right, max(span.x1 for span in near))
-    return left, right
+    # The rulings alone, and the *commonest* edge among them — not the
+    # extreme. Content gets no vote: the corner registration marks pulled the
+    # right edge out to x551 when it did. And the extremes lie too: a ruling
+    # under an indented sub-part starts 21pt right of the column, while the
+    # cover page's "CANDIDATE NAME ……" starts 21pt left of it, over the
+    # margin bar. The body of the paper rules hundreds of lines at the true
+    # column, so the mode is what finds it.
+    left = _edge(span.x0 for span in ruled)
+    right = _edge((span.x1 for span in ruled), rightmost=True)
+    return max(0.0, left - _NUMBER_GUTTER), right + _COLUMN_PAD
+
+
+def _edge(values: Iterable[float], rightmost: bool = False) -> float:
+    """The outermost ruling edge that the paper uses *often*.
+
+    Neither the extreme nor the mode works. Measured over a whole paper, the
+    left edges cluster at three places — x115 (277 rulings, the ones indented
+    under a sub-part), x94 (158, the writing column) and x72 (22, the cover
+    page's "CANDIDATE NAME ……"). The mode picks the indent; the minimum picks
+    the cover. What is wanted is the outermost edge the paper uses for real,
+    so rare positions are dropped first.
+    """
+    counts = Counter(round(value) for value in values)
+    total = sum(counts.values())
+    common = [
+        value for value, count in counts.items()
+        if count >= total * _EDGE_SHARE
+    ] or list(counts)
+    return float(max(common) if rightmost else min(common))
 
 
 def _ruling_blocks(
@@ -433,7 +482,49 @@ def _ruling_blocks(
     return [(top, bottom) for top, bottom in blocks]
 
 
-def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
+def _column_from(
+    pages: Mapping[int, object],
+    heights: Mapping[int, float],
+    page_width: float,
+) -> tuple[float, float]:
+    spans: list[_Span] = []
+    for index, layout in pages.items():
+        _, page_filler, _ = _content_spans(
+            layout, 0.0, heights[index], heights[index]
+        )
+        spans.extend(page_filler)
+    return _writing_column(spans, page_width)
+
+
+def document_column(qp_path: str) -> tuple[float, float]:
+    """The paper's writing column, measured over the whole document.
+
+    Measured once, over everything: per question it wobbles, because a
+    question whose answer space is entirely indented (all of it under a
+    sub-part) reports a left edge 21pt further right, and the question
+    number then falls outside the crop — that is how six of ten questions
+    lost their number. Sampling only the opening pages is no better; on one
+    of the two papers here they are the indented ones. The column is a
+    property of the paper's template, so the leftmost ruling in the whole
+    document is what defines it.
+    """
+    from pdfminer.high_level import extract_pages
+
+    pages: dict[int, object] = {}
+    heights: dict[int, float] = {}
+    width = 0.0
+    for index, layout in enumerate(extract_pages(qp_path)):
+        pages[index] = layout
+        heights[index] = layout.height
+        width = max(width, layout.width)
+    return _column_from(pages, heights, width or 612.0)
+
+
+def content_bands(
+    qp_path: str,
+    bands: Sequence[Band],
+    column: tuple[float, float] | None = None,
+) -> list[Band]:
     """Cut the answer space out of each band, keeping everything else.
 
     Cutting out the ruling rather than hunting for the question is what makes
@@ -468,6 +559,9 @@ def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
         if len(pages) == len(wanted):
             break
 
+    if column is None:
+        column = _column_from(pages, heights, max(widths.values()))
+
     out: list[Band] = []
     for band in bands:
         page_layout = pages.get(band.page_idx)
@@ -477,7 +571,6 @@ def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
         content, filler, readable = _content_spans(
             page_layout, band.y_top, band.y_bottom, height
         )
-        column = _writing_column(content, filler, widths[band.page_idx])
         cursor = band.y_top
         for ruled_top, ruled_bottom in _ruling_blocks(filler):
             _keep(
