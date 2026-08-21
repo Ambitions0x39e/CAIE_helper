@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -91,6 +92,9 @@ class QuestionCrop:
     question_id: str
     qp_path: str
     bands: list[Band] = field(default_factory=list)
+    #: False when the answer space could not be found and the whole question
+    #: region is being exported instead — see :func:`crops_for_paper`.
+    trimmed: bool = True
 
 
 def plan_pages(
@@ -151,12 +155,24 @@ def crops_for_paper(
         if region is None:
             missing.append(question_id)
             continue
-        crops.append(QuestionCrop(
-            paper_id=paper_id,
-            question_id=question_id,
-            qp_path=qp_path,
-            bands=content_bands(qp_path, clips_to_bands(region.clips)),
-        ))
+        whole = clips_to_bands(region.clips)
+        trimmed = content_bands(qp_path, whole)
+        kept = sum(b.height for b in trimmed)
+        total = sum(b.height for b in whole)
+        # Some papers embed their fonts with no ToUnicode map: pdfminer then
+        # reports every glyph as "(cid:155)" and cannot even group them into
+        # lines, so the rulings are indistinguishable from the question
+        # (measured on 9709 s25 — 10k cid tokens, zero readable words). When
+        # trimming changes nothing, say so and export the whole region rather
+        # than pretend.
+        if not trimmed or (total and kept / total > _TRIM_THRESHOLD):
+            crops.append(QuestionCrop(
+                paper_id, question_id, qp_path, whole, trimmed=False,
+            ))
+        else:
+            crops.append(QuestionCrop(
+                paper_id, question_id, qp_path, trimmed,
+            ))
     return crops, missing
 
 
@@ -187,6 +203,14 @@ def clips_to_bands(clips: Iterable[PageClip]) -> list[Band]:
 #: A line that is only dots/spaces, long enough not to be an ellipsis in
 #: prose.
 _DOT_LEADER_RE = re.compile(r"^[.·…\s]{8,}$")
+#: How many identical glyphs make a line a ruling rather than words.
+_REPEAT_RUN = 8
+#: …and how much of the line they have to be.
+_REPEAT_SHARE = 0.8
+#: Graphics taller than this share of the page are furniture — the margin bar
+#: CIE draws down the side of every page is 99% of it. A real diagram never
+#: comes close.
+_FURNITURE_RATIO = 0.7
 #: Fallback split distance, for space left blank rather than ruled. Blocks
 #: are normally separated by *where a ruling was* — a measured fact — and
 #: only fall back on this when the paper left the space empty.
@@ -199,11 +223,42 @@ _PAD = 3.0
 _INSIDE_RATIO = 0.6
 #: Anything shorter than this holds nothing worth a crop.
 _MIN_BAND = 6.0
+#: Keep this much of the region and the trim achieved nothing worth claiming.
+_TRIM_THRESHOLD = 0.9
 
 
-def _is_filler(text: str) -> bool:
-    stripped = text.strip()
-    return not stripped or bool(_DOT_LEADER_RE.match(stripped))
+def _is_filler(line: object) -> bool:
+    """Is this text line answer-space ruling rather than something to read?
+
+    Checked on the *glyphs*, not the decoded string. Half the papers embed
+    their fonts without a ToUnicode map, so pdfminer reports every character
+    as ``(cid:155)`` — on those, matching literal full stops finds nothing
+    and the whole page reads as content (measured: 9709 s25 P3 came out at
+    676pt of "content" per page, i.e. untrimmed). What a ruling really is,
+    in any encoding, is one glyph repeated across the line.
+    """
+    from pdfminer.layout import LTChar
+
+    text = line.get_text().strip()  # type: ignore[attr-defined]
+    if not text:
+        return True
+    if _DOT_LEADER_RE.match(text):
+        return True
+
+    glyphs = [
+        char.get_text()
+        for char in line  # type: ignore[attr-defined]
+        if isinstance(char, LTChar) and char.get_text().strip()
+    ]
+    if len(glyphs) < _REPEAT_RUN:
+        return False
+    # Dominant rather than sole: a ruling often opens with a different glyph
+    # (a leader's first stop is drawn from another slot), and one stray
+    # character must not make a line of two hundred dots read as prose.
+    most_common = max(Counter(glyphs).values())
+    return most_common >= _REPEAT_RUN and (
+        most_common / len(glyphs) >= _REPEAT_SHARE
+    )
 
 
 def _content_spans(
@@ -246,8 +301,12 @@ def _content_spans(
             for line in element:
                 if not isinstance(line, LTTextLine):
                     continue
-                _add(line, filler if _is_filler(line.get_text()) else content)
-        elif isinstance(element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)):
+                _add(line, filler if _is_filler(line) else content)
+        elif isinstance(
+            element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
+        ) and element.height <= _FURNITURE_RATIO * page_height:
+            # Taller than that and it is the margin bar CIE draws down every
+            # page, not part of any question.
             _add(element, content)
     return content, filler
 
@@ -402,6 +461,11 @@ def build_export(
         if missing:
             warnings.append(
                 f"{paper_id}: QP 里定位不到 {', '.join(missing)}"
+            )
+        if found and not any(crop.trimmed for crop in found):
+            warnings.append(
+                f"{paper_id}: 这份 PDF 的文字层是乱码（字体没有 ToUnicode），"
+                "认不出答题横线，已按整题区域导出"
             )
 
     return compose_pdf(crops), warnings
