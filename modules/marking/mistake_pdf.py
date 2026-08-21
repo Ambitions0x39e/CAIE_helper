@@ -1,0 +1,428 @@
+"""Export mistakes as a PDF cut out of the original question papers.
+
+The 错题本's CSV export answers "which topics do I lose marks on". This one
+answers "let me redo those questions": each page carries one whole question,
+cropped out of the QP it came from.
+
+**Vector, not raster.** The regions are placed by stamping the source page
+with its CropBox set to the band, which is what makes ``pypdf``'s merge emit
+a clip rectangle around it. Nothing is rasterised, so the text stays real
+text and the file stays small — and none of it needs the native pdfrx
+renderer, so it works (and is testable) outside the packaged app.
+
+Nothing here may import ``flet`` or ``app_flet``: the layout is arithmetic
+and the composition is a file operation, both worth testing without a page.
+"""
+from __future__ import annotations
+
+import io
+import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from pypdf import PdfReader, PdfWriter, Transformation
+from pypdf.generic import RectangleObject
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping, Sequence
+
+    from core.models import MistakeRecord
+    from modules.marking.page_segmenter import PageClip
+
+#: Breathing room at the top and bottom of an output page.
+_MARGIN = 24.0
+#: Between two bands of the same question.
+_GAP = 12.0
+
+_MAIN_ID_RE = re.compile(r"^(Q?\d+)")
+
+
+def main_question_id(question_id: str) -> str:
+    """``"Q4b"`` → ``"Q4"``; the id itself when it has no number to split on.
+
+    Sub-questions are cropped as part of their parent: a sub-question lifted
+    out on its own usually loses the stem it depends on, and one page per
+    whole question is what makes the export re-doable.
+    """
+    match = _MAIN_ID_RE.match(question_id.strip())
+    return match.group(1) if match else question_id.strip()
+
+
+def main_questions_by_paper(
+    records: Iterable[MistakeRecord],
+) -> dict[str, list[str]]:
+    """paper_id → its main question ids, each once, in first-seen order."""
+    grouped: dict[str, list[str]] = {}
+    for record in records:
+        ids = grouped.setdefault(record.paper_id, [])
+        main = main_question_id(record.question_id)
+        if main not in ids:
+            ids.append(main)
+    return grouped
+
+
+@dataclass(frozen=True)
+class Band:
+    """One horizontal slice of a source page, in the segmenter's top-down
+    coordinates (y grows downward from the page top)."""
+
+    page_idx: int
+    y_top: float
+    y_bottom: float
+
+    @property
+    def height(self) -> float:
+        return self.y_bottom - self.y_top
+
+
+@dataclass(frozen=True)
+class Placement:
+    """Where one band goes on an output page — ``y_top`` is top-down too."""
+
+    band: Band
+    y_top: float
+
+
+@dataclass
+class QuestionCrop:
+    """One question to export, and where to find it."""
+
+    paper_id: str
+    question_id: str
+    qp_path: str
+    bands: list[Band] = field(default_factory=list)
+
+
+def plan_pages(
+    bands: Sequence[Band],
+    page_height: float,
+    *,
+    margin: float = _MARGIN,
+    gap: float = _GAP,
+) -> list[list[Placement]]:
+    """Stack the bands down the page, wrapping onto a new one when full.
+
+    Wrapping rather than scaling: a shrunk question paper is harder to work
+    on than one that runs over, and the caller asked for the original size.
+    A band taller than a whole page still gets its own page — it is placed at
+    the top and simply runs past the bottom margin, which beats dropping it.
+    """
+    pages: list[list[Placement]] = []
+    current: list[Placement] = []
+    cursor = margin
+    usable = page_height - margin
+
+    for band in bands:
+        if current and cursor + band.height > usable:
+            pages.append(current)
+            current = []
+            cursor = margin
+        current.append(Placement(band=band, y_top=cursor))
+        cursor += band.height + gap
+
+    if current:
+        pages.append(current)
+    return pages
+
+
+def crops_for_paper(
+    paper_id: str, qp_path: str, wanted: Sequence[str]
+) -> tuple[list[QuestionCrop], list[str]]:
+    """Locate *wanted* main questions in a QP. Returns (crops, not found).
+
+    Segments against **every** question the paper has, not just the wanted
+    ones, then picks. Segmenting against a subset looks like it works and
+    silently produces the wrong answer: a question's region runs to the next
+    id it was told about, so asking for Q2 and Q4 out of a six-question paper
+    hands back a "Q2" that swallows Q3 — measured on a real paper, nine pages
+    of it.
+    """
+    from modules.marking.page_segmenter import match_scanned, scan_document
+
+    doc = scan_document(qp_path)
+    every = [f"Q{n}" for n in range(1, doc.main_count + 1)]
+    regions, _ = match_scanned(doc, every)
+    by_id = {region.question_id: region for region in regions}
+
+    crops: list[QuestionCrop] = []
+    missing: list[str] = []
+    for question_id in wanted:
+        region = by_id.get(_as_q(question_id))
+        if region is None:
+            missing.append(question_id)
+            continue
+        crops.append(QuestionCrop(
+            paper_id=paper_id,
+            question_id=question_id,
+            qp_path=qp_path,
+            bands=content_bands(qp_path, clips_to_bands(region.clips)),
+        ))
+    return crops, missing
+
+
+def _as_q(question_id: str) -> str:
+    """``"4"`` and ``"Q4"`` are the same question; the segmenter says "Q4"."""
+    stripped = question_id.strip()
+    return stripped if stripped.startswith("Q") else f"Q{stripped}"
+
+
+def clips_to_bands(clips: Iterable[PageClip]) -> list[Band]:
+    """Segmenter clips → bands, in reading order."""
+    return [
+        Band(page_idx=c.page_idx, y_top=c.y_top, y_bottom=c.y_bottom)
+        for c in sorted(clips, key=lambda c: (c.page_idx, c.y_top))
+    ]
+
+
+# ── Dropping the answer space ─────────────────────────────────────
+#
+# A question's region runs from its number to the next question's, which on a
+# CIE paper is mostly blank ruled space to write in. Exporting that gives
+# pages of dots; what is wanted is the question itself, stitched together.
+#
+# The ruling is *text*: rows of full stops (measured on a real paper — the
+# tables and diagrams beside them are LTLine/LTCurve, which is why graphics
+# count as content and these do not).
+
+#: A line that is only dots/spaces, long enough not to be an ellipsis in
+#: prose.
+_DOT_LEADER_RE = re.compile(r"^[.·…\s]{8,}$")
+#: Fallback split distance, for space left blank rather than ruled. Blocks
+#: are normally separated by *where a ruling was* — a measured fact — and
+#: only fall back on this when the paper left the space empty.
+_MERGE_GAP = 40.0
+#: Breathing room around a block, so glyphs are not flush with the crop edge.
+_PAD = 3.0
+#: An element grazing the edge of a region belongs to its neighbour. Without
+#: this the page number, whose box ends a point below the region's top edge,
+#: became a five-point band of its own on every page of pure answer space.
+_INSIDE_RATIO = 0.6
+#: Anything shorter than this holds nothing worth a crop.
+_MIN_BAND = 6.0
+
+
+def _is_filler(text: str) -> bool:
+    stripped = text.strip()
+    return not stripped or bool(_DOT_LEADER_RE.match(stripped))
+
+
+def _content_spans(
+    layout: object, y_top: float, y_bottom: float, page_height: float
+) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+    """(content, filler) spans in the band, both top-down.
+
+    The filler spans are kept, not discarded: where a ruling *was* is the
+    honest place to break one block from the next. Judging it by distance
+    alone mistakes a paper's own paragraph spacing for answer space.
+    """
+    from pdfminer.layout import (
+        LTCurve,
+        LTFigure,
+        LTImage,
+        LTLine,
+        LTRect,
+        LTTextContainer,
+        LTTextLine,
+    )
+
+    content: list[tuple[float, float]] = []
+    filler: list[tuple[float, float]] = []
+
+    def _add(element: object, into: list[tuple[float, float]]) -> None:
+        top = page_height - element.y1  # type: ignore[attr-defined]
+        bottom = page_height - element.y0  # type: ignore[attr-defined]
+        if bottom - top <= 0.5:
+            # A rule has no height of its own — it is in or it is out.
+            if not y_top <= top <= y_bottom:
+                return
+        else:
+            overlap = min(bottom, y_bottom) - max(top, y_top)
+            if overlap < _INSIDE_RATIO * (bottom - top):
+                return
+        into.append((max(top, y_top), min(bottom, y_bottom)))
+
+    for element in layout:  # type: ignore[attr-defined]
+        if isinstance(element, LTTextContainer):
+            for line in element:
+                if not isinstance(line, LTTextLine):
+                    continue
+                _add(line, filler if _is_filler(line.get_text()) else content)
+        elif isinstance(element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)):
+            _add(element, content)
+    return content, filler
+
+
+def _merge_spans(
+    spans: Sequence[tuple[float, float]],
+    filler: Sequence[tuple[float, float]] = (),
+    gap: float = _MERGE_GAP,
+) -> list[tuple[float, float]]:
+    """Join content spans into blocks, breaking where the answer space was."""
+    merged: list[tuple[float, float]] = []
+    for top, bottom in sorted(spans):
+        if merged:
+            previous_top, previous_bottom = merged[-1]
+            ruled_between = any(
+                previous_bottom <= f_top < top for f_top, _ in filler
+            )
+            if not ruled_between and top - previous_bottom <= gap:
+                merged[-1] = (previous_top, max(previous_bottom, bottom))
+                continue
+        merged.append((top, bottom))
+    return merged
+
+
+def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
+    """Shrink each band to just the content in it, dropping answer space.
+
+    One question's four pages of ruling collapse to the couple of blocks that
+    actually say something, which is what makes "a question per page" fit.
+    Bands with no content at all (a page of pure answer space) disappear.
+    """
+    from pdfminer.high_level import extract_pages
+
+    wanted = {band.page_idx for band in bands}
+    if not wanted:
+        return []
+
+    pages: dict[int, object] = {}
+    heights: dict[int, float] = {}
+    for index, layout in enumerate(extract_pages(qp_path)):
+        if index in wanted:
+            pages[index] = layout
+            heights[index] = layout.height
+        if len(pages) == len(wanted):
+            break
+
+    out: list[Band] = []
+    for band in bands:
+        page_layout = pages.get(band.page_idx)
+        if page_layout is None:
+            continue
+        height = heights[band.page_idx]
+        spans, filler = _content_spans(
+            page_layout, band.y_top, band.y_bottom, height
+        )
+        for top, bottom in _merge_spans(spans, filler):
+            trimmed = Band(
+                page_idx=band.page_idx,
+                y_top=max(band.y_top, top - _PAD),
+                y_bottom=min(band.y_bottom, bottom + _PAD),
+            )
+            if trimmed.height >= _MIN_BAND:
+                out.append(trimmed)
+    return out
+
+
+def compose_pdf(crops: Sequence[QuestionCrop]) -> bytes:
+    """Render the crops into one PDF, a new page per question.
+
+    Raises:
+        ValueError: no crop had any band to place — an empty PDF is not a
+            useful thing to hand back as a file.
+    """
+    readers: dict[str, PdfReader] = {}
+    writer = PdfWriter()
+    scratch = PdfWriter()
+    placed = 0
+
+    for crop in crops:
+        if not crop.bands:
+            continue
+        reader = readers.get(crop.qp_path)
+        if reader is None:
+            reader = PdfReader(crop.qp_path)
+            readers[crop.qp_path] = reader
+
+        first = reader.pages[crop.bands[0].page_idx]
+        width = float(first.mediabox.width)
+        height = float(first.mediabox.height)
+
+        for page_plan in plan_pages(crop.bands, height):
+            out_page = writer.add_blank_page(width=width, height=height)
+            for placement in page_plan:
+                source = reader.pages[placement.band.page_idx]
+                src_height = float(source.mediabox.height)
+                band_copy = scratch.add_page(source)
+                # The CropBox is the whole trick: pypdf's merge reads it and
+                # emits `re W n` around the stamped content, so everything
+                # outside the band is clipped instead of overprinting the
+                # band above it.
+                band_copy.cropbox = RectangleObject((
+                    0,
+                    src_height - placement.band.y_bottom,
+                    float(source.mediabox.width),
+                    src_height - placement.band.y_top,
+                ))
+                # Both systems measured from their own page top, so the shift
+                # is the difference of the two tops.
+                dy = (
+                    (height - placement.y_top)
+                    - (src_height - placement.band.y_top)
+                )
+                out_page.merge_transformed_page(
+                    band_copy, Transformation().translate(0, dy)
+                )
+                placed += 1
+
+    if not placed:
+        raise ValueError("没有可导出的题目区域")
+
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def build_export(
+    records: Iterable[MistakeRecord], qp_path_of: Mapping[str, str]
+) -> tuple[bytes, list[str]]:
+    """The whole export: records → cropped PDF, plus what couldn't be found.
+
+    Returns the PDF bytes and a list of human-readable warnings (a paper with
+    no QP on disk, a question the segmenter couldn't locate). Warnings are
+    returned rather than raised: exporting nine of ten questions is worth
+    doing, as long as the tenth is named.
+
+    Raises:
+        ValueError: nothing at all could be exported.
+    """
+    from pathlib import Path
+
+    items = list(records)
+    warnings: list[str] = []
+    crops: list[QuestionCrop] = []
+
+    for paper_id, question_ids in main_questions_by_paper(items).items():
+        path = qp_path_of.get(paper_id, "")
+        if not path or not Path(path).is_file():
+            warnings.append(f"{paper_id}: 找不到 QP 文件，已跳过")
+            continue
+        found, missing = crops_for_paper(paper_id, path, question_ids)
+        crops.extend(found)
+        if missing:
+            warnings.append(
+                f"{paper_id}: QP 里定位不到 {', '.join(missing)}"
+            )
+
+    return compose_pdf(crops), warnings
+
+
+def qp_paths_by_paper(
+    records: Iterable[MistakeRecord],
+    qp_path_of: Mapping[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    """Split the papers into those whose QP is on disk and those that aren't.
+
+    A missing QP is reported rather than skipped silently — "half your
+    selection is in the file" is exactly the kind of thing that should be
+    said out loud.
+    """
+    found: dict[str, str] = {}
+    missing: list[str] = []
+    for paper_id in main_questions_by_paper(records):
+        path = qp_path_of.get(paper_id, "")
+        if path:
+            found[paper_id] = path
+        else:
+            missing.append(paper_id)
+    return found, missing
