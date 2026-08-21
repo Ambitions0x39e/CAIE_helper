@@ -99,6 +99,60 @@ def test_regrading_a_paper_appends_a_second_set_of_rows(
     assert [r.score for r in store.load_all()] == [2.0, 4.0]
 
 
+# ── Update ────────────────────────────────────────────────────────
+
+
+def test_update_at_replaces_only_that_row(store: MistakeStore) -> None:
+    store.append_many([_record("Q1"), _record("Q2"), _record("Q3")])
+
+    store.update_at(1, _record("Q2", topic_id="7", topic_name="Equilibria"))
+
+    loaded = store.load_all()
+    assert [r.question_id for r in loaded] == ["Q1", "Q2", "Q3"]
+    assert loaded[1].topic_id == "7"
+    assert loaded[1].topic_name == "Equilibria"
+    assert loaded[0].topic_id == "1.2"
+    assert loaded[2].topic_id == "1.2"
+
+
+def test_update_at_can_clear_a_tag(store: MistakeStore) -> None:
+    """A cleared topic must round-trip as None, not the string "nan"."""
+    store.append(_record("Q1"))
+
+    store.update_at(0, _record("Q1", topic_id=None, topic_name=None))
+
+    assert store.load_all()[0].topic_id is None
+
+
+@pytest.mark.parametrize("index", [-1, 1, 99])
+def test_update_at_rejects_an_index_outside_the_store(
+    store: MistakeStore, index: int
+) -> None:
+    """Silently appending or dropping a row would be worse than raising."""
+    store.append(_record("Q1"))
+
+    with pytest.raises(IndexError):
+        store.update_at(index, _record("Q1"))
+
+    assert len(store.load_all()) == 1
+
+
+def test_update_at_indexes_match_load_all_after_a_regrade(
+    store: MistakeStore,
+) -> None:
+    """Duplicated (paper_id, question_id) pairs are exactly why the store
+    updates by position — the pair identifies two rows, the index one."""
+    store.append_many([_record("Q1", score=2.0), _record("Q1", score=4.0)])
+
+    store.update_at(0, _record("Q1", score=2.0, topic_id="3",
+                               topic_name="Chemical bonding"))
+
+    loaded = store.load_all()
+    assert [r.score for r in loaded] == [2.0, 4.0]
+    assert loaded[0].topic_id == "3"
+    assert loaded[1].topic_id == "1.2"
+
+
 # ── Delete ────────────────────────────────────────────────────────
 
 

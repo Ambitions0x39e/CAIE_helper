@@ -32,9 +32,13 @@ from modules.marking.mistakes import (
     distinct_topic_keys,
     filter_by_topic,
     group_by_paper,
+    retag,
+    subject_id_of,
     to_csv,
     topic_key,
 )
+from modules.marking.syllabus_parser import load_syllabus
+from modules.marking.workflow import topics_for_paper
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -62,14 +66,18 @@ _TABLE_CHROME = 48 + 48
 _COL_SPACING = 56
 
 #: What each column gets when there is room. The comment's ideal is also its
-#: cap — past ~420px it reads as a wall of text, not a column.
+#: cap — past ~420px it reads as a wall of text, not a column. Topic is wider
+#: than its text needs because it holds a dropdown, whose arrow and padding
+#: eat into the label.
 _IDEAL: dict[str, int] = {
-    "question": 80, "paper": 130, "topic": 180, "score": 60, "comment": 420,
+    "question": 80, "paper": 130, "topic": 210, "score": 60, "comment": 420,
 }
 #: What each column may be squeezed to before something has to give.
 _MIN: dict[str, int] = {
-    "question": 56, "paper": 96, "topic": 110, "score": 48, "comment": 90,
+    "question": 56, "paper": 96, "topic": 140, "score": 48, "comment": 90,
 }
+#: Row height. The default is sized for plain text and clips the dropdown.
+_ROW_HEIGHT = 52.0
 #: Who gives up room first. The comment is elided anyway, the score never
 #: needs more than four glyphs.
 _SHRINK_ORDER = ("comment", "topic", "paper", "question", "score")
@@ -131,6 +139,22 @@ def _topic_text(record: MistakeRecord) -> str:
     # An id with no name means the model answered with something the
     # syllabus doesn't list — worth showing rather than hiding as 未分类.
     return record.topic_id or UNCLASSIFIED
+
+
+def _topic_choices(paper_id: str) -> dict[str, str] | None:
+    """Topic id → name this paper may be tagged with, or None if unknown.
+
+    Exactly the list the grader was given for the same paper — the syllabus
+    stored for its subject, narrowed to its component. Correcting a tag by
+    hand therefore offers the same range the model chose from (Chemistry
+    Paper 1 → topics 1–22), not every topic in the syllabus.
+    """
+    info = load_syllabus(subject_id_of(paper_id))
+    return topics_for_paper(info, paper_id)
+
+
+def _topic_label(topic_id: str, name: str | None) -> str:
+    return f"{topic_id} {name}" if name else topic_id
 
 
 def _card(*controls: ft.Control) -> ft.Container:
@@ -236,6 +260,83 @@ def build_mistakes_tab(
         count_text.value = f"已选 {len(selected)} / {len(records)} 题"
         page.update()
 
+    # ── Topic picker ──────────────────────────────────────────────
+
+    def _topic_picker(idx: int, width: int) -> ft.Control:
+        """The topic cell: a dropdown over this paper's own topic range.
+
+        The model's tag is a guess, and on a practical paper or a subject
+        with no syllabus there is no tag at all — so the column is editable
+        rather than a label. Writes straight through to the store: the row
+        is identified by its position, which is what the store's ``update_at``
+        takes.
+        """
+        record = records[idx]
+        choices = _topic_choices(record.paper_id)
+        if not choices:
+            # No syllabus for this subject (or a component it doesn't map,
+            # like a practical paper) — nothing to choose from, so say why
+            # instead of showing an empty dropdown.
+            return ft.Container(
+                ft.Text(
+                    _topic_text(record),
+                    size=theme.CAPTION,
+                    color=theme.MUTED,
+                    max_lines=2,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    tooltip="该科目未导入大纲，或这张卷不在大纲的 component 映射里",
+                ),
+                width=width,
+            )
+
+        options = [ft.dropdown.Option(key="", text=UNCLASSIFIED)]
+        options.extend(
+            ft.dropdown.Option(key=tid, text=_topic_label(tid, name))
+            for tid, name in choices.items()
+        )
+        # An id the syllabus doesn't list (the model invented it, or the
+        # syllabus was re-parsed since) would otherwise vanish from the
+        # dropdown and read as 未分类.
+        if record.topic_id and record.topic_id not in choices:
+            options.append(ft.dropdown.Option(
+                key=record.topic_id,
+                text=_topic_label(record.topic_id, record.topic_name),
+            ))
+
+        def _on_select(e: ft.Event[ft.Dropdown], idx: int = idx) -> None:
+            _set_topic(idx, str(e.data or ""))
+
+        return ft.Dropdown(
+            options=options,
+            value=record.topic_id or "",
+            width=width,
+            text_size=theme.CAPTION,
+            dense=True,
+            border_color=theme.HAIRLINE,
+            on_select=_on_select,
+        )
+
+    def _set_topic(idx: int, topic_id: str) -> None:
+        record = records[idx]
+        updated = retag(
+            record, topic_id or None, _topic_choices(record.paper_id)
+        )
+        if updated == record:
+            return
+        try:
+            store.update_at(idx, updated)
+        except (OSError, ValueError, IndexError) as exc:
+            show_snack(f"topic 保存失败: {exc}", theme.DANGER)
+            return
+        records[idx] = updated
+        # The by-topic view groups on this very field, so the row has to move
+        # — that needs the rebuild. The by-paper view doesn't regroup, and
+        # rebuilding there would collapse the card being edited.
+        if view == _BY_TOPIC:
+            _rebuild_content()
+        else:
+            page.update()
+
     # ── Table ─────────────────────────────────────────────────────
 
     def _table(indices: Sequence[int], *, show_paper: bool) -> ft.Control:
@@ -256,8 +357,7 @@ def build_mistakes_tab(
                     record.paper_id, widths["paper"], size=theme.CAPTION,
                 ))
             cells.extend([
-                _cell(_topic_text(record), widths["topic"],
-                      size=theme.CAPTION),
+                ft.DataCell(_topic_picker(idx, widths["topic"])),
                 _cell(_score_text(record), widths["score"]),
                 _cell(
                     record.comment, widths["comment"],
@@ -299,6 +399,9 @@ def build_mistakes_tab(
             rows,
             show_checkbox_column=True,
             on_select_all=_on_select_all,
+            # The topic column holds a dropdown; the default row height is
+            # sized for plain text and clips it.
+            row_height=_ROW_HEIGHT,
         )
 
     def _group_tile(

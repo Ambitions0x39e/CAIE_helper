@@ -13,6 +13,7 @@ def data_table(
     *,
     show_checkbox_column: bool = False,
     on_select_all: Callable[..., None] | None = None,
+    row_height: float | None = None,
 ) -> ft.Row:
     """全 app 统一的表格样式，宽度铺满窗口。
 
@@ -26,6 +27,9 @@ def data_table(
 
     也不要再往外面套 ``Row(scroll=AUTO)``：横向滚动的行宽度无界，expand 撑不出
     约束，表格会缩回内容宽度。
+
+    ``row_height`` 只给单元格里放了控件（下拉框、按钮）的表用 —— 默认行高按纯
+    文本算，塞进一个下拉框会被裁掉。不传就沿用 Flet 的默认，既有调用方不受影响。
     """
     return ft.Row([
         ft.DataTable(
@@ -33,6 +37,8 @@ def data_table(
             rows=rows,
             show_checkbox_column=show_checkbox_column,
             on_select_all=on_select_all,
+            data_row_min_height=row_height,
+            data_row_max_height=row_height,
             expand=True,
             border=ft.Border.all(1, theme.HAIRLINE),
             border_radius=theme.CARD_RADIUS,

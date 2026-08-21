@@ -229,6 +229,22 @@ class MistakeStore:
             return
         self.save_all([*self.load_all(), *records])
 
+    def update_at(self, index: int, record: MistakeRecord) -> None:
+        """Replace the row at *index* (its position in ``load_all``).
+
+        By position rather than by key: append-only means a re-grade repeats
+        the same (paper_id, question_id) pair, so nothing else identifies one
+        row. The caller reads with ``load_all`` and writes back the index it
+        got — which is exactly how the 错题本 tab already tracks its rows.
+        """
+        records = self.load_all()
+        if not 0 <= index < len(records):
+            raise IndexError(
+                f"no mistake row at index {index} (store holds {len(records)})"
+            )
+        records[index] = record
+        self.save_all(records)
+
     def delete(self, paper_id: str, question_id: str | None = None) -> None:
         """Remove one paper's rows, or just one question's within it.
 
