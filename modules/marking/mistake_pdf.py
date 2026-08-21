@@ -157,11 +157,10 @@ def crops_for_paper(
     from modules.marking.page_segmenter import match_scanned, scan_document
 
     doc = scan_document(qp_path)
-    # The ids the *paper* has, read off the boundaries the scan found —
-    # not 1..main_count. Those differ when a question's number doesn't
-    # decode: 9709 s25 P3 has eleven questions, the scan reads ten of them
-    # (…Q9, then Q11 — Q10's number never resolves), and asking for 1..10
-    # would both miss Q11 and hand back a "Q9" that swallows Q10's pages.
+    # The ids the *paper* has, read off the boundaries the scan found — not
+    # 1..main_count, which is only the same thing while every number decodes.
+    # When one doesn't, asking for 1..N both misses the numbers past the gap
+    # and hands back a region that swallows the undetected question's pages.
     numbers = sorted({
         boundary.question_num
         for boundary in doc.boundaries

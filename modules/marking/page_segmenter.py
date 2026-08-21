@@ -588,7 +588,14 @@ def _extract_boundaries(
             spans_at_y[y0].append(entry)
 
             if y0 < footer_y:
-                if abs(x0 - lx) < _X_TOLERANCE and cp_len <= 2:
+                # Up to 3, not 2: a margin span can carry a trailing space
+                # glyph. Measured on 9709 s25 P3, "10" arrives as
+                # (cid:134)(cid:247)(cid:128) — "1", "0", and the same glyph
+                # that leads every answer ruling. Capped at 2, that question
+                # was never a candidate, and Q9's region ran on through it.
+                # The classifier only promotes the extra length when it
+                # decodes to a number.
+                if abs(x0 - lx) < _X_TOLERANCE and cp_len <= 3:
                     left_spans.append(entry)
                 if abs(x0 - sqx) < _X_TOLERANCE and cp_len >= 3:
                     sub_q_spans.append(entry)
@@ -672,6 +679,21 @@ def _extract_boundaries(
                             kind=_BoundaryKind.MAIN, page_idx=pg_idx, y=y0,
                             question_num=qnum,
                         ))
+            else:
+                # 3+ codepoints. A margin span can carry a trailing space
+                # glyph — measured on 9709 s25 P3, where "10" arrives as
+                # (cid:134)(cid:247)(cid:128): "1", "0", and the same glyph
+                # that leads every answer ruling. With only len 1 and 2
+                # handled, that question was never a candidate at all, so
+                # Q9's region ran on through it to Q11 — four pages of the
+                # wrong question. Decoding the leading pair is the test: a
+                # margin span that reads as a number is a question number.
+                qnum = _decode_question_num(text, char_map)
+                if qnum is not None:
+                    boundaries.append(_Boundary(
+                        kind=_BoundaryKind.MAIN, page_idx=pg_idx, y=y0,
+                        question_num=qnum,
+                    ))
 
         # --- Readable SUB detection: "(a)", "(b)" directly at x≈sub_q_x ---
         for span in sub_q_spans:
