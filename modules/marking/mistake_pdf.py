@@ -66,15 +66,26 @@ def main_questions_by_paper(
 @dataclass(frozen=True)
 class Band:
     """One horizontal slice of a source page, in the segmenter's top-down
-    coordinates (y grows downward from the page top)."""
+    coordinates (y grows downward from the page top).
+
+    ``x_left``/``x_right`` narrow it to the writing column. Cropping the full
+    page width drags in what CIE prints down the sides — the margin bar and
+    the little registration marks — which is what made the crops look like
+    scraps rather than questions.
+    """
 
     page_idx: int
     y_top: float
     y_bottom: float
+    x_left: float | None = None
+    x_right: float | None = None
 
     @property
     def height(self) -> float:
         return self.y_bottom - self.y_top
+
+    def with_column(self, left: float, right: float) -> Band:
+        return Band(self.page_idx, self.y_top, self.y_bottom, left, right)
 
 
 @dataclass(frozen=True)
@@ -145,7 +156,19 @@ def crops_for_paper(
     from modules.marking.page_segmenter import match_scanned, scan_document
 
     doc = scan_document(qp_path)
-    every = [f"Q{n}" for n in range(1, doc.main_count + 1)]
+    # The ids the *paper* has, read off the boundaries the scan found —
+    # not 1..main_count. Those differ when a question's number doesn't
+    # decode: 9709 s25 P3 has eleven questions, the scan reads ten of them
+    # (…Q9, then Q11 — Q10's number never resolves), and asking for 1..10
+    # would both miss Q11 and hand back a "Q9" that swallows Q10's pages.
+    numbers = sorted({
+        boundary.question_num
+        for boundary in doc.boundaries
+        if boundary.question_num is not None
+    })
+    every = [f"Q{n}" for n in numbers] or [
+        f"Q{n}" for n in range(1, doc.main_count + 1)
+    ]
     regions, _ = match_scanned(doc, every)
     by_id = {region.question_id: region for region in regions}
 
@@ -232,6 +255,14 @@ _TRIM_THRESHOLD = 0.9
 #: One of these on a page is enough to trust its text layer — the papers that
 #: fail this produce *zero* across the whole document, not a few.
 _READABLE_RE = re.compile(r"[A-Za-z]{3,}")
+#: How far outside the ruling's own width a diagram may reach and still count
+#: as part of the question. Wide enough for a table that overhangs the text,
+#: narrow enough to leave the margin marks out (measured: ruling starts at
+#: x94, the marks sit at x33).
+_COLUMN_SLACK = 30.0
+#: Column to fall back on when a paper rules nothing at all — a plain inset,
+#: as a share of the page width.
+_COLUMN_INSET = 0.1
 
 
 def _is_filler(line: object) -> bool:
@@ -270,7 +301,7 @@ def _is_filler(line: object) -> bool:
 
 def _content_spans(
     layout: object, y_top: float, y_bottom: float, page_height: float
-) -> tuple[list[tuple[float, float]], list[tuple[float, float]], int]:
+) -> tuple[list[_Span], list[_Span], int]:
     """(content, filler, readable) — spans top-down, plus a legibility count.
 
     The filler spans are kept, not discarded: where a ruling *was* is the
@@ -292,11 +323,11 @@ def _content_spans(
         LTTextLine,
     )
 
-    content: list[tuple[float, float]] = []
-    filler: list[tuple[float, float]] = []
+    content: list[_Span] = []
+    filler: list[_Span] = []
     readable = 0
 
-    def _add(element: object, into: list[tuple[float, float]]) -> None:
+    def _add(element: object, into: list[_Span]) -> None:
         top = page_height - element.y1  # type: ignore[attr-defined]
         bottom = page_height - element.y0  # type: ignore[attr-defined]
         if bottom - top <= 0.5:
@@ -307,7 +338,12 @@ def _content_spans(
             overlap = min(bottom, y_bottom) - max(top, y_top)
             if overlap < _INSIDE_RATIO * (bottom - top):
                 return
-        into.append((max(top, y_top), min(bottom, y_bottom)))
+        into.append(_Span(
+            top=max(top, y_top),
+            bottom=min(bottom, y_bottom),
+            x0=element.x0,  # type: ignore[attr-defined]
+            x1=element.x1,  # type: ignore[attr-defined]
+        ))
 
     for element in layout:  # type: ignore[attr-defined]
         if isinstance(element, LTTextContainer):
@@ -329,8 +365,44 @@ def _content_spans(
     return content, filler, readable
 
 
+@dataclass(frozen=True)
+class _Span:
+    """One element's footprint inside a band, top-down."""
+
+    top: float
+    bottom: float
+    x0: float
+    x1: float
+
+
+def _writing_column(
+    content: Sequence[_Span], filler: Sequence[_Span], page_width: float
+) -> tuple[float, float]:
+    """The x range worth cropping to: the ruled writing column.
+
+    The ruling is what defines it — measured at x94–538 on both papers here,
+    the same on each. Content is allowed to overhang it a little (a table
+    often does) but not as far as the margin marks at x33, which is what a
+    naive "widest thing on the page" would have swept in.
+    """
+    ruled = [span for span in filler if span.x1 - span.x0 > page_width * 0.3]
+    if not ruled:
+        return page_width * _COLUMN_INSET, page_width * (1 - _COLUMN_INSET)
+
+    left = median([span.x0 for span in ruled])
+    right = median([span.x1 for span in ruled])
+    near = [
+        span for span in content
+        if span.x0 >= left - _COLUMN_SLACK and span.x1 <= right + _COLUMN_SLACK
+    ]
+    if near:
+        left = min(left, min(span.x0 for span in near))
+        right = max(right, max(span.x1 for span in near))
+    return left, right
+
+
 def _ruling_blocks(
-    rows: Sequence[tuple[float, float]],
+    rows: Sequence[_Span],
 ) -> list[tuple[float, float]]:
     """Rows of ruling → the solid blocks of answer space they make up.
 
@@ -343,8 +415,8 @@ def _ruling_blocks(
     """
     if not rows:
         return []
-    ordered = sorted(rows)
-    tops = [top for top, _ in ordered]
+    ordered = sorted(rows, key=lambda span: span.top)
+    tops = [span.top for span in ordered]
     gaps = [
         b - a for a, b in zip(tops, tops[1:], strict=False)
         if 0 < b - a < _MAX_PITCH
@@ -352,12 +424,12 @@ def _ruling_blocks(
     pitch = median(gaps) if gaps else _DEFAULT_PITCH
 
     blocks: list[list[float]] = []
-    for top, bottom in ordered:
-        stretched = max(bottom, top + pitch)
-        if blocks and top - blocks[-1][1] <= pitch * 0.6:
+    for span in ordered:
+        stretched = max(span.bottom, span.top + pitch)
+        if blocks and span.top - blocks[-1][1] <= pitch * 0.6:
             blocks[-1][1] = max(blocks[-1][1], stretched)
         else:
-            blocks.append([top, stretched])
+            blocks.append([span.top, stretched])
     return [(top, bottom) for top, bottom in blocks]
 
 
@@ -387,10 +459,12 @@ def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
 
     pages: dict[int, object] = {}
     heights: dict[int, float] = {}
+    widths: dict[int, float] = {}
     for index, layout in enumerate(extract_pages(qp_path)):
         if index in wanted:
             pages[index] = layout
             heights[index] = layout.height
+            widths[index] = layout.width
         if len(pages) == len(wanted):
             break
 
@@ -403,14 +477,15 @@ def content_bands(qp_path: str, bands: Sequence[Band]) -> list[Band]:
         content, filler, readable = _content_spans(
             page_layout, band.y_top, band.y_bottom, height
         )
+        column = _writing_column(content, filler, widths[band.page_idx])
         cursor = band.y_top
         for ruled_top, ruled_bottom in _ruling_blocks(filler):
             _keep(
                 out, band, cursor, min(ruled_top, band.y_bottom),
-                content, readable,
+                content, readable, column,
             )
             cursor = max(cursor, ruled_bottom)
-        _keep(out, band, cursor, band.y_bottom, content, readable)
+        _keep(out, band, cursor, band.y_bottom, content, readable, column)
     return out
 
 
@@ -419,8 +494,9 @@ def _keep(
     band: Band,
     top: float,
     bottom: float,
-    content: Sequence[tuple[float, float]],
+    content: Sequence[_Span],
     readable: int,
+    column: tuple[float, float],
 ) -> None:
     """Add the gap between two rulings, if it holds anything at all.
 
@@ -436,20 +512,22 @@ def _keep(
     if bottom - top < _MIN_BAND:
         return
     inside = [
-        (c_top, c_bottom) for c_top, c_bottom in content
-        if top <= (c_top + c_bottom) / 2 <= bottom
+        span for span in content
+        if top <= (span.top + span.bottom) / 2 <= bottom
     ]
     if not inside:
         return
     if readable:
-        top = max(top, min(t for t, _ in inside) - _PAD)
-        bottom = min(bottom, max(b for _, b in inside) + _PAD)
+        top = max(top, min(span.top for span in inside) - _PAD)
+        bottom = min(bottom, max(span.bottom for span in inside) + _PAD)
         if bottom - top < _MIN_BAND:
             return
     out.append(Band(
         page_idx=band.page_idx,
         y_top=max(band.y_top, top),
         y_bottom=min(band.y_bottom, bottom),
+        x_left=column[0],
+        x_right=column[1],
     ))
 
 
@@ -482,25 +560,31 @@ def compose_pdf(crops: Sequence[QuestionCrop]) -> bytes:
             for placement in page_plan:
                 source = reader.pages[placement.band.page_idx]
                 src_height = float(source.mediabox.height)
+                src_width = float(source.mediabox.width)
+                left = placement.band.x_left or 0.0
+                right = placement.band.x_right or src_width
                 band_copy = scratch.add_page(source)
                 # The CropBox is the whole trick: pypdf's merge reads it and
                 # emits `re W n` around the stamped content, so everything
                 # outside the band is clipped instead of overprinting the
-                # band above it.
+                # band above it — and, with the x bounds, so are the margin
+                # bar and registration marks down the sides.
                 band_copy.cropbox = RectangleObject((
-                    0,
+                    left,
                     src_height - placement.band.y_bottom,
-                    float(source.mediabox.width),
+                    right,
                     src_height - placement.band.y_top,
                 ))
                 # Both systems measured from their own page top, so the shift
-                # is the difference of the two tops.
+                # is the difference of the two tops. Horizontally the column
+                # is centred, which keeps the page looking like a page.
                 dy = (
                     (height - placement.y_top)
                     - (src_height - placement.band.y_top)
                 )
+                dx = (width - (right - left)) / 2 - left
                 out_page.merge_transformed_page(
-                    band_copy, Transformation().translate(0, dy)
+                    band_copy, Transformation().translate(dx, dy)
                 )
                 placed += 1
 
