@@ -274,6 +274,26 @@ class TestComposePdf:
         assert rects[0][0].startswith("0.0 612 612 120")
         assert rects[1][0].startswith("0.0 692 612 40")
 
+    def test_the_crop_is_narrowed_to_the_writing_column(
+        self, tmp_path: Path
+    ) -> None:
+        """Cropping the full page width drags in what CIE prints down the
+        sides — the margin bar and the registration marks — which is what
+        made the crops look like scraps rather than questions."""
+        source = _paper_pdf(tmp_path / "qp.pdf")
+        bands = content_bands(
+            str(source), [Band(page_idx=0, y_top=50.0, y_bottom=740.0)]
+        )
+        out = tmp_path / "out.pdf"
+        out.write_bytes(compose_pdf([
+            QuestionCrop("p", "Q1", str(source), bands)
+        ]))
+
+        rect = _clip_rects(out)[0][0].split()
+        x, width = float(rect[0]), float(rect[2])
+        assert x > 40           # the margin bar at x26-45 is outside
+        assert width < _PAGE_W  # and so is whatever sits down the right
+
     def test_pages_keep_the_source_size(self, tmp_path: Path) -> None:
         source = _paper_pdf(tmp_path / "qp.pdf")
         crops = [QuestionCrop("p", "Q1", str(source), [
