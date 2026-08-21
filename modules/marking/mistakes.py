@@ -93,6 +93,25 @@ def mistakes_from_results(
     return records
 
 
+def retag(
+    record: MistakeRecord,
+    topic_id: str | None,
+    topics: Mapping[str, str] | None = None,
+) -> MistakeRecord:
+    """A copy of *record* tagged with ``topic_id``; None clears the tag.
+
+    The name is resolved from ``topics`` — the same paper→topics mapping the
+    grader was given — so a hand-picked tag reads identically to one the
+    model produced. An id the mapping doesn't know keeps the id and loses
+    the name, matching :func:`mistakes_from_results`.
+    """
+    topic_id = topic_id or None
+    return record.model_copy(update={
+        "topic_id": topic_id,
+        "topic_name": (topics or {}).get(topic_id) if topic_id else None,
+    })
+
+
 def group_by_paper(
     records: Iterable[MistakeRecord],
 ) -> dict[str, list[MistakeRecord]]:

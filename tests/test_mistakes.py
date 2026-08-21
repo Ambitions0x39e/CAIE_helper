@@ -20,6 +20,7 @@ from modules.marking.mistakes import (
     filter_by_topic,
     group_by_paper,
     mistakes_from_results,
+    retag,
     subject_id_of,
     to_csv,
     topic_key,
@@ -131,6 +132,48 @@ class TestMistakesFromResults:
             )
             == []
         )
+
+
+# ── Re-tagging by hand ────────────────────────────────────────────
+
+
+class TestRetag:
+    def test_sets_the_id_and_resolves_its_name(self) -> None:
+        tagged = retag(_record(topic_id=None, topic_name=None), "1.1", _TOPICS)
+
+        assert tagged.topic_id == "1.1"
+        assert tagged.topic_name == "Quadratics"
+
+    def test_empty_id_clears_the_tag(self) -> None:
+        """The 未分类 option comes back as "" from the dropdown."""
+        cleared = retag(_record(), "", _TOPICS)
+
+        assert cleared.topic_id is None
+        assert cleared.topic_name is None
+
+    def test_an_unknown_id_keeps_the_id_without_a_name(self) -> None:
+        tagged = retag(_record(), "9.9", _TOPICS)
+
+        assert tagged.topic_id == "9.9"
+        assert tagged.topic_name is None
+
+    def test_nothing_else_on_the_record_moves(self) -> None:
+        original = _record("Q7", score=1.0, max_score=4.0, comment="漏步骤")
+
+        tagged = retag(original, "1.1", _TOPICS)
+
+        assert tagged.question_id == "Q7"
+        assert tagged.paper_id == original.paper_id
+        assert (tagged.score, tagged.max_score) == (1.0, 4.0)
+        assert tagged.comment == "漏步骤"
+        assert tagged.timestamp == original.timestamp
+
+    def test_the_original_is_not_mutated(self) -> None:
+        original = _record(topic_id="1.2", topic_name="Functions")
+
+        retag(original, "1.1", _TOPICS)
+
+        assert original.topic_id == "1.2"
 
 
 # ── Grouping ──────────────────────────────────────────────────────
