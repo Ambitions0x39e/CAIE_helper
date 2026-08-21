@@ -180,24 +180,69 @@ class TestContentBands:
         assert first.y_bottom > 170      # runs past the table to "(a)"
 
     def test_the_second_block_is_the_b_part(self, tmp_path: Path) -> None:
+        """It spans from the end of one ruling block to the start of the
+        next, not from the text — the gap is kept whole because on a paper
+        whose question text isn't in the text layer, shrinking to the text
+        would cut the question away."""
         second = self._bands(tmp_path)[1]
 
-        assert 435 < second.y_top < 450   # "(b)" is drawn at y=450
-        assert second.height < 30
+        assert second.y_top < 450 < second.y_bottom   # "(b)" is at y=450
+        assert second.height < 60
 
-    def test_the_page_number_above_the_region_is_not_a_band(
-        self, tmp_path: Path
-    ) -> None:
-        """It sits just outside the region and used to graze it, becoming a
-        five-point band on every page of pure answer space."""
+    def test_no_band_starts_above_the_region(self, tmp_path: Path) -> None:
+        """The page number sits just outside the region and used to graze
+        it, becoming a five-point band on every page of pure answer space."""
         bands = content_bands(
             str(_paper_pdf(tmp_path / "qp.pdf")),
             [Band(page_idx=0, y_top=45.0, y_bottom=740.0)],
         )
 
         assert all(b.height > 6 for b in bands)
-        # The page number's box is 28–38; nothing may start up there.
-        assert all(b.y_top > 45 for b in bands)
+        assert all(b.y_top >= 45 for b in bands)
+
+    def test_ruling_is_recognised_whatever_the_glyph_decodes_to(
+        self, tmp_path: Path
+    ) -> None:
+        """Half the papers embed fonts with no ToUnicode map, so pdfminer
+        reports the ruling as ``(cid:155)`` rather than a full stop. What a
+        ruling is, in any encoding, is one glyph repeated across the line —
+        so this paper rules with 'o' and must be trimmed just the same.
+        """
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=10)
+        pdf.add_page()
+        pdf.text(62, 60, "4  A scientist is investigating butterflies.")
+        for i in range(10):
+            pdf.text(62, 100 + i * 24, "o" * 90)
+        pdf.text(62, 360, "(b)  Carry out a test.")
+        path = tmp_path / "odd.pdf"
+        pdf.output(str(path))
+
+        bands = content_bands(
+            str(path), [Band(page_idx=0, y_top=50.0, y_bottom=740.0)]
+        )
+
+        assert len(bands) == 2
+        assert sum(b.height for b in bands) < 200   # the ruling is gone
+
+    def test_a_page_of_pure_answer_space_yields_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """Which is the point: those pages add nothing to the export."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=10)
+        pdf.add_page()
+        pdf.text(36, 36, "9")                    # page number, outside
+        for i in range(28):
+            pdf.text(62, 72 + i * 24, "." * 90)
+        path = tmp_path / "blank.pdf"
+        pdf.output(str(path))
+
+        assert content_bands(
+            str(path), [Band(page_idx=0, y_top=45.0, y_bottom=740.0)]
+        ) == []
 
 
 # ── Composition ───────────────────────────────────────────────────
