@@ -1,6 +1,6 @@
 [project]
 name = "cie-helper"
-version = "1.3.0"
+version = "1.4.0"
 description = "CIE/AP past paper automation and tracker"
 readme = "README.md"
 # The upper bound is what pins the BUNDLED CPython, not just the dev env.
