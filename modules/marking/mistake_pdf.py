@@ -187,7 +187,8 @@ def crops_for_paper(
             continue
         whole = clips_to_bands(region.clips)
         trimmed = content_bands(
-            qp_path, whole, column, top_margin=doc.top_margin
+            qp_path, whole, column,
+            top_margin=doc.top_margin, footer_y=doc.footer_y,
         )
         kept = sum(b.height for b in trimmed)
         total = sum(b.height for b in whole)
@@ -283,6 +284,13 @@ _TOP_MARGIN = 45.0
 _MAX_LIFT = 36.0
 #: Boxes that merely touch at an edge are not overlapping.
 _TOUCH = 0.1
+#: Where a page's content ends, above the footer — the value
+#: :class:`ScannedDocument` reports for a letter-format paper.
+_FOOTER_Y = 740.0
+#: How far off centre a line may sit and still read as centred. CIE's
+#: "BLANK PAGE" lands within 1pt of it; the nearest thing that is *not* a
+#: blank page (9618's indented code listings) is 13pt out.
+_CENTRE_TOLERANCE = 6.0
 #: Text below this size is page furniture, not question content: the barcode
 #: strips CIE prints at the top and bottom of every page come out at 4.7 and
 #: 7.5pt against a 10.8pt body. Sizing it out beats guessing a header height
@@ -464,6 +472,82 @@ def _right_edge(values: Iterable[float]) -> float:
         if count >= total * _EDGE_SHARE
     ] or list(counts)
     return float(max(common))
+
+
+def _is_blank_page(
+    layout: object,
+    page_height: float,
+    page_width: float,
+    top_margin: float,
+    footer_y: float,
+) -> bool:
+    """Is this one of the pages CIE fills with the words "BLANK PAGE"?
+
+    A question's region runs from its own number to the next question's, and
+    CIE drops blank pages in between — so one of these lands in the middle
+    of a crop, contributing a band that says "BLANK PAGE" and nothing else.
+
+    Recognised by shape, not by those words: half the papers embed their
+    fonts without a ToUnicode map, and there the words come out as
+    "(cid:220)(cid:221)…". The shape is unmistakable — no answer ruling, no
+    graphics, and nothing between the running head and the footer but the
+    page number and one centred line. Measured over the 52 papers on disk:
+    29 pages match and every one is a blank page, while the six unruled
+    pages that do carry content (9618's code-listing answers, indented but
+    not centred) are correctly left alone.
+    """
+    from pdfminer.layout import (
+        LTCurve,
+        LTFigure,
+        LTImage,
+        LTLine,
+        LTRect,
+        LTTextContainer,
+        LTTextLine,
+    )
+
+    centre = page_width / 2
+    seen = False
+    for element in layout:  # type: ignore[attr-defined]
+        if isinstance(element, LTTextContainer):
+            for line in element:
+                if not isinstance(line, LTTextLine):
+                    continue
+                if not _mostly_between(
+                    page_height - line.y1, page_height - line.y0,
+                    top_margin, footer_y,
+                ):
+                    continue
+                if _is_filler(line):
+                    return False        # ruled: it is a question page
+                if _text_size(line) < _MIN_TEXT_SIZE:
+                    continue
+                if abs((line.x0 + line.x1) / 2 - centre) > _CENTRE_TOLERANCE:
+                    return False
+                seen = True
+        elif isinstance(
+            element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
+        ) and element.height <= _FURNITURE_RATIO * page_height:
+            if _mostly_between(
+                page_height - element.y1, page_height - element.y0,
+                top_margin, footer_y,
+            ):
+                return False            # a diagram or a table: real content
+    return seen
+
+
+def _mostly_between(top: float, bottom: float, lo: float, hi: float) -> bool:
+    """Is this box inside the page's content area rather than furniture?
+
+    By the same majority rule the bands use, and for the same reason: CIE
+    prints registration brackets that dip a couple of points below the top
+    margin, and counting those as graphics made every blank page look like
+    it held a diagram.
+    """
+    height = bottom - top
+    if height <= 0.5:
+        return lo <= top <= hi
+    return min(bottom, hi) - max(top, lo) >= _INSIDE_RATIO * height
 
 
 def _page_extents(
@@ -666,6 +750,7 @@ def content_bands(
     column: tuple[float, float] | None = None,
     *,
     top_margin: float = _TOP_MARGIN,
+    footer_y: float = _FOOTER_Y,
 ) -> list[Band]:
     """Cut the answer space out of each band, keeping everything else.
 
@@ -706,11 +791,19 @@ def content_bands(
 
     out: list[Band] = []
     extents: dict[int, list[tuple[float, float]]] = {}
+    blank: dict[int, bool] = {}
     for region_band in bands:
         page_layout = pages.get(region_band.page_idx)
         if page_layout is None:
             continue
         height = heights[region_band.page_idx]
+        if region_band.page_idx not in blank:
+            blank[region_band.page_idx] = _is_blank_page(
+                page_layout, height, widths[region_band.page_idx],
+                top_margin, footer_y,
+            )
+        if blank[region_band.page_idx]:
+            continue
         # Grow the top *before* narrowing to it. An element the region's
         # edge slices through is at most half inside it, so _content_spans
         # has already thrown it away by the time the band is measured — the

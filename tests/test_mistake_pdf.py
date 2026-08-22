@@ -470,6 +470,58 @@ class TestContentBands:
 
         assert all(b.y_top >= 45.0 for b in bands)
 
+    def _blank_page_pdf(self, path: Path, text: str, centred: bool) -> Path:
+        """A page CIE fills with one line and nothing else."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=4.7)
+        pdf.text(87, 40, "IHFEGDCBA" * 6)               # barcode, up in the
+        pdf.set_font("Helvetica", size=10)              # running head
+        number = "12"
+        pdf.text((_PAGE_W - pdf.get_string_width(number)) / 2, 42, number)
+        pdf.set_font("Helvetica", size=12)
+        width = pdf.get_string_width(text)
+        pdf.text((_PAGE_W - width) / 2 if centred else 126.0, 400, text)
+        pdf.output(str(path))
+        return path
+
+    def test_a_blank_page_inside_a_question_contributes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """CIE drops blank pages between questions and a region runs
+        straight through them, so one lands in the middle of a crop — the
+        band it produced said "BLANK PAGE" and nothing else.
+
+        Matched on shape, not on those words: half the papers embed their
+        fonts with no ToUnicode map and there the words extract as
+        "(cid:220)(cid:221)…".
+        """
+        path = self._blank_page_pdf(
+            tmp_path / "blank.pdf", "BLANK PAGE", centred=True
+        )
+
+        assert content_bands(
+            str(path), [Band(page_idx=0, y_top=45.0, y_bottom=740.0)]
+        ) == []
+
+    def test_an_unruled_page_that_carries_content_is_kept(
+        self, tmp_path: Path
+    ) -> None:
+        """Only *centred* is a blank page. 9618 sets its code-listing
+        answers on pages with no ruling and no graphics either, indented but
+        left-aligned — six such pages on the papers to hand, and dropping
+        them would have thrown away real questions."""
+        path = self._blank_page_pdf(
+            tmp_path / "code.pdf",
+            "IF Count > 0 THEN OUTPUT Total / Count",
+            centred=False,
+        )
+
+        assert content_bands(
+            str(path), [Band(page_idx=0, y_top=45.0, y_bottom=740.0)]
+        ) != []
+
     def test_a_page_of_pure_answer_space_yields_nothing(
         self, tmp_path: Path
     ) -> None:
