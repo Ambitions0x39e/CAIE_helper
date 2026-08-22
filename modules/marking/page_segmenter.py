@@ -244,11 +244,27 @@ def _parse_codepoints(text: str) -> list[int]:
     return [ord(c) for c in text]
 
 
-def _detect_format(page: _SegPage) -> str:
-    w = page.width
-    if abs(w - 595) < 10:
+def _format_for_width(width: float) -> str:
+    if abs(width - 595) < 10:
         return "a4"
     return "letter"
+
+
+def _detect_format(page: _SegPage) -> str:
+    return _format_for_width(page.width)
+
+
+def question_number_x(page_width: float) -> float:
+    """Where CIE prints main question numbers on a page this wide.
+
+    Public because the 错题本's PDF export has to crop wide enough to keep
+    the number, and every attempt to infer that from content lost it — the
+    ruling it was measured against sits 21pt further right on a paper whose
+    answer space is indented under a sub-part, which cut the number off 18
+    of 52 papers. This is the same constant boundaries are matched against,
+    so exporting and segmenting cannot drift apart.
+    """
+    return _FORMAT_PARAMS[_format_for_width(page_width)]["left_margin_x"]
 
 
 # A paper is either CID-encoded throughout or readable throughout; measured
