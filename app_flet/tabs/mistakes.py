@@ -29,6 +29,7 @@ from app_flet import theme
 from app_flet.components.widgets import data_table
 from core.models import MistakeRecord
 from core.storage import CSVStore, MistakeStore
+from modules.marking.answer_sheet import build_answer_sheet
 from modules.marking.mistake_pdf import build_export
 from modules.marking.mistakes import (
     UNCLASSIFIED,
@@ -54,6 +55,7 @@ _BY_PAPER = "paper"
 _BY_TOPIC = "topic"
 _EXPORT_FILENAME = "mistakes.csv"
 _EXPORT_PDF_FILENAME = "mistakes.pdf"
+_EXPORT_ANSWERS_FILENAME = "mistakes-answers.pdf"
 
 # ── Column widths ─────────────────────────────────────────────────
 #
@@ -594,6 +596,52 @@ def build_mistakes_tab(
     def _on_export_pdf_click(_: ft.Event[ft.Button]) -> None:
         page.run_task(_do_export_pdf)
 
+    async def _do_export_answers() -> None:
+        chosen = [records[i] for i in sorted(selected)]
+        if not chosen:
+            show_snack("请先勾选要导出的错题", theme.WARNING)
+            return
+        try:
+            ms_of = {r.paper_id: r.ms_path for r in CSVStore().load_all()}
+        except ValueError as exc:
+            show_snack(f"读取试卷记录失败: {exc}", theme.DANGER)
+            return
+
+        show_snack("正在排版答案…", theme.ACCENT)
+        try:
+            # Reads the mark-scheme cache and lays out text — no PDF work
+            # and no network, but still off the event loop.
+            data, warnings = await asyncio.to_thread(
+                build_answer_sheet, chosen, ms_of
+            )
+        except ValueError as exc:
+            show_snack(f"导出失败: {exc}", theme.DANGER)
+            return
+        except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+            _log.exception("answer sheet export failed")
+            show_snack(f"导出失败: {exc}", theme.DANGER)
+            return
+
+        path = await export_picker.save_file(
+            dialog_title="导出所选错题的答案（PDF）",
+            file_name=_EXPORT_ANSWERS_FILENAME,
+            allowed_extensions=["pdf"],
+            src_bytes=data,
+        )
+        if not path:
+            return
+        if warnings:
+            show_snack(
+                f"已导出 → {path}；{len(warnings)} 项未包含: "
+                f"{'；'.join(warnings)}",
+                theme.WARNING,
+            )
+        else:
+            show_snack(f"已导出 → {path}", theme.SUCCESS)
+
+    def _on_export_answers_click(_: ft.Event[ft.TextButton]) -> None:
+        page.run_task(_do_export_answers)
+
     # ── Shell ─────────────────────────────────────────────────────
 
     view_selector = ft.SegmentedButton(
@@ -631,6 +679,13 @@ def build_mistakes_tab(
                     "导出 CSV",
                     icon=ft.CupertinoIcons.ARROW_DOWN_DOC,
                     on_click=_on_export_click,
+                ),
+                ft.TextButton(
+                    "导出答案",
+                    icon=ft.CupertinoIcons.CHECKMARK_SEAL,
+                    tooltip="把所选题目的 mark scheme 排成一份答案 —— "
+                            "用批改时已解析的结果，不会重新解析",
+                    on_click=_on_export_answers_click,
                 ),
                 ft.Button(
                     "导出 PDF",
