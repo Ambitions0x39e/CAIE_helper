@@ -528,6 +528,36 @@ def _uncut_top(
     return cursor
 
 
+def _uncut_bottom(
+    extents: Sequence[tuple[float, float]], y_bottom: float, ceiling: float
+) -> float:
+    """:func:`_uncut_top` downwards, for the other edge of a band.
+
+    The two are bounded differently, and that difference is the whole
+    argument. A band's top may grow *past* the region's own start, because
+    what sits above a question number on its line is that question's maths.
+    Its bottom may not grow past the region's own end: what sits below the
+    *next* question's number, on that number's line, is the next question's
+    maths, and dragging it in would put Q5's fraction at the foot of Q4.
+    So *ceiling* is the region's bottom, and only the edges inside a
+    region — where a ruling block or a tightened crop cut through a
+    denominator — actually move.
+    """
+    cursor = y_bottom
+    for _ in range(len(extents) + 1):
+        below = [
+            bottom for top, bottom in extents
+            if bottom > cursor + _TOUCH and top < cursor - _TOUCH
+        ]
+        if not below:
+            break
+        lowest = max(below)
+        if lowest > ceiling or lowest - y_bottom > _MAX_LIFT:
+            break
+        cursor = lowest
+    return cursor
+
+
 def _ruling_blocks(
     rows: Sequence[_Span],
 ) -> list[tuple[float, float]]:
@@ -661,14 +691,18 @@ def content_bands(
         content, filler, readable = _content_spans(
             page_layout, band.y_top, band.y_bottom, height
         )
+        page_extents = extents[region_band.page_idx]
         cursor = band.y_top
         for ruled_top, ruled_bottom in _ruling_blocks(filler):
             _keep(
                 out, band, cursor, min(ruled_top, band.y_bottom),
-                content, readable, column,
+                content, readable, column, page_extents,
             )
             cursor = max(cursor, ruled_bottom)
-        _keep(out, band, cursor, band.y_bottom, content, readable, column)
+        _keep(
+            out, band, cursor, band.y_bottom,
+            content, readable, column, page_extents,
+        )
     return out
 
 
@@ -680,6 +714,7 @@ def _keep(
     content: Sequence[_Span],
     readable: int,
     column: tuple[float, float],
+    extents: Sequence[tuple[float, float]] = (),
 ) -> None:
     """Add the gap between two rulings, if it holds anything at all.
 
@@ -705,6 +740,12 @@ def _keep(
         bottom = min(bottom, max(span.bottom for span in inside) + _PAD)
         if bottom - top < _MIN_BAND:
             return
+    # Neither edge may slice through something. Both are held inside the
+    # region, so this only widens a gap back towards the ruling that
+    # bounded it — measured on 9231 s25 P1, 22 of the paper's bands ended
+    # 3–5pt inside a fraction's denominator.
+    top = _uncut_top(extents, top, band.y_top)
+    bottom = _uncut_bottom(extents, bottom, band.y_bottom)
     out.append(Band(
         page_idx=band.page_idx,
         y_top=max(band.y_top, top),
