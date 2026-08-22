@@ -490,6 +490,41 @@ def _repair_cover_info(
     return repaired
 
 
+def cached_mark_scheme(pdf_path: str | Path) -> PaperConfig | None:
+    """The parsed mark scheme for this PDF if one is already cached.
+
+    Never parses — the 错题本's answer sheet is built from what the Mark tab
+    already produced, and a cache miss there must not fire off a paid VL run
+    behind the user's back.
+
+    Takes no ``paper_type``: MCQ caches under the plain stem and MATH under
+    ``stem.spN``, so both keys are simply tried. That also avoids re-running
+    start-page detection, which would mean opening the PDF — and the PDF may
+    well be gone while its cache is still here. When several start pages
+    have been parsed the newest wins, on the grounds that a re-parse from an
+    overridden start page is the more considered answer.
+    """
+    from core.settings import app_settings
+
+    path = Path(pdf_path)
+    plain = _cache_path_for(path)
+    candidates = sorted(
+        app_settings.ms_cache_dir.glob(f"{path.stem}.sp*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if plain.exists():
+        candidates.append(plain)
+    for candidate in candidates:
+        try:
+            return PaperConfig.model_validate_json(
+                candidate.read_text("utf-8")
+            )
+        except Exception:  # noqa: BLE001, S112 — a bad cache file is a miss
+            continue
+    return None
+
+
 def ms_cache_exists(
     pdf_path: str | Path,
     paper_type: PaperType,
