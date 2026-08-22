@@ -22,6 +22,7 @@ Nothing here may import ``flet``/``app_flet`` — same rule as the rest of
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -89,14 +90,9 @@ _SYMBOL_BYTE: dict[str, int] = {
     "∩": 0xC7, "∪": 0xC8, "≡": 0xBA,
 }
 
-#: Raised and lowered characters, mapped to what they say on the line. No
-#: base-14 font has any of them, and the mark schemes already write the
-#: ASCII form everywhere else ("9r^2", "6^k - 1").
-#:
-#: The letters are here even though the 202 questions cached on this machine
-#: never used one — that set is only what happened to have been marked, and
-#: "u₂ₙ is divisible by uₙ" is a sequences question written the ordinary
-#: way. It turned up in the very first paper exported.
+#: Raised and lowered characters, mapped to the character they say. They
+#: are not rewritten into "^2" any more — they are *set* raised or lowered
+#: (see :func:`atoms`), which is the whole point of this module's layout.
 _SUPERSCRIPT: dict[str, str] = {
     "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
     "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
@@ -112,8 +108,7 @@ _SUBSCRIPT: dict[str, str] = {
     "ₐ": "a", "ₑ": "e", "ₕ": "h", "ᵢ": "i", "ⱼ": "j",
     "ₖ": "k", "ₗ": "l", "ₘ": "m", "ₙ": "n", "ₒ": "o",
     "ₚ": "p", "ᵣ": "r", "ₛ": "s", "ₜ": "t", "ᵤ": "u",
-    "ᵥ": "v", "ₓ": "x", "ᵦ": "beta", "ᵧ": "gamma",
-    "ᵨ": "rho",
+    "ᵥ": "v", "ₓ": "x", "ᵦ": "β", "ᵧ": "γ", "ᵨ": "ρ",
 }
 
 #: The rest of the rewrites — punctuation and marks, one for one.
@@ -131,44 +126,129 @@ _UNRENDERABLE = "?"
 #: Symbol code point → the character it draws, for width lookup.
 _SYMBOL_CHAR = {byte: char for char, byte in _SYMBOL_BYTE.items()}
 
+# ── Maths layout ──────────────────────────────────────────────────
+#
+# The mark schemes come out of the vision model as flat ASCII maths —
+# "½ ∫_0^2π θ^2 e^(¼θ) dθ". Printed flat it is close to unreadable, so the
+# "^" and "_" are turned back into what they mean: a smaller run of type,
+# raised or lowered. Nothing here is LaTeX, because the source is not
+# LaTeX — measured over the 202 cached questions, it contains exactly zero
+# backslash commands.
 
-def normalise(text: str) -> str:
-    """Rewrite the notation both fonts lack into the ASCII the rest uses.
+#: Each level of nesting shrinks the type by this much, TeX-style.
+_SCRIPT_SCALE = 0.72
+#: …down to this share of the base size, so a doubly-nested exponent stays
+#: legible rather than shrinking to a dot.
+_MIN_SCALE = 0.5
+#: How far a superscript rises and a subscript drops, as a share of the
+#: size they are attached to.
+_SUP_RISE = 0.42
+_SUB_RISE = -0.20
 
-    Raised and lowered characters convert a *run* at a time, not one by
-    one: "u₂ₙ" is u sub 2n, so it has to come out as ``u_(2n)``. Done per
-    character it reads ``u_2_n``, which says something else — and ``u_2n``
-    on its own is no better, since that parses as (u_2)n. A single
-    character needs no brackets, so "x²" stays "x^2", the way the mark
-    schemes already write it.
+#: What "^" and "_" take when the operand is not bracketed. Measured over
+#: the cached mark schemes: a single digit 39 times, a signed number 12,
+#: a single letter 6, a two-digit number 2. The trailing Greek letter is
+#: for limits like "∫_0^2π", where the whole "2π" is the limit — a digit
+#: followed by a Greek letter is a coefficient and its constant, never two
+#: separate things.
+_BARE_OPERAND = re.compile("[+-]?\\d+[Ͱ-Ͽ]?")
+
+
+@dataclass(frozen=True)
+class _Atom:
+    """One character, at the size and height its nesting gives it."""
+
+    char: str
+    size: float
+    rise: float
+    #: A space at the base level, i.e. somewhere a line may be broken.
+    breaks: bool = False
+
+
+def _operand(text: str, index: int) -> tuple[str, int]:
+    """What "^" or "_" at *index*-1 applies to, and how much it consumed.
+
+    A bracketed group loses its brackets: "e^(¼θ)" means e to the ¼θ, and
+    once the ¼θ is actually raised the brackets say nothing — printing them
+    is what made these lines look like code.
     """
-    out: list[str] = []
+    char = text[index]
+    if char in "({":
+        closing = ")" if char == "(" else "}"
+        depth = 0
+        for position in range(index, len(text)):
+            if text[position] == char:
+                depth += 1
+            elif text[position] == closing:
+                depth -= 1
+                if depth == 0:
+                    return text[index + 1:position], position - index + 1
+        return text[index + 1:], len(text) - index   # unbalanced: take it all
+    bare = _BARE_OPERAND.match(text, index)
+    if bare:
+        return bare.group(0), len(bare.group(0))
+    return char, 1
+
+
+def atoms(
+    text: str, size: float, rise: float = 0.0, base: float | None = None
+) -> list[_Atom]:
+    """Lay a line of the mark scheme's maths out into positioned characters.
+
+    Recursive, so "e^(x^2)" nests properly. *base* is the size of the line
+    this belongs to, and it is what the shrinking floor is measured against
+    — floored against the *parent* instead, every level shrinks by the same
+    ratio and the floor never binds at all (four levels down reached 2.7pt
+    on a 10pt line).
+    """
+    base = size if base is None else base
+    step = max(size * _SCRIPT_SCALE, base * _MIN_SCALE)
+    out: list[_Atom] = []
     index = 0
     while index < len(text):
-        for table, mark in ((_SUBSCRIPT, "_"), (_SUPERSCRIPT, "^")):
-            if text[index] not in table:
+        char = text[index]
+
+        if char in "^_" and index + 1 < len(text):
+            body, used = _operand(text, index + 1)
+            out.extend(atoms(
+                body, step,
+                rise + size * (_SUP_RISE if char == "^" else _SUB_RISE),
+                base,
+            ))
+            index += 1 + used
+            continue
+
+        for table, direction in (
+            (_SUPERSCRIPT, _SUP_RISE), (_SUBSCRIPT, _SUB_RISE)
+        ):
+            if char not in table:
                 continue
-            run = []
+            body = ""
             while index < len(text) and text[index] in table:
-                run.append(table[text[index]])
+                body += table[text[index]]
                 index += 1
-            body = "".join(run)
-            out.append(mark + (body if len(body) == 1 else f"({body})"))
+            out.extend(atoms(
+                body, step, rise + size * direction, base,
+            ))
             break
         else:
-            out.append(_ASCII_MATHS.get(text[index], text[index]))
+            for plain in _ASCII_MATHS.get(char, char):
+                out.append(_Atom(
+                    plain, size, rise, breaks=plain == " " and rise == 0.0
+                ))
             index += 1
-    return "".join(out)
+    return out
 
 
 @dataclass(frozen=True)
 class _Run:
-    """A stretch of one line set in one font."""
+    """A stretch of one line set in one font at one height."""
 
     text: str
     symbol: bool
     bold: bool
     size: float
+    rise: float = 0.0
 
     @property
     def width(self) -> float:
@@ -182,24 +262,32 @@ class _Run:
         ) / 1000.0
 
 
-def _char_run(char: str, bold: bool, size: float) -> _Run:
-    """One character as a run — Symbol if only Symbol has it."""
-    if char in _SYMBOL_BYTE:
-        return _Run(chr(_SYMBOL_BYTE[char]), True, bold, size)
+def _run_for(atom: _Atom, bold: bool) -> _Run:
+    """One atom as a run — Symbol if only Symbol has its character."""
+    if atom.char in _SYMBOL_BYTE:
+        return _Run(
+            chr(_SYMBOL_BYTE[atom.char]), True, bold, atom.size, atom.rise
+        )
+    char = atom.char
     try:
         char.encode("latin-1")
     except UnicodeEncodeError:
         char = _UNRENDERABLE
-    return _Run(char, False, bold, size)
+    return _Run(char, False, bold, atom.size, atom.rise)
 
 
 def _merge(runs: Sequence[_Run]) -> list[_Run]:
-    """Join neighbouring runs that share a font, so one Tj covers them."""
+    """Join neighbouring runs that match, so one Tj covers them."""
     out: list[_Run] = []
     for run in runs:
-        if out and out[-1].symbol == run.symbol and out[-1].bold == run.bold:
+        last = out[-1] if out else None
+        if (
+            last is not None
+            and (last.symbol, last.bold, last.size, last.rise)
+            == (run.symbol, run.bold, run.size, run.rise)
+        ):
             out[-1] = _Run(
-                out[-1].text + run.text, run.symbol, run.bold, run.size
+                last.text + run.text, run.symbol, run.bold, run.size, run.rise
             )
         else:
             out.append(run)
@@ -209,20 +297,27 @@ def _merge(runs: Sequence[_Run]) -> list[_Run]:
 def wrap(text: str, size: float, bold: bool, width: float) -> list[list[_Run]]:
     """Break *text* into lines of runs that each fit inside *width*.
 
-    Wrapping happens on the source string, before the font split, so a word
-    with a Greek letter in the middle is still one word. A word too long for
-    the column is left to overhang rather than broken — mark schemes are
-    full of long expressions, and hyphenating "3n^3-6n^2+n" would change
-    what it says.
+    Wrapping happens on the laid-out atoms rather than the source string,
+    so an exponent never gets separated from what it is an exponent of. A
+    word too long for the column is left to overhang rather than broken —
+    mark schemes are full of long expressions, and hyphenating
+    "3n^3-6n^2+n" would change what it says.
     """
     lines: list[list[_Run]] = []
-    for paragraph in normalise(text).split("\n"):
+    for paragraph in text.splitlines() or [""]:
+        words: list[list[_Atom]] = [[]]
+        for atom in atoms(paragraph, size):
+            if atom.breaks:
+                words.append([])
+            else:
+                words[-1].append(atom)
+
         current: list[_Run] = []
         used = 0.0
-        for word in paragraph.split(" "):
-            piece = [_char_run(char, bold, size) for char in word]
+        space = _Run(" ", False, bold, size)
+        for word in words:
+            piece = [_run_for(atom, bold) for atom in word]
             word_width = sum(run.width for run in piece)
-            space = _char_run(" ", bold, size)
             if current and used + space.width + word_width > width:
                 lines.append(_merge(current))
                 current, used = [], 0.0
@@ -233,6 +328,19 @@ def wrap(text: str, size: float, bold: bool, width: float) -> list[list[_Run]]:
             used += word_width
         lines.append(_merge(current))
     return lines
+
+
+def line_height(runs: Sequence[_Run], size: float) -> float:
+    """How much room a line needs, given how far its scripts reach.
+
+    A line of plain text gets the plain leading; one carrying a superscript
+    and a subscript needs the span between them on top, or the raised
+    characters collide with the line above.
+    """
+    if not runs:
+        return size * _LEADING
+    rises = [run.rise for run in runs]
+    return size * _LEADING + (max(rises) - min(rises)) * 0.5
 
 
 def _escape(run: _Run) -> bytes:
@@ -258,8 +366,8 @@ class _Sheet:
             self.new_page()
 
     def block(self, text: str, size: float, bold: bool = False) -> None:
-        leading = size * _LEADING
         for line in wrap(text, size, bold, _TEXT_W):
+            leading = line_height(line, size)
             self._room(leading)
             self.pages[-1].append((self._cursor + size, line))
             self._cursor += leading
@@ -312,7 +420,12 @@ def _content(lines: Sequence[tuple[float, list[_Run]]]) -> bytes:
         out += b"BT %.2f %.2f Td" % (_MARGIN, _PAGE_H - baseline)
         for run in runs:
             key = b"/F3" if run.symbol else (b"/F2" if run.bold else b"/F1")
-            out += b" %s %.2f Tf (%s) Tj" % (key, run.size, _escape(run))
+            # Ts is the text rise — how a superscript gets set above the
+            # baseline without moving the pen, so Tj keeps advancing the
+            # line normally afterwards.
+            out += b" %s %.2f Tf %.2f Ts (%s) Tj" % (
+                key, run.size, run.rise, _escape(run)
+            )
         out += b" ET\n"
     return bytes(out)
 
@@ -342,9 +455,6 @@ def build_answer_sheet(
     from modules.marking.ms_parser import cached_mark_scheme
 
     items = list(records)
-    scored = {
-        (record.paper_id, record.question_id): record for record in items
-    }
     warnings: list[str] = []
     sheet = _Sheet()
     written = 0
@@ -367,7 +477,7 @@ def build_answer_sheet(
             if not ids:
                 warnings.append(f"{paper_id}: mark scheme 里没有 {main}")
                 continue
-            _write_question(sheet, paper_id, main, ids, config, scored)
+            _write_question(sheet, main, ids, config)
             written += 1
 
     if not written:
@@ -378,31 +488,23 @@ def build_answer_sheet(
 
 def _write_question(
     sheet: _Sheet,
-    paper_id: str,
     main: str,
     ids: Sequence[str],
     config: PaperConfig,
-    scored: Mapping[tuple[str, str], MistakeRecord],
 ) -> None:
     """One main question: a heading, then every part's mark scheme.
 
     Every part, not only the ones marks were lost on — a sub-question read
-    without its siblings usually makes no sense. The ones that *were* lost
-    carry the score, so they can be picked out at a glance.
+    without its siblings usually makes no sense. No first-attempt score
+    either: this sheet is the answer to redo against, and the old marks
+    belong in the 错题本, not on it.
     """
     total = sum(config.questions[qid].max_marks for qid in ids)
     sheet.block(f"{main}   [{total}]", _HEAD_SIZE, bold=True)
 
     for qid in ids:
         entry = config.questions[qid]
-        record = scored.get((paper_id, qid))
-        # Latin-1 only: the base-14 fonts this sheet is set in have no CJK
-        # glyphs, so a Chinese label would come out as question marks.
-        got = (
-            f"   scored {record.score:g}/{record.max_score:g}"
-            if record is not None else ""
-        )
-        sheet.block(f"{qid}  [{entry.max_marks}]{got}", _BODY_SIZE, bold=True)
+        sheet.block(f"{qid}  [{entry.max_marks}]", _BODY_SIZE, bold=True)
         sheet.block(entry.mark_scheme, _BODY_SIZE)
         sheet.gap(_PARA_GAP)
 
