@@ -304,6 +304,63 @@ class TestContentBands:
         # The 30pt glyph's box tops out at 56.2; the "7" beside it at 70.5.
         assert band.y_top < 57.0        # the whole glyph is in the crop
 
+    def test_a_denominator_hanging_into_the_ruling_is_not_sliced(
+        self, tmp_path: Path
+    ) -> None:
+        """The band ends where the answer space starts, and a displayed
+        fraction on the last line hangs below the line it sits on — measured
+        on 9231 s25 P1, 22 of the paper's bands ended 3–5pt inside one."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=10)
+        pdf.add_page()
+        pdf.text(_NUMBER_X, 80, "7")
+        pdf.text(_COLUMN_X, 80, "Find the exact value of")
+        pdf.set_font("Helvetica", size=30)      # stands in for the fraction
+        pdf.text(240, 80, "N")                  # its box runs down to 86.2
+        pdf.set_font("Helvetica", size=10)
+        for i in range(12):                     # ruling starts at 82.4
+            pdf.text(_COLUMN_X, 92 + i * 24, "." * 80)
+        path = tmp_path / "denominator.pdf"
+        pdf.output(str(path))
+
+        band = content_bands(
+            str(path), [Band(page_idx=0, y_top=70.5, y_bottom=740.0)]
+        )[0]
+
+        assert band.y_bottom > 86.0
+
+    def test_a_band_never_grows_into_the_next_question(
+        self, tmp_path: Path
+    ) -> None:
+        """The bottom edge is bounded by the region and the top edge is not,
+        and that asymmetry is deliberate: what sits above a question number
+        on its own line is *its* maths, but what sits below the next
+        question's number is the *next* question's."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=10)
+        pdf.add_page()
+        # Ends at 72.1, so the crop's bottom edge lands at 75.1 — inside the
+        # next question's 30pt glyph, which runs from 71.2 down to 101.2.
+        pdf.text(_COLUMN_X, 70, "the tail of the previous question.")
+        pdf.set_font("Helvetica", size=30)
+        pdf.text(240, 95, "N")              # the next question's fraction
+        pdf.set_font("Helvetica", size=10)
+        pdf.text(_NUMBER_X, 95, "8")        # …and the next question's number
+        for i in range(12):
+            pdf.text(_COLUMN_X, 130 + i * 24, "." * 80)
+        path = tmp_path / "next.pdf"
+        pdf.output(str(path))
+
+        # The region ends at the top of "8"; Q8's 30pt glyph starts above it.
+        bands = content_bands(
+            str(path), [Band(page_idx=0, y_top=50.0, y_bottom=80.5)]
+        )
+
+        assert bands, "the previous question's own line must still be kept"
+        assert all(b.y_bottom <= 80.5 for b in bands)
+
     def test_the_first_line_grows_no_further_than_the_top_margin(
         self, tmp_path: Path
     ) -> None:
