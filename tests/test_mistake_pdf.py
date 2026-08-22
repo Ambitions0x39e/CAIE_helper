@@ -544,6 +544,17 @@ class TestContentBands:
 # ── Composition ───────────────────────────────────────────────────
 
 
+def _answer_pdf(path: Path, text: str) -> bytes:
+    """A stand-in for a typeset mark-scheme page."""
+    pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+    pdf.set_auto_page_break(auto=False)
+    pdf.set_font("Helvetica", size=12)
+    pdf.add_page()
+    pdf.text(72, 72, text)
+    pdf.output(str(path))
+    return path.read_bytes()
+
+
 class TestComposePdf:
     def test_one_page_per_question_with_the_bands_clipped(
         self, tmp_path: Path
@@ -590,6 +601,46 @@ class TestComposePdf:
         assert x > _BAR_X + 20      # the margin bar is outside the crop
         assert x < _NUMBER_X        # …but the question number is inside it
         assert width < _PAGE_W - x  # and so is whatever sits down the right
+
+    def test_an_answer_lands_on_the_page_after_its_question(
+        self, tmp_path: Path
+    ) -> None:
+        """The point of interleaving: flip the page and there is the mark
+        scheme, so a question that ran onto two pages still has its answer
+        on the next leaf rather than at the back of the document."""
+        source = _paper_pdf(tmp_path / "qp.pdf")
+        crops = [
+            QuestionCrop("p", "Q1", str(source), [
+                Band(page_idx=0, y_top=60.0, y_bottom=180.0),
+                Band(page_idx=0, y_top=60.0, y_bottom=760.0),   # wraps
+            ]),
+            QuestionCrop("p", "Q2", str(source), [
+                Band(page_idx=0, y_top=60.0, y_bottom=100.0),
+            ]),
+        ]
+        answer = _answer_pdf(tmp_path / "a.pdf", "ANSWER ONE")
+
+        out = tmp_path / "out.pdf"
+        out.write_bytes(compose_pdf(crops, {("p", "Q1"): answer}))
+        pages = PdfReader(str(out)).pages
+
+        # Q1 wrapped onto two pages, then its answer, then Q2.
+        assert len(pages) == 4
+        assert "ANSWER ONE" in pages[2].extract_text()
+        assert "ANSWER ONE" not in pages[3].extract_text()
+
+    def test_without_answers_the_export_is_questions_only(
+        self, tmp_path: Path
+    ) -> None:
+        source = _paper_pdf(tmp_path / "qp.pdf")
+        crops = [QuestionCrop("p", "Q1", str(source), [
+            Band(page_idx=0, y_top=60.0, y_bottom=180.0),
+        ])]
+
+        out = tmp_path / "out.pdf"
+        out.write_bytes(compose_pdf(crops))
+
+        assert len(PdfReader(str(out)).pages) == 1
 
     def test_pages_keep_the_source_size(self, tmp_path: Path) -> None:
         source = _paper_pdf(tmp_path / "qp.pdf")

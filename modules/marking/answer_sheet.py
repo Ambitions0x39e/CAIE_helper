@@ -191,7 +191,12 @@ def _operand(text: str, index: int) -> tuple[str, int]:
 
 
 def atoms(
-    text: str, size: float, rise: float = 0.0, base: float | None = None
+    text: str,
+    size: float,
+    rise: float = 0.0,
+    base: float | None = None,
+    *,
+    math: bool = True,
 ) -> list[_Atom]:
     """Lay a line of the mark scheme's maths out into positioned characters.
 
@@ -200,6 +205,11 @@ def atoms(
     — floored against the *parent* instead, every level shrinks by the same
     ratio and the floor never binds at all (four levels down reached 2.7pt
     on a 10pt line).
+
+    *math* off treats "^" and "_" as the characters they are. Headings need
+    that: a paper id is "9231_s25_qp_11", and read as maths it comes out as
+    9231 with a subscript s, then 25, then a subscript q — which is exactly
+    how the first interleaved export printed it.
     """
     base = size if base is None else base
     step = max(size * _SCRIPT_SCALE, base * _MIN_SCALE)
@@ -208,12 +218,12 @@ def atoms(
     while index < len(text):
         char = text[index]
 
-        if char in "^_" and index + 1 < len(text):
+        if math and char in "^_" and index + 1 < len(text):
             body, used = _operand(text, index + 1)
             out.extend(atoms(
                 body, step,
                 rise + size * (_SUP_RISE if char == "^" else _SUB_RISE),
-                base,
+                base, math=math,
             ))
             index += 1 + used
             continue
@@ -228,7 +238,7 @@ def atoms(
                 body += table[text[index]]
                 index += 1
             out.extend(atoms(
-                body, step, rise + size * direction, base,
+                body, step, rise + size * direction, base, math=math,
             ))
             break
         else:
@@ -294,7 +304,9 @@ def _merge(runs: Sequence[_Run]) -> list[_Run]:
     return out
 
 
-def wrap(text: str, size: float, bold: bool, width: float) -> list[list[_Run]]:
+def wrap(
+    text: str, size: float, bold: bool, width: float, *, math: bool = True
+) -> list[list[_Run]]:
     """Break *text* into lines of runs that each fit inside *width*.
 
     Wrapping happens on the laid-out atoms rather than the source string,
@@ -306,7 +318,7 @@ def wrap(text: str, size: float, bold: bool, width: float) -> list[list[_Run]]:
     lines: list[list[_Run]] = []
     for paragraph in text.splitlines() or [""]:
         words: list[list[_Atom]] = [[]]
-        for atom in atoms(paragraph, size):
+        for atom in atoms(paragraph, size, math=math):
             if atom.breaks:
                 words.append([])
             else:
@@ -351,22 +363,35 @@ def _escape(run: _Run) -> bytes:
 
 
 class _Sheet:
-    """Lines flowed down pages, then turned into PDF content streams."""
+    """Lines flowed down pages, then turned into PDF content streams.
 
-    def __init__(self) -> None:
+    The page size is a parameter because these pages get interleaved with
+    pages cropped out of a question paper, and two of the papers on disk are
+    A4 rather than letter — a document that changes size halfway prints
+    badly.
+    """
+
+    def __init__(
+        self, width: float = _PAGE_W, height: float = _PAGE_H
+    ) -> None:
+        self.width = width
+        self.height = height
+        self.text_width = width - 2 * _MARGIN
         self.pages: list[list[tuple[float, list[_Run]]]] = []
-        self._cursor = _PAGE_H
+        self._cursor = height
 
     def new_page(self) -> None:
         self.pages.append([])
         self._cursor = _MARGIN
 
     def _room(self, height: float) -> None:
-        if not self.pages or self._cursor + height > _PAGE_H - _MARGIN:
+        if not self.pages or self._cursor + height > self.height - _MARGIN:
             self.new_page()
 
-    def block(self, text: str, size: float, bold: bool = False) -> None:
-        for line in wrap(text, size, bold, _TEXT_W):
+    def block(
+        self, text: str, size: float, bold: bool = False, math: bool = True
+    ) -> None:
+        for line in wrap(text, size, bold, self.text_width, math=math):
             leading = line_height(line, size)
             self._room(leading)
             self.pages[-1].append((self._cursor + size, line))
@@ -379,10 +404,10 @@ class _Sheet:
     def to_bytes(self) -> bytes:
         writer = PdfWriter()
         for lines in self.pages:
-            page = writer.add_blank_page(width=_PAGE_W, height=_PAGE_H)
+            page = writer.add_blank_page(width=self.width, height=self.height)
             page[NameObject("/Resources")] = _resources()
             raw = DecodedStreamObject()
-            raw.set_data(_content(lines))
+            raw.set_data(_content(lines, self.height))
             # Wrapped rather than assigned straight: replace_contents wants
             # a ContentStream, and going through one also proves the
             # operators parse.
@@ -411,13 +436,15 @@ def _resources() -> DictionaryObject:
     return resources
 
 
-def _content(lines: Sequence[tuple[float, list[_Run]]]) -> bytes:
+def _content(
+    lines: Sequence[tuple[float, list[_Run]]], page_height: float = _PAGE_H
+) -> bytes:
     """The page's content stream. y is measured down; PDF measures up."""
     out = bytearray()
     for baseline, runs in lines:
         if not runs:
             continue
-        out += b"BT %.2f %.2f Td" % (_MARGIN, _PAGE_H - baseline)
+        out += b"BT %.2f %.2f Td" % (_MARGIN, page_height - baseline)
         for run in runs:
             key = b"/F3" if run.symbol else (b"/F2" if run.bold else b"/F1")
             # Ts is the text rise — how a superscript gets set above the
@@ -466,7 +493,7 @@ def build_answer_sheet(
             continue
 
         sheet.new_page()
-        sheet.block(paper_id, _PAPER_SIZE, bold=True)
+        sheet.block(paper_id, _PAPER_SIZE, bold=True, math=False)
         sheet.gap(_PARA_GAP)
 
         for main in mains:
@@ -484,6 +511,44 @@ def build_answer_sheet(
         raise ValueError("没有可导出的答案")
 
     return sheet.to_bytes(), warnings
+
+
+def answer_pages(
+    paper_id: str,
+    question_id: str,
+    ms_path: str,
+    width: float = _PAGE_W,
+    height: float = _PAGE_H,
+) -> bytes | None:
+    """One main question's mark scheme, as its own page(s), or None.
+
+    This is what goes on the page *after* the question in the interleaved
+    export, so it opens with the paper and question it answers — a sheet
+    that is going to be flipped past needs to say what it belongs to.
+
+    None when the paper has never been parsed or the parse doesn't cover
+    this question; the caller turns that into a warning rather than a gap.
+    """
+    from modules.marking.ms_parser import cached_mark_scheme
+
+    config = cached_mark_scheme(ms_path)
+    if config is None:
+        return None
+    main = main_question_id(question_id)
+    ids = [qid for qid in config.questions if main_question_id(qid) == main]
+    if not ids:
+        return None
+
+    sheet = _Sheet(width, height)
+    sheet.new_page()
+    # Latin-1 only: the base-14 fonts this is set in have no CJK glyphs, so
+    # a Chinese heading would come out as a row of question marks.
+    sheet.block(
+        f"{paper_id}   mark scheme", _PAPER_SIZE, bold=True, math=False,
+    )
+    sheet.gap(_PARA_GAP)
+    _write_question(sheet, main, ids, config)
+    return sheet.to_bytes()
 
 
 def _write_question(
