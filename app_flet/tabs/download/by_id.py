@@ -91,27 +91,30 @@ def build_by_id_tab(
         result_area.visible = False
         page.update()
 
-        downloader = PaperDownloader(store=state.store)
-        dl = downloader.download(request)
+        def _work() -> None:
+            downloader = PaperDownloader(store=state.store)
+            dl = downloader.download(request)
 
-        progress_ring.visible = False
-        result_area.controls.clear()
+            progress_ring.visible = False
+            result_area.controls.clear()
 
-        if dl.success:
-            result_area.controls.append(
-                success_banner(
-                    f"已下载: {dl.paper_id}",
-                    [f"QP → {dl.qp_path}", f"MS → {dl.ms_path}"],
+            if dl.success:
+                result_area.controls.append(
+                    success_banner(
+                        f"已下载: {dl.paper_id}",
+                        [f"QP → {dl.qp_path}", f"MS → {dl.ms_path}"],
+                    )
                 )
-            )
-            state.last_downloaded_id = dl.paper_id
-            state.last_downloaded_qp = dl.qp_path
-        else:
-            result_area.controls.append(error_banner(f"下载失败: {dl.error}"))
+                state.last_downloaded_id = dl.paper_id
+                state.last_downloaded_qp = dl.qp_path
+            else:
+                result_area.controls.append(error_banner(f"下载失败: {dl.error}"))
 
-        result_area.visible = True
-        _refresh_gn_section()
-        page.update()
+            result_area.visible = True
+            _refresh_gn_section()
+            page.update()
+
+        page.run_thread(_work)
 
     def on_record(_: ft.ControlEvent) -> None:
         pid = paper_id_field.value or ""

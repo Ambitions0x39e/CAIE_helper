@@ -8,7 +8,7 @@ import flet as ft
 from pydantic import ValidationError
 
 from app_flet import theme
-from app_flet.components.widgets import error_banner
+from app_flet.components.widgets import error_banner, warning_banner
 from app_flet.tabs.download.session_picker import build_session_picker
 from core.config_store import ConfigStore
 from modules.downloader import (
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 _TREE_INDENT = 34
 _LEAF_ICON_SIZE = 14
 # 行高写死，把 Material 勾选框那圈 48px 点击热区留下的空档压掉（配合 Checkbox
-# 的 COMPACT 密度），让 MS 子行能贴在它的 QP 底下——QP+MS 打包进同一个
+# 的 COMPACT 密度），让 MS/insert 子行能贴在它的 QP 底下——一套打包进同一个
 # spacing=0 的内层 Column，跟其他内容之间的间距则由外层 Column 的 SPACE_SM 控制。
 # 再往下压就会开始切字：14pt 的行盒约 19px，13pt 约 17px。
 _ROW_H = 24
@@ -47,17 +47,37 @@ _LEAF_ROW_H = 16
 # "Probability & Statistics 1" 两行），折行数不同，下面的内容就从不同高度
 # 开始，列与列参差不齐。所以表头改成**定高**：同一次渲染里所有列用同一个
 # 行数，内容一定从同一条基线开始。
+#
+# 但「定高」不等于「一律留两行」：定高容器里的 Text 是顶对齐的，多留的那一行
+# 就成了标题和它底下那条分割线之间一片没人要的空白（分割线离上面的标题比离
+# 下面的卷子还远）。所以行数是**按这次的列宽和标题长度算出来的**，只有真的有
+# 哪一列放不下才留两行 —— 见 _header_plan。
 _COL_SPACING = 16
 #: 13pt 行盒约 17px（见 _ROW_H 那条注释），留 1px 余量。
 _COL_HEADER_LINE_H = 18
-#: 挂了卷子名就给两行；窄到只剩「Paper X」时一行。
+#: 标题最多折两行，再长就省略号。
 _COL_HEADER_LINES = 2
+#: 13pt 粗体拉丁字符的保守估宽（px/字符），用来判断标题放不放得下一行。
+#: 宁可估宽：估宽了顶多多留一行空白（也就是改这版之前的样子），估窄了
+#: max_lines 会把标题截成省略号，那是把信息弄丢。
+_HEADER_CHAR_W = 7.6
+#: 全角字符一个顶一个字宽。syllabus_config.json 是手写的，卷子名填中文
+#: 完全可能 —— 按拉丁字宽估会短掉近一半，标题就被截了。
+_HEADER_WIDE_CHAR_W = 13.0
 #: 列宽窄于此就只显示「Paper X」——名字挤成三四行反而更难看。
 #: 想让卷子名更早/更晚出现，调这一个数就够。
 _COL_DESC_MIN_W = 150
 #: 结果区可用宽度 = 窗口宽 - 左侧导航列 84 - 分隔线 1 - 本页左右 padding 40。
 _RESULT_CHROME_W = 125
 _FALLBACK_PAGE_W = 1024
+
+
+def _est_header_w(label: str) -> float:
+    """表头标题画出来大概多宽（px）。CJK 起步的码位按全角算，其余按拉丁算。"""
+    return sum(
+        _HEADER_WIDE_CHAR_W if ord(ch) > 0x2E7F else _HEADER_CHAR_W
+        for ch in label
+    )
 
 
 def _paper_digit(paper_id: str) -> str:
@@ -79,13 +99,16 @@ def build_request_tab(
     show_snack: object,
     on_resize_hooks: list[Callable[[], bool]] | None = None,
 ) -> ft.Container:
+    def _per_col_w(n_cols: int) -> float:
+        """一列有多宽（px），按当前窗口宽算。"""
+        avail = int(page.width or _FALLBACK_PAGE_W) - _RESULT_CHROME_W
+        return (avail - _COL_SPACING * (n_cols - 1)) / n_cols
+
     def _fits_desc(n_cols: int) -> bool:
         """Is each of *n_cols* columns wide enough to carry the paper's name?"""
         if n_cols <= 0:
             return True
-        avail = int(page.width or _FALLBACK_PAGE_W) - _RESULT_CHROME_W
-        per_col = (avail - _COL_SPACING * (n_cols - 1)) / n_cols
-        return per_col >= _COL_DESC_MIN_W
+        return _per_col_w(n_cols) >= _COL_DESC_MIN_W
 
     syllabi = sorted(ConfigStore().load_all(), key=lambda s: s.syllabus_id)
     # 三个下拉框和「分数线」子页共用，见 session_picker.py。
@@ -103,11 +126,12 @@ def build_request_tab(
 
     # (勾选框, 右侧状态文字, 条目) — 只装可勾选的行（qp / gt）
     rows: list[tuple[ft.Checkbox, ft.Text, QueryEntry]] = []
-    total_files = [0]  # 这一次查询返回的文件总数，含挂在 qp 下面的 ms
+    total_files = [0]  # 这一次查询返回的文件总数，含挂在 qp 下面的 ms / insert
     # 最近一次查询结果 + 它渲染时用的表头模式。留着是为了窗口变宽/变窄时能
     # 就地重排，不必重新发一次网络查询。
     last_result: list[QueryResult | None] = [None]
-    rendered_desc: list[bool | None] = [None]
+    #: 上次渲染用的表头方案 (显不显示卷子名, 留几行)，给 _reflow_on_resize 比对。
+    rendered_head: list[tuple[bool, int] | None] = [None]
 
     def _row_note(entry: QueryEntry) -> str:
         """右侧灰字：这行的状态。已下载不再单独打标，只在批量摘要里计跳过数。"""
@@ -157,7 +181,7 @@ def build_request_tab(
         )
 
     def _plain_row(entry: QueryEntry) -> ft.Row:
-        """ci / in / er 之类：列出来，但不给选择列。"""
+        """ci / er 之类（含没配上 QP 的孤儿 MS/insert）：列出来，但不给选择列。"""
         return ft.Row(
             [
                 ft.Container(width=_TREE_INDENT),
@@ -193,6 +217,9 @@ def build_request_tab(
         if not paper_type_dd.value or not year_dd.value or not season_dd.value:
             show_snack("请先选择完整的查询条件")  # type: ignore[operator]
             return
+        syllabus_id, year, season = (
+            paper_type_dd.value, year_dd.value, season_dd.value,
+        )
 
         progress_ring.visible = True
         result_list.visible = False
@@ -202,38 +229,77 @@ def build_request_tab(
         status_text.value = "查询中…"
         page.update()
 
-        result = query_available(
-            paper_type_dd.value,
-            year_dd.value,
-            cast(QuerySeason, season_dd.value),
-            store=state.store,
+        def _work() -> None:
+            result = query_available(
+                syllabus_id,
+                year,
+                cast(QuerySeason, season),
+                store=state.store,
+            )
+
+            progress_ring.visible = False
+            rows.clear()
+            result_list.controls.clear()
+            error_area.controls.clear()
+            error_area.visible = False
+
+            if not result.success:
+                status_text.color = theme.DANGER
+                status_text.value = f"查询失败: {result.error}"
+                page.update()
+                return
+
+            if not result.entries:
+                status_text.color = theme.MUTED
+                status_text.value = "这个考季没有查到任何文件"
+                page.update()
+                return
+
+            last_result[0] = result
+            _render_result(result)
+
+        page.run_thread(_work)
+
+    def _type_names() -> dict[str, str]:
+        """当前科目的 卷号 → 卷子名（没配就是空表）。"""
+        selected = next(
+            (s for s in syllabi if s.syllabus_id == paper_type_dd.value), None
         )
+        return selected.paper_types_as_dict() if selected else {}
 
-        progress_ring.visible = False
-        rows.clear()
-        result_list.controls.clear()
-        error_area.controls.clear()
-        error_area.visible = False
+    def _header_label(digit: str, named: str | None) -> str:
+        return f"Paper {digit}" + (f" · {named}" if named else "")
 
-        if not result.success:
-            status_text.color = theme.DANGER
-            status_text.value = f"查询失败: {result.error}"
-            page.update()
-            return
+    def _header_plan(digits: list[str]) -> tuple[bool, int]:
+        """这次渲染的表头方案：(显不显示卷子名, 所有列共用几行)。
 
-        if not result.entries:
-            status_text.color = theme.MUTED
-            status_text.value = "这个考季没有查到任何文件"
-            page.update()
-            return
+        行数全列统一，否则「某列一行、某列两行」又会让内容错开基线；但统一的
+        那个数按实际标题长度来定，两列都放得下就只留一行，标题和分割线之间
+        不留那截空白。
+        """
+        n_cols = len(digits)
+        show_desc = _fits_desc(n_cols)
+        if not show_desc or n_cols <= 0:
+            return show_desc, 1
 
-        last_result[0] = result
-        _render_result(result)
+        names = _type_names()
+        per_col = _per_col_w(n_cols)
+        needs_two = any(
+            _est_header_w(_header_label(d, names.get(d))) > per_col
+            for d in digits
+        )
+        return True, _COL_HEADER_LINES if needs_two else 1
+
+    def _column_digits(result: QueryResult) -> list[str]:
+        return sorted({
+            _paper_digit(e.paper_id) for e in result.entries if e.kind == "qp"
+        })
 
     def _render_result(result: QueryResult) -> None:
         total_files[0] = len(result.entries)
         available = {e.paper_id for e in result.entries}
-        nested_ms: set[str] = set()
+        # 已经作为子行挂在某个 QP 下面的 id（MS 和 insert），底下不再重复列一遍。
+        nested: set[str] = set()
 
         # 按卷号（倒数第二位数字：_11/_12/_13 → 1，_21/_22 → 2）分列，
         # 一张卷子一列，横向铺满窗口。
@@ -242,18 +308,9 @@ def build_request_tab(
             if entry.kind == "qp":
                 groups.setdefault(_paper_digit(entry.paper_id), []).append(entry)
 
-        selected_syllabus = next(
-            (s for s in syllabi if s.syllabus_id == paper_type_dd.value), None
-        )
-        type_names = (
-            selected_syllabus.paper_types_as_dict() if selected_syllabus else {}
-        )
-
-        # 一次渲染只定一个表头行数，所有列共用 —— 逐列各算各的会重新引入
-        # 高低不齐（比如某一列没配卷子名就只有一行）。
-        show_desc = _fits_desc(len(groups))
-        header_lines = _COL_HEADER_LINES if show_desc else 1
-        rendered_desc[0] = show_desc
+        type_names = _type_names()
+        show_desc, header_lines = _header_plan(sorted(groups))
+        rendered_head[0] = (show_desc, header_lines)
 
         columns: list[ft.Control] = []
         for digit in sorted(groups):
@@ -261,7 +318,7 @@ def build_request_tab(
             col: list[ft.Control] = [
                 ft.Container(
                     ft.Text(
-                        f"Paper {digit}" + (f" · {named}" if named else ""),
+                        _header_label(digit, named),
                         size=13,
                         weight=ft.FontWeight.BOLD,
                         max_lines=header_lines,
@@ -271,18 +328,25 @@ def build_request_tab(
                 ),
                 ft.Divider(height=9),
             ]
-            # QP 打头、对应 MS 作 ╰─ 子行挂在下面；MS 不单独占行、不占选择列，
-            # 因为 download() 本来就是 QP+MS 一起下。QP+MS 各自打包成一个内层
-            # Column（spacing=0，贴紧成一个整体）；这些整体之间、以及整体和上面
-            # 表头之间走外层 Column 的 SPACE_SM，跟其他内容的间距一致。
+            # QP 打头、对应的 MS 和 insert 作 ╰─ 子行挂在下面；子行不单独占行、
+            # 不占选择列，因为勾一个 QP 下的就是一整套（download_with_insert
+            # 就是 QP+MS+in 一起下）。一套打包成一个内层 Column（spacing=0，
+            # 贴紧成一个整体）；这些整体之间、以及整体和上面表头之间走外层
+            # Column 的 SPACE_SM，跟其他内容的间距一致。
             for entry in groups[digit]:
                 ms_id = entry.paper_id.replace("_qp_", "_ms_")
                 unit: list[ft.Control] = [_selectable_row(entry)]
                 if ms_id in available:
-                    nested_ms.add(ms_id)
+                    nested.add(ms_id)
                     unit.append(_leaf(ms_id))
                 else:
                     unit.append(_leaf("（没有对应 MS）"))
+                # insert 只有部分卷子有（阅读材料、数据册…），没有就什么都不显示，
+                # 不像 MS 那样缺了要专门讲一句。
+                if entry.has_insert:
+                    insert_id = entry.paper_id.replace("_qp_", "_in_")
+                    nested.add(insert_id)
+                    unit.append(_leaf(insert_id))
                 col.append(ft.Column(unit, spacing=0))
             columns.append(ft.Column(col, spacing=theme.SPACE_SM, expand=True))
 
@@ -295,11 +359,11 @@ def build_request_tab(
                 )
             )
 
-        # 剩下的：gt 可勾（无子行）；ci/in/er 之类列出但没有选择列；
-        # 没配上 QP 的孤儿 MS 也照样列出来，不让它凭空消失。
+        # 剩下的：gt 可勾（无子行）；ci/er 之类列出但没有选择列；
+        # 没配上 QP 的孤儿 MS / insert 也照样列出来，不让它凭空消失。
         leftovers = [
             e for e in result.entries
-            if e.kind != "qp" and e.paper_id not in nested_ms
+            if e.kind != "qp" and e.paper_id not in nested
         ]
         if leftovers:
             result_list.controls.append(ft.Divider())
@@ -315,7 +379,11 @@ def build_request_tab(
         page.update()
 
     def _reflow_on_resize() -> bool:
-        """Re-lay the result columns when the window crosses the width cutoff.
+        """Re-lay the result columns when the window crosses a header cutoff.
+
+        Both halves of the header plan depend on the window width — whether the
+        paper names fit at all, and whether the longest one needs a second line
+        — so the whole plan is what gets compared, not just the name cutoff.
 
         Returns whether anything was rebuilt, so the caller can skip a
         page.update() entirely on the (overwhelmingly common) resize events
@@ -324,10 +392,7 @@ def build_request_tab(
         result = last_result[0]
         if result is None:
             return False
-        n_cols = len({
-            _paper_digit(e.paper_id) for e in result.entries if e.kind == "qp"
-        })
-        if _fits_desc(n_cols) == rendered_desc[0]:
+        if _header_plan(_column_digits(result)) == rendered_head[0]:
             return False
 
         # Re-rendering builds fresh Checkboxes, so carry the ticks across —
@@ -350,70 +415,90 @@ def build_request_tab(
             show_snack("请先勾选要下载的文件")  # type: ignore[operator]
             return
 
-        # 走和「按 ID 下载」完全同一条路径，不另开下载逻辑。
-        downloader = PaperDownloader(store=state.store)
-        succeeded = skipped = failed = 0
-        errors: list[str] = []
-
         progress_ring.visible = True
         error_area.controls.clear()
         error_area.visible = False
         page.update()
 
-        for idx, (checkbox, note, entry) in enumerate(picked, start=1):
-            if entry.already_downloaded:
-                skipped += 1
-                checkbox.value = False
-                continue
+        def _work() -> None:
+            downloader = PaperDownloader(store=state.store)
+            succeeded = skipped = failed = 0
+            errors: list[str] = []
+            # insert 下载失败不算这一行失败（QP+MS 已经到手），单独攒起来提示。
+            warnings: list[str] = []
 
-            status_text.color = theme.MUTED
-            status_text.value = f"下载中 {idx}/{len(picked)} — {entry.paper_id}"
-            page.update()
+            for idx, (checkbox, note, entry) in enumerate(picked, start=1):
+                if entry.already_downloaded:
+                    skipped += 1
+                    checkbox.value = False
+                    continue
 
-            try:
-                request = DownloadRequest(paper_id=entry.paper_id)
-            except ValidationError as exc:
-                failed += 1
-                msgs = "; ".join(
-                    e["msg"].removeprefix("Value error, ") for e in exc.errors()
-                )
-                errors.append(f"{entry.paper_id}: {msgs}")
-                continue
+                status_text.color = theme.MUTED
+                status_text.value = f"下载中 {idx}/{len(picked)} — {entry.paper_id}"
+                page.update()
 
-            dl = downloader.download(request)
-            if dl.success:
-                succeeded += 1
-                entry.already_downloaded = True
-                checkbox.value = False
-                note.value = _row_note(entry)
-                # 发 GoodNotes 只发 QP：gt 之类不排进待发送位。
-                if entry.kind == "qp":
-                    state.last_downloaded_id = dl.paper_id
-                    state.last_downloaded_qp = dl.qp_path
-            else:
-                failed += 1
-                errors.append(f"{entry.paper_id}: {dl.error}")
-
-        progress_ring.visible = False
-        _refresh_status()
-
-        if errors:
-            error_area.controls.extend(error_banner(msg) for msg in errors[:5])
-            if len(errors) > 5:
-                error_area.controls.append(
-                    ft.Text(
-                        f"…另有 {len(errors) - 5} 条失败",
-                        size=12,
-                        color=theme.DANGER,
+                try:
+                    request = DownloadRequest(paper_id=entry.paper_id)
+                except ValidationError as exc:
+                    failed += 1
+                    msgs = "; ".join(
+                        e["msg"].removeprefix("Value error, ") for e in exc.errors()
                     )
-                )
-            error_area.visible = True
+                    errors.append(f"{entry.paper_id}: {msgs}")
+                    continue
 
-        page.update()
-        show_snack(  # type: ignore[operator]
-            f"成功 {succeeded} · 跳过 {skipped} · 失败 {failed}",
-            theme.DANGER if failed else theme.SUCCESS,
-        )
+                # 这一列里显示了 insert 子行的，就走 QP+MS+in 那条；
+                # 其余（含 gt）还是原来的 download()。
+                dl = (
+                    downloader.download_with_insert(request)
+                    if entry.has_insert
+                    else downloader.download(request)
+                )
+                if dl.success:
+                    succeeded += 1
+                    if dl.insert_error:
+                        warnings.append(
+                            f"{entry.paper_id} 的 insert 没下到: {dl.insert_error}"
+                        )
+                    entry.already_downloaded = True
+                    checkbox.value = False
+                    note.value = _row_note(entry)
+                    # 发 GoodNotes 只发 QP：gt 之类不排进待发送位。
+                    if entry.kind == "qp":
+                        state.last_downloaded_id = dl.paper_id
+                        state.last_downloaded_qp = dl.qp_path
+                else:
+                    failed += 1
+                    errors.append(f"{entry.paper_id}: {dl.error}")
+
+            progress_ring.visible = False
+            _refresh_status()
+
+            if errors:
+                error_area.controls.extend(error_banner(msg) for msg in errors[:5])
+                if len(errors) > 5:
+                    error_area.controls.append(
+                        ft.Text(
+                            f"…另有 {len(errors) - 5} 条失败",
+                            size=12,
+                            color=theme.DANGER,
+                        )
+                    )
+                error_area.visible = True
+
+            if warnings:
+                error_area.controls.extend(
+                    warning_banner(msg) for msg in warnings[:5]
+                )
+                error_area.visible = True
+
+            page.update()
+            show_snack(  # type: ignore[operator]
+                f"成功 {succeeded} · 跳过 {skipped} · 失败 {failed}",
+                theme.DANGER if failed else theme.SUCCESS,
+            )
+
+        page.run_thread(_work)
 
     send_btn = ft.Button(
         "查询",

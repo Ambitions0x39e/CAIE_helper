@@ -75,53 +75,56 @@ def build_by_gt_tab(
             show_snack("请先勾选要下载的 option")  # type: ignore[operator]
             return
 
-        # 走和「按考季查询」「按 ID 下载」同一条下载路径，不另开逻辑。
-        downloader = PaperDownloader(store=state.store)
-        succeeded = failed = 0
-        errors: list[str] = []
-
         progress_ring.visible = True
         error_area.controls.clear()
         error_area.visible = False
         page.update()
 
-        for idx, paper_id in enumerate(papers, start=1):
-            status_text.color = theme.MUTED
-            status_text.value = f"下载中 {idx}/{len(papers)} — {paper_id}"
+        def _work() -> None:
+            # 走和「按考季查询」「按 ID 下载」同一条下载路径，不另开逻辑。
+            downloader = PaperDownloader(store=state.store)
+            succeeded = failed = 0
+            errors: list[str] = []
+
+            for idx, paper_id in enumerate(papers, start=1):
+                status_text.color = theme.MUTED
+                status_text.value = f"下载中 {idx}/{len(papers)} — {paper_id}"
+                page.update()
+                try:
+                    request = DownloadRequest(paper_id=paper_id)
+                except ValidationError as exc:
+                    failed += 1
+                    msgs = "; ".join(
+                        e["msg"].removeprefix("Value error, ") for e in exc.errors()
+                    )
+                    errors.append(f"{paper_id}: {msgs}")
+                    continue
+
+                dl = downloader.download(request)
+                if dl.success:
+                    succeeded += 1
+                    state.last_downloaded_id = dl.paper_id
+                    state.last_downloaded_qp = dl.qp_path
+                else:
+                    failed += 1
+                    errors.append(f"{paper_id}: {dl.error}")
+
+            progress_ring.visible = False
+            _set_all(False)
+            if errors:
+                error_area.controls.extend(error_banner(m) for m in errors[:5])
+                if len(errors) > 5:
+                    error_area.controls.append(
+                        error_banner(f"还有 {len(errors) - 5} 个错误未显示")
+                    )
+                error_area.visible = True
+            show_snack(  # type: ignore[operator]
+                f"完成: 成功 {succeeded}，失败 {failed}",
+                theme.SUCCESS if not failed else theme.WARNING,
+            )
             page.update()
-            try:
-                request = DownloadRequest(paper_id=paper_id)
-            except ValidationError as exc:
-                failed += 1
-                msgs = "; ".join(
-                    e["msg"].removeprefix("Value error, ") for e in exc.errors()
-                )
-                errors.append(f"{paper_id}: {msgs}")
-                continue
 
-            dl = downloader.download(request)
-            if dl.success:
-                succeeded += 1
-                state.last_downloaded_id = dl.paper_id
-                state.last_downloaded_qp = dl.qp_path
-            else:
-                failed += 1
-                errors.append(f"{paper_id}: {dl.error}")
-
-        progress_ring.visible = False
-        _set_all(False)
-        if errors:
-            error_area.controls.extend(error_banner(m) for m in errors[:5])
-            if len(errors) > 5:
-                error_area.controls.append(
-                    error_banner(f"还有 {len(errors) - 5} 个错误未显示")
-                )
-            error_area.visible = True
-        show_snack(  # type: ignore[operator]
-            f"完成: 成功 {succeeded}，失败 {failed}",
-            theme.SUCCESS if not failed else theme.WARNING,
-        )
-        page.update()
+        page.run_thread(_work)
 
     batch_bar = ft.Row(
         [
@@ -263,30 +266,33 @@ def build_by_gt_tab(
         rows.clear()
         page.update()
 
-        dl = PaperDownloader(store=state.store).download(request)
+        def _work() -> None:
+            dl = PaperDownloader(store=state.store).download(request)
 
-        progress_ring.visible = False
-        result_area.controls.clear()
+            progress_ring.visible = False
+            result_area.controls.clear()
 
-        if not dl.success:
-            result_area.controls.append(error_banner(f"下载失败: {dl.error}"))
+            if not dl.success:
+                result_area.controls.append(error_banner(f"下载失败: {dl.error}"))
+                result_area.visible = True
+                page.update()
+                return
+
+            result_area.controls.append(
+                success_banner(f"已下载: {dl.paper_id}", [f"PDF → {dl.qp_path}"])
+            )
+            doc = _parse(dl.qp_path, pid)
+            if isinstance(doc, str):
+                result_area.controls.append(error_banner(doc))
+            else:
+                result_area.controls.extend(_render_options(doc))
+                batch_bar.visible = True
+                _refresh_status()
+
             result_area.visible = True
             page.update()
-            return
 
-        result_area.controls.append(
-            success_banner(f"已下载: {dl.paper_id}", [f"PDF → {dl.qp_path}"])
-        )
-        doc = _parse(dl.qp_path, pid)
-        if isinstance(doc, str):
-            result_area.controls.append(error_banner(doc))
-        else:
-            result_area.controls.extend(_render_options(doc))
-            batch_bar.visible = True
-            _refresh_status()
-
-        result_area.visible = True
-        page.update()
+        page.run_thread(_work)
 
     # scroll + expand, unlike the sibling sub-tabs: those are short enough to
     # fit, but a thresholds list runs to dozens of options. Everything here

@@ -349,3 +349,53 @@ def test_unreadable_store_degrades_to_no_flags(
 )
 def test_classify_paper_id(paper_id: str, kind: str) -> None:
     assert classify_paper_id(paper_id) == kind
+
+
+# ---------------------------------------------------------------------------
+# has_insert — which QPs come with an insert
+# ---------------------------------------------------------------------------
+
+
+def test_qp_is_marked_when_the_session_lists_its_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """0500_s25_qp_11 + 0500_s25_in_11 in one listing → the QP carries the flag.
+
+    This is what makes the UI hang the insert under its QP instead of dumping
+    it in the unsupported pile, and what picks download_with_insert over
+    download() for that row.
+    """
+    _patch_post(
+        monkeypatch,
+        _FakeResponse(
+            payload=_rows(
+                "0500_s25_qp_11.pdf",
+                "0500_s25_ms_11.pdf",
+                "0500_s25_in_11.pdf",
+                "0500_s25_qp_12.pdf",
+                "0500_s25_ms_12.pdf",
+            )
+        ),
+    )
+
+    result = query_available("0500", "2025", "s", store=_empty_store())
+    flags = {e.paper_id: e.has_insert for e in result.entries}
+
+    assert flags["0500_s25_qp_11"] is True
+    # No 0500_s25_in_12 in the listing → no insert to fetch.
+    assert flags["0500_s25_qp_12"] is False
+    # The flag only ever rides on the QP row.
+    assert flags["0500_s25_in_11"] is False
+    assert flags["0500_s25_ms_11"] is False
+
+
+def test_orphan_insert_marks_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An insert whose QP isn't in the listing leaves every entry unflagged."""
+    _patch_post(
+        monkeypatch,
+        _FakeResponse(payload=_rows("0500_s25_qp_11.pdf", "0500_s25_in_21.pdf")),
+    )
+
+    result = query_available("0500", "2025", "s", store=_empty_store())
+
+    assert all(e.has_insert is False for e in result.entries)
