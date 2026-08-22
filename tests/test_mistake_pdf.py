@@ -138,8 +138,15 @@ class TestPlanPages:
 #: Where a real paper puts things, measured on both papers to hand: the
 #: question number in a gutter at x62-72, the writing column (body text and
 #: answer ruling alike) at x94, and the margin bar down the side at x26-45.
-_NUMBER_X = 62.0
+#: Where CIE really prints main question numbers on a 612pt-wide page —
+#: the same constant ``page_segmenter`` matches boundaries against. The
+#: fixture used to put them at x62, which no paper does, and that is why it
+#: kept passing while real exports came out with the number sliced off.
+_NUMBER_X = 72.4
 _COLUMN_X = 94.0
+#: Where the ruling goes when a question's answer space is all under a
+#: sub-part — 21pt right of the writing column, measured on 9231 s25 P1.
+_INDENT_X = 115.0
 _BAR_X = 26.0
 
 
@@ -235,6 +242,91 @@ class TestContentBands:
 
         assert len(bands) == 2
         assert sum(b.height for b in bands) < 200   # the ruling is gone
+
+    def test_the_number_survives_answer_space_that_is_indented(
+        self, tmp_path: Path
+    ) -> None:
+        """The writing column is not where the ruling is.
+
+        A question whose answer space all sits under a sub-part is ruled
+        21pt further right, and deriving the crop's left edge from the
+        ruling then put it right of the question number: measured across the
+        52 papers on disk, 16 cropped at x79 and two at x100, against
+        numbers printed at x72.4. Every one of those lost its number.
+        """
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=10)
+        pdf.add_page()
+        pdf.rect(_BAR_X, 0, 20, _PAGE_H)
+        pdf.text(_NUMBER_X, 60, "7")
+        pdf.text(_COLUMN_X, 60, "The curve C has the equation given below.")
+        pdf.text(_INDENT_X, 90, "(a)  Find the equations of the asymptotes.")
+        for i in range(12):                      # ruled under the sub-part
+            pdf.text(_INDENT_X, 110 + i * 24, "." * 80)
+        path = tmp_path / "indented.pdf"
+        pdf.output(str(path))
+
+        band = content_bands(
+            str(path), [Band(page_idx=0, y_top=50.0, y_bottom=740.0)]
+        )[0]
+
+        assert band.x_left is not None
+        assert band.x_left < _NUMBER_X          # the number is in the crop
+        assert band.x_left > _BAR_X + 20        # the margin bar is not
+
+    def test_tall_maths_on_the_first_line_is_not_sliced(
+        self, tmp_path: Path
+    ) -> None:
+        """A region starts at the top of the question *number*, which is not
+        the top of its line. Measured on 9231 s25 P1 Q7: the displayed
+        fraction beside "7" tops out 8pt higher, so the crop cut its
+        numerator in half — the defect that started this."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=10)
+        pdf.add_page()
+        pdf.text(_NUMBER_X, 80, "7")
+        pdf.text(_COLUMN_X, 80, "The curve C has equation y =")
+        pdf.set_font("Helvetica", size=30)       # stands in for the fraction
+        pdf.text(240, 80, "N")
+        pdf.set_font("Helvetica", size=10)
+        for i in range(12):
+            pdf.text(_COLUMN_X, 130 + i * 24, "." * 80)
+        path = tmp_path / "fraction.pdf"
+        pdf.output(str(path))
+
+        # 70.5 is where the segmenter puts the boundary: the top of the "7".
+        band = content_bands(
+            str(path), [Band(page_idx=0, y_top=70.5, y_bottom=740.0)]
+        )[0]
+
+        # The 30pt glyph's box tops out at 56.2; the "7" beside it at 70.5.
+        assert band.y_top < 57.0        # the whole glyph is in the crop
+
+    def test_the_first_line_grows_no_further_than_the_top_margin(
+        self, tmp_path: Path
+    ) -> None:
+        """Growing the top is for a question's own line, not for the page's
+        running head — a question starting at the top of a page has nothing
+        above it worth keeping."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=12)
+        pdf.add_page()
+        pdf.text(_COLUMN_X, 50, "9231/11/M/J/25")   # straddles y=45
+        pdf.set_font("Helvetica", size=10)
+        pdf.text(_COLUMN_X, 70, "continued from the previous page.")
+        for i in range(12):
+            pdf.text(_COLUMN_X, 100 + i * 24, "." * 80)
+        path = tmp_path / "head.pdf"
+        pdf.output(str(path))
+
+        bands = content_bands(
+            str(path), [Band(page_idx=0, y_top=45.0, y_bottom=740.0)]
+        )
+
+        assert all(b.y_top >= 45.0 for b in bands)
 
     def test_a_page_of_pure_answer_space_yields_nothing(
         self, tmp_path: Path

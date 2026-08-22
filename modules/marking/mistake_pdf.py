@@ -88,6 +88,11 @@ class Band:
     def with_column(self, left: float, right: float) -> Band:
         return Band(self.page_idx, self.y_top, self.y_bottom, left, right)
 
+    def from_top(self, y_top: float) -> Band:
+        return Band(
+            self.page_idx, y_top, self.y_bottom, self.x_left, self.x_right
+        )
+
 
 @dataclass(frozen=True)
 class Placement:
@@ -181,7 +186,9 @@ def crops_for_paper(
             missing.append(question_id)
             continue
         whole = clips_to_bands(region.clips)
-        trimmed = content_bands(qp_path, whole, column)
+        trimmed = content_bands(
+            qp_path, whole, column, top_margin=doc.top_margin
+        )
         kept = sum(b.height for b in trimmed)
         total = sum(b.height for b in whole)
         # Some papers embed their fonts with no ToUnicode map: pdfminer then
@@ -264,14 +271,18 @@ _EDGE_SHARE = 0.1
 #: Column to fall back on when a paper rules nothing at all — a plain inset,
 #: as a share of the page width.
 _COLUMN_INSET = 0.1
-#: The gutter left of the writing column where CIE prints question numbers.
-#: Measured: the ruling starts at x94; the number sits at x72 on one paper
-#: and x62 on the other; the margin bar ends at x46. 36 clears both numbers
-#: and still leaves 12pt before the bar. Fixed rather than inferred from
-#: content — six of ten questions lost their number when it was inferred,
-#: because a two-glyph number doesn't always group into a line pdfminer
-#: reports inside the band.
-_NUMBER_GUTTER = 36.0
+#: Where a page's content starts, below the running head — both CIE formats
+#: put it here, and it is what :class:`ScannedDocument` reports.
+_TOP_MARGIN = 45.0
+#: A question's first line, however tall the maths on it, is not taller than
+#: this. Measured over 52 papers: a region top slices through something on
+#: most of them, by at most 17pt — except three physics papers where a
+#: full-page figure straddles it, at 68–85pt. Growing the crop that far
+#: would drag in the end of the previous question, so past this the top is
+#: left where the segmenter put it.
+_MAX_LIFT = 36.0
+#: Boxes that merely touch at an edge are not overlapping.
+_TOUCH = 0.1
 #: Text below this size is page furniture, not question content: the barcode
 #: strips CIE prints at the top and bottom of every page come out at 4.7 and
 #: 7.5pt against a 10.8pt body. Sizing it out beats guessing a header height
@@ -407,38 +418,36 @@ def _text_size(line: object) -> float:
 def _writing_column(
     filler: Sequence[_Span], page_width: float
 ) -> tuple[float, float]:
-    """The x range worth cropping to: the ruled writing column.
+    """The x range worth cropping to: number gutter on the left, ruling on
+    the right.
 
-    The ruling is what defines it — measured at x94–538 on both papers here,
-    the same on each. Content is allowed to overhang it a little (a table
-    often does) but not as far as the margin marks at x33, which is what a
-    naive "widest thing on the page" would have swept in.
+    The two edges are found differently on purpose. The left one is the
+    question-number column, and it is a fixed property of the CIE template
+    that :mod:`page_segmenter` already matches boundaries against — so it is
+    taken from there rather than measured. Every attempt to infer it from
+    the page put it in the wrong place: derived from the ruling it landed at
+    x79 on 16 of 52 papers and x100 on two more, both right of the number
+    (x72.4), which is how the export kept dropping question numbers.
+
+    The right edge is measured, because nothing fixes it: content may
+    overhang the ruling a little (a wide table) and the paper's own
+    registration marks sit further right still.
     """
+    from modules.marking.page_segmenter import question_number_x
+
+    left = max(0.0, question_number_x(page_width) - _PAD)
     ruled = [span for span in filler if span.x1 - span.x0 > page_width * 0.3]
     if not ruled:
-        return page_width * _COLUMN_INSET, page_width * (1 - _COLUMN_INSET)
-
-    # The rulings alone, and the *commonest* edge among them — not the
-    # extreme. Content gets no vote: the corner registration marks pulled the
-    # right edge out to x551 when it did. And the extremes lie too: a ruling
-    # under an indented sub-part starts 21pt right of the column, while the
-    # cover page's "CANDIDATE NAME ……" starts 21pt left of it, over the
-    # margin bar. The body of the paper rules hundreds of lines at the true
-    # column, so the mode is what finds it.
-    left = _edge(span.x0 for span in ruled)
-    right = _edge((span.x1 for span in ruled), rightmost=True)
-    return max(0.0, left - _NUMBER_GUTTER), right + _COLUMN_PAD
+        return left, page_width * (1 - _COLUMN_INSET)
+    return left, _right_edge(span.x1 for span in ruled) + _COLUMN_PAD
 
 
-def _edge(values: Iterable[float], rightmost: bool = False) -> float:
-    """The outermost ruling edge that the paper uses *often*.
+def _right_edge(values: Iterable[float]) -> float:
+    """The rightmost ruling edge that the paper uses *often*.
 
-    Neither the extreme nor the mode works. Measured over a whole paper, the
-    left edges cluster at three places — x115 (277 rulings, the ones indented
-    under a sub-part), x94 (158, the writing column) and x72 (22, the cover
-    page's "CANDIDATE NAME ……"). The mode picks the indent; the minimum picks
-    the cover. What is wanted is the outermost edge the paper uses for real,
-    so rare positions are dropped first.
+    Not the extreme: the corner registration marks and the odd over-long
+    rule pull it out to x551, past the printed writing area. Rare positions
+    are dropped first, then the outermost of what is left.
     """
     counts = Counter(round(value) for value in values)
     total = sum(counts.values())
@@ -446,7 +455,77 @@ def _edge(values: Iterable[float], rightmost: bool = False) -> float:
         value for value, count in counts.items()
         if count >= total * _EDGE_SHARE
     ] or list(counts)
-    return float(max(common) if rightmost else min(common))
+    return float(max(common))
+
+
+def _page_extents(
+    layout: object, page_height: float
+) -> list[tuple[float, float]]:
+    """Every mark on the page a crop edge could cut through, top-down.
+
+    Unlike :func:`_content_spans` this keeps small text. The exponent in
+    "2x²" is a 7.5pt glyph — the same size as the barcode strip the size
+    filter exists to remove — so filtering by size left the top of every
+    superscript outside the crop (measured on 9231 s25 P1 Q7: 2.5pt of it).
+    Size cannot tell those two apart, but overlap can, and overlap is all
+    this feeds: a superscript overlaps the line it belongs to, while the
+    barcode sits alone above everything and so is never grown into.
+    """
+    from pdfminer.layout import (
+        LTCurve,
+        LTFigure,
+        LTImage,
+        LTLine,
+        LTRect,
+        LTTextContainer,
+        LTTextLine,
+    )
+
+    out: list[tuple[float, float]] = []
+    for element in layout:  # type: ignore[attr-defined]
+        if isinstance(element, LTTextContainer):
+            for line in element:
+                if isinstance(line, LTTextLine) and not _is_filler(line):
+                    out.append((page_height - line.y1, page_height - line.y0))
+        elif isinstance(
+            element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
+        ) and element.height <= _FURNITURE_RATIO * page_height:
+            out.append((page_height - element.y1, page_height - element.y0))
+    return out
+
+
+def _uncut_top(
+    extents: Sequence[tuple[float, float]], y_top: float, floor: float
+) -> float:
+    """Pull *y_top* up until it stops slicing through something.
+
+    A question's region begins at the top of its number's glyph box, which
+    is where the *line* begins but not where everything on that line begins:
+    displayed maths rises above the digits beside it. Measured on 9231 s25
+    P1 Q7 — the fraction's numerator tops out 8pt above the "7", so cropping
+    at the "7" cut the numerator in half, which is exactly what the export
+    was doing.
+
+    Grown transitively, because a fraction is a stack of boxes and stopping
+    at the first still cuts, and self-limiting: it halts at the first clear
+    horizontal gap, which above a question is its predecessor's answer
+    space. *floor* is the page's top margin — a question that starts at the
+    top of a page has nothing above it to keep, so it must not reach up into
+    the running head.
+    """
+    cursor = y_top
+    for _ in range(len(extents) + 1):
+        above = [
+            top for top, bottom in extents
+            if top < cursor - _TOUCH and bottom > cursor + _TOUCH
+        ]
+        if not above:
+            break
+        highest = min(above)
+        if highest < floor or y_top - highest > _MAX_LIFT:
+            break  # as far as it is safe to grow
+        cursor = highest
+    return cursor
 
 
 def _ruling_blocks(
@@ -523,6 +602,8 @@ def content_bands(
     qp_path: str,
     bands: Sequence[Band],
     column: tuple[float, float] | None = None,
+    *,
+    top_margin: float = _TOP_MARGIN,
 ) -> list[Band]:
     """Cut the answer space out of each band, keeping everything else.
 
@@ -562,11 +643,21 @@ def content_bands(
         column = _column_from(pages, heights, max(widths.values()))
 
     out: list[Band] = []
-    for band in bands:
-        page_layout = pages.get(band.page_idx)
+    extents: dict[int, list[tuple[float, float]]] = {}
+    for region_band in bands:
+        page_layout = pages.get(region_band.page_idx)
         if page_layout is None:
             continue
-        height = heights[band.page_idx]
+        height = heights[region_band.page_idx]
+        # Grow the top *before* narrowing to it. An element the region's
+        # edge slices through is at most half inside it, so _content_spans
+        # has already thrown it away by the time the band is measured — the
+        # question's own first line included.
+        if region_band.page_idx not in extents:
+            extents[region_band.page_idx] = _page_extents(page_layout, height)
+        band = region_band.from_top(_uncut_top(
+            extents[region_band.page_idx], region_band.y_top, top_margin
+        ))
         content, filler, readable = _content_spans(
             page_layout, band.y_top, band.y_bottom, height
         )
