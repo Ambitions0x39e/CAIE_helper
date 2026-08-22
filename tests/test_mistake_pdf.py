@@ -19,12 +19,14 @@ from pathlib import Path
 
 import pytest
 from fpdf import FPDF
+from pdfminer.high_level import extract_pages
 from pypdf import PdfReader
 
 from core.models import MistakeRecord
 from modules.marking.mistake_pdf import (
     Band,
     QuestionCrop,
+    _page_extents,
     build_export,
     compose_pdf,
     content_bands,
@@ -135,9 +137,6 @@ class TestPlanPages:
 # ── Dropping the answer space ─────────────────────────────────────
 
 
-#: Where a real paper puts things, measured on both papers to hand: the
-#: question number in a gutter at x62-72, the writing column (body text and
-#: answer ruling alike) at x94, and the margin bar down the side at x26-45.
 #: Where CIE really prints main question numbers on a 612pt-wide page —
 #: the same constant ``page_segmenter`` matches boundaries against. The
 #: fixture used to put them at x62, which no paper does, and that is why it
@@ -330,6 +329,30 @@ class TestContentBands:
 
         assert band.y_bottom > 86.0
 
+    def test_a_region_holding_only_the_next_question_yields_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """A question's last page can carry none of it — the region there
+        runs from the page's top margin to the next question's number, and
+        the only thing in that strip is the tall part of *that* question's
+        first line. Measured on 9231 s25 P1 p8: Q4's matrix was 68% inside
+        Q3's region, over the 60% membership bar, and came out stuck to the
+        end of Q3 with no question of its own attached."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Helvetica", size=10)
+        pdf.add_page()
+        pdf.text(303, 45, "8")               # page number, above the region
+        pdf.text(240, 72.5, "M")             # 64.6–74.6: 62% inside, so it
+        pdf.text(_NUMBER_X, 79, "4")         # used to qualify as content
+        pdf.text(_COLUMN_X, 79, "The matrix M is given by")
+        path = tmp_path / "spill.pdf"
+        pdf.output(str(path))
+
+        assert content_bands(
+            str(path), [Band(page_idx=0, y_top=45.0, y_bottom=70.8)]
+        ) == []
+
     def test_a_band_never_grows_into_the_next_question(
         self, tmp_path: Path
     ) -> None:
@@ -360,6 +383,68 @@ class TestContentBands:
 
         assert bands, "the previous question's own line must still be kept"
         assert all(b.y_bottom <= 80.5 for b in bands)
+
+    def test_the_margin_copyright_ladder_does_not_drag_the_crop_up(
+        self, tmp_path: Path
+    ) -> None:
+        """CIE sets its copyright line sideways down the page margin, one
+        glyph box per character with each touching the next. Grown through,
+        that ladder walks a band's top up the page a few points at a time —
+        measured on 9231 s25 P1 p7, from y57 to y49, which brought the
+        barcode strip at y51–56 into the crop.
+        """
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=6)
+        for i in range(14):                     # the ladder, x36: outside
+            pdf.text(36, 50 + i * 5, "x")       # the writing column
+        pdf.set_font("Helvetica", size=5)
+        pdf.text(87, 55, "|" * 60)              # the barcode: inside it
+        pdf.set_font("Helvetica", size=10)
+        pdf.text(_NUMBER_X, 80, "7")
+        pdf.text(_COLUMN_X, 80, "The curve C has equation y =")
+        pdf.set_font("Helvetica", size=24)
+        pdf.text(240, 80, "N")                  # tops out at 61.0
+        pdf.set_font("Helvetica", size=10)
+        for i in range(12):
+            pdf.text(_COLUMN_X, 130 + i * 24, "." * 80)
+        path = tmp_path / "ladder.pdf"
+        pdf.output(str(path))
+
+        band = content_bands(
+            str(path), [Band(page_idx=0, y_top=70.5, y_bottom=740.0)]
+        )[0]
+
+        assert band.y_top < 62.0        # the 24pt glyph is still kept whole
+        assert band.y_top > 58.0        # …and the climb stopped there
+
+    def test_the_barcode_is_not_a_superscript(self, tmp_path: Path) -> None:
+        """The rule that keeps a 7.5pt exponent has to keep out a 4.7pt
+        barcode. Both are small and both sit inside the writing column; only
+        the exponent shares its line with full-size glyphs."""
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=4.7)
+        # Varied glyphs, or it reads as ruling and never reaches the size
+        # rule at all — a real barcode strip extracts as a mixed run.
+        pdf.text(87, 55, "IHFEGDCBA" * 6)       # barcode, alone up top
+        pdf.set_font("Helvetica", size=10)
+        pdf.text(_COLUMN_X, 80, "The curve C has equation y = 2x")
+        pdf.set_font("Helvetica", size=7)
+        pdf.text(210, 75, "2")                  # the exponent, on that line
+        path = tmp_path / "sizes.pdf"
+        pdf.output(str(path))
+
+        extents = _page_extents(
+            next(extract_pages(str(path))), _PAGE_H, (69.4, 544.0)
+        )
+
+        # The exponent's box (69.4–76.5) is there; the barcode's (51.0–56.0)
+        # is not.
+        assert any(69.0 < top < 70.0 for top, _ in extents)
+        assert not any(top < 60.0 for top, _ in extents)
 
     def test_the_first_line_grows_no_further_than_the_top_margin(
         self, tmp_path: Path
