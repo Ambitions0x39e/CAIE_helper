@@ -556,17 +556,19 @@ def build_mistakes_tab(
             show_snack("请先勾选要导出的错题", theme.WARNING)
             return
         try:
-            qp_of = {r.paper_id: r.qp_path for r in CSVStore().load_all()}
+            papers = CSVStore().load_all()
         except ValueError as exc:
             show_snack(f"读取试卷记录失败: {exc}", theme.DANGER)
             return
+        qp_of = {r.paper_id: r.qp_path for r in papers}
+        ms_of = {r.paper_id: r.ms_path for r in papers}
 
         show_snack("正在从原卷裁剪题目…", theme.ACCENT)
         try:
             # Two pdfminer passes per paper — off the event loop, or the
             # window freezes for the duration.
             data, warnings = await asyncio.to_thread(
-                build_export, chosen, qp_of
+                build_export, chosen, qp_of, ms_of
             )
         except ValueError as exc:
             show_snack(f"导出失败: {exc}", theme.DANGER)
@@ -690,7 +692,8 @@ def build_mistakes_tab(
                 ft.Button(
                     "导出 PDF",
                     icon=ft.CupertinoIcons.DOC_ON_CLIPBOARD,
-                    tooltip="把所选题目从原卷裁下来，一道大题一页（不含答题横线）",
+                    tooltip="把所选题目从原卷裁下来，一道大题一页（不含答题横线）；"
+                            "每题后面跟一页 mark scheme",
                     on_click=_on_export_pdf_click,
                     style=theme.filled_button(),
                 ),

@@ -149,6 +149,16 @@ class TestAtoms:
             assert source != target
 
 
+    def test_a_heading_is_not_read_as_maths(self) -> None:
+        """A paper id is "9231_s25_qp_11". Read as maths it comes out as
+        9231 with a subscript s, then 25, then a subscript q — which is
+        exactly how the first interleaved export printed it."""
+        laid = atoms("9231_s25_qp_11", 10.0, math=False)
+
+        assert "".join(a.char for a in laid) == "9231_s25_qp_11"
+        assert all(a.rise == 0.0 for a in laid)
+
+
 class TestLineHeight:
     def test_a_line_with_scripts_is_given_more_room(self) -> None:
         """Or the raised characters collide with the line above."""
