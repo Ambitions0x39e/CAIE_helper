@@ -17,11 +17,12 @@ from pypdf import PdfReader
 
 from core.models import MistakeRecord
 from modules.marking.answer_sheet import (
-    _SYMBOL_BYTE,
+    _ASCII_MATHS,
     _TEXT_W,
+    atoms,
     build_answer_sheet,
+    line_height,
     ms_paths_by_paper,
-    normalise,
     wrap,
 )
 
@@ -74,62 +75,87 @@ def _text(data: bytes, tmp_path: Path) -> str:
     return "\n".join(page.extract_text() for page in PdfReader(str(out)).pages)
 
 
-# ── Notation ──────────────────────────────────────────────────────
+# ── Maths layout ──────────────────────────────────────────────────
 
 
-class TestNormalise:
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            ("x²", "x^2"),
-            ("x²y³", "x^2y^3"),
-            ("u₂ₙ", "u_(2n)"),
-            ("a₁₀", "a_(10)"),
-            ("10⁻³", "10^(-3)"),
-            ("−3", "-3"),
-            ("don’t", "don't"),
-            ("• first", "-  first"),
-        ],
-    )
-    def test_notation_becomes_the_ascii_the_rest_already_uses(
-        self, raw: str, expected: str
-    ) -> None:
-        assert normalise(raw) == expected
-
-    def test_greek_is_left_alone(self) -> None:
-        """It is not rewritten because Symbol can draw it — see the font
-        split. Spelling it "theta" would be a worse sheet."""
-        assert normalise("cos θ") == "cos θ"
+def _shape(text: str, size: float = 10.0) -> list[tuple[str, float, float]]:
+    """(character, size, rise) for each laid-out atom."""
+    return [
+        (atom.char, round(atom.size, 2), round(atom.rise, 2))
+        for atom in atoms(text, size)
+    ]
 
 
-# ── The font split ────────────────────────────────────────────────
-
-
-class TestFontSplit:
-    def _runs(self, text: str) -> list[tuple[bool, str]]:
-        lines = wrap(text, 10.0, False, _TEXT_W)
-        return [(run.symbol, run.text) for run in lines[0]]
-
-    def test_greek_goes_to_symbol_and_the_rest_to_helvetica(self) -> None:
-        runs = self._runs("cos θ")
-
-        assert [symbol for symbol, _ in runs] == [False, True]
-        assert runs[0][1] == "cos "
-        # Symbol puts theta where Helvetica puts "q".
-        assert runs[1][1] == chr(_SYMBOL_BYTE["θ"])
-
-    def test_neighbouring_characters_of_one_font_become_one_run(self) -> None:
-        """One Tj per run, so this is what keeps the content stream from
-        being one operator per character."""
-        assert len(self._runs("hello")) == 1
-
-    def test_a_character_no_font_has_is_visible_rather_than_dropped(
+class TestAtoms:
+    def test_a_caret_raises_the_next_character_instead_of_printing(
         self,
     ) -> None:
-        """A silently dropped operator changes what an answer says."""
-        runs = self._runs("答案")
+        """"θ^2" is theta squared. Printed flat it says "theta caret two",
+        which is what made these sheets painful to read."""
+        assert _shape("x^2") == [("x", 10.0, 0.0), ("2", 7.2, 4.2)]
 
-        assert runs == [(False, "??")]
+    def test_an_underscore_lowers_it(self) -> None:
+        assert _shape("u_n") == [("u", 10.0, 0.0), ("n", 7.2, -2.0)]
+
+    def test_a_bracketed_group_loses_its_brackets(self) -> None:
+        """"e^(¼θ)" means e to the ¼θ; once the ¼θ is actually raised the
+        brackets say nothing."""
+        assert [char for char, _, _ in _shape("e^(ab)")] == ["e", "a", "b"]
+
+    def test_a_bare_number_is_taken_whole(self) -> None:
+        """"10^12", not ten to the one followed by a two."""
+        assert [rise for _, _, rise in _shape("10^12")] == [0, 0, 4.2, 4.2]
+
+    def test_a_signed_exponent_keeps_its_sign_up_there(self) -> None:
+        assert [char for char, _, _ in _shape("e^-3")] == ["e", "-", "3"]
+
+    def test_a_greek_letter_rides_along_with_its_coefficient(self) -> None:
+        """The limit in "∫_0^2π" is 2π, not 2 with a stray π after it."""
+        raised = [char for char, _, rise in _shape("∫_0^2π") if rise > 0]
+
+        assert raised == ["2", "π"]
+
+    def test_only_one_letter_follows_a_caret(self) -> None:
+        """No run rule for letters: "e^ax" is e-to-the-a times x as often as
+        not, and the measured mark schemes never write a letter run."""
+        assert [rise for _, _, rise in _shape("e^ax")] == [0, 4.2, 0]
+
+    def test_nesting_shrinks_but_not_past_the_floor(self) -> None:
+        sizes = {size for _, size, _ in _shape("a^(b^(c^(d^e)))")}
+
+        assert min(sizes) >= 10.0 * 0.5
+
+    def test_unicode_superscripts_are_set_raised_not_rewritten(self) -> None:
+        """"x²" is already a raised two; it should look like one rather than
+        turn into "x^2"."""
+        assert _shape("x²") == [("x", 10.0, 0.0), ("2", 7.2, 4.2)]
+
+    def test_a_run_of_unicode_subscripts_stays_together(self) -> None:
+        """"u₂ₙ" is u sub 2n — both characters down, no separator."""
+        assert _shape("u₂ₙ") == [
+            ("u", 10.0, 0.0), ("2", 7.2, -2.0), ("n", 7.2, -2.0),
+        ]
+
+    def test_punctuation_is_still_rewritten(self) -> None:
+        assert [char for char, _, _ in _shape("−3")] == ["-", "3"]
+
+    def test_every_rewrite_lands_in_a_character_the_font_can_draw(
+        self,
+    ) -> None:
+        """The sheet is set in base-14 fonts encoded as Latin-1, so a
+        rewrite that produces anything else silently becomes "?"."""
+        for source, target in _ASCII_MATHS.items():
+            target.encode("latin-1")   # raises if it cannot be drawn
+            assert source != target
+
+
+class TestLineHeight:
+    def test_a_line_with_scripts_is_given_more_room(self) -> None:
+        """Or the raised characters collide with the line above."""
+        plain = wrap("plain text", 9.5, False, _TEXT_W)[0]
+        scripted = wrap("x^2 and u_n", 9.5, False, _TEXT_W)[0]
+
+        assert line_height(scripted, 9.5) > line_height(plain, 9.5)
 
 
 # ── Wrapping ──────────────────────────────────────────────────────
@@ -175,7 +201,7 @@ class TestBuildAnswerSheet:
 
         assert warnings == []
         text = _text(data, tmp_path)
-        assert "9r^2 - 21r + 10" in text          # Q1a, for context
+        assert "9r2 - 21r + 10" in text     # Q1a, its 2 now raised
         assert "-1/6" in text                     # Q1b, the one asked for
 
     def test_a_whole_main_question_comes_along(
@@ -191,15 +217,37 @@ class TestBuildAnswerSheet:
         assert "Q1a" in text
         assert "Q2a" not in text
 
-    def test_the_score_marks_the_parts_marks_were_lost_on(
+    def test_the_first_attempt_score_is_not_on_the_sheet(
         self, ms_cache: Path, tmp_path: Path
     ) -> None:
+        """This is the answer to redo against; the old marks belong in the
+        错题本, not on it."""
         data, _ = build_answer_sheet(
             [_record("Q1b", score=1.0)], {_PAPER: "9231_s25_ms_11.pdf"}
         )
 
-        text = _text(data, tmp_path)
-        assert "scored 1/4" in text
+        assert "scored" not in _text(data, tmp_path)
+
+    def test_the_exponent_really_is_raised_in_the_output(
+        self, ms_cache: Path, tmp_path: Path
+    ) -> None:
+        """End to end, not just in the layout: text extraction reads "9r2"
+        either way, so the proof has to be the Ts operator in the content
+        stream — that is what sets a character above the baseline."""
+        import re
+
+        data, _ = build_answer_sheet(
+            [_record("Q1a")], {_PAPER: "9231_s25_ms_11.pdf"}
+        )
+        out = tmp_path / "sheet.pdf"
+        out.write_bytes(data)
+        stream = PdfReader(str(out)).pages[0].get_contents().get_data()
+
+        rises = [
+            float(m) for m in
+            re.findall(rb"(-?[\d.]+) Ts", stream)
+        ]
+        assert any(rise > 0 for rise in rises)
 
     def test_greek_survives_the_round_trip(
         self, ms_cache: Path, tmp_path: Path
