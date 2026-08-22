@@ -527,12 +527,13 @@ def _is_blank_page(
                 seen = True
         elif isinstance(
             element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
-        ) and element.height <= _FURNITURE_RATIO * page_height:
-            if _mostly_between(
+        ) and element.height <= _FURNITURE_RATIO * page_height and (
+            _mostly_between(
                 page_height - element.y1, page_height - element.y0,
                 top_margin, footer_y,
-            ):
-                return False            # a diagram or a table: real content
+            )
+        ):
+            return False                # a diagram or a table: real content
     return seen
 
 
