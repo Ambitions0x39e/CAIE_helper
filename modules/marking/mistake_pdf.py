@@ -360,6 +360,14 @@ def _content_spans(
             # A rule has no height of its own — it is in or it is out.
             if not y_top <= top <= y_bottom:
                 return
+        elif bottom > y_bottom + _TOUCH:
+            # Anything reaching below a region's end is on the *next*
+            # question's first line — the region ends at the top of that
+            # question's number, so its line is the first thing under the
+            # edge. Measured on 9231 s25 P1: Q4's matrix hangs 3.4pt into
+            # Q3's region, was 68% inside it, and so came out stuck to the
+            # end of Q3 with no question of its own attached.
+            return
         else:
             overlap = min(bottom, y_bottom) - max(top, y_top)
             if overlap < _INSIDE_RATIO * (bottom - top):
@@ -459,17 +467,26 @@ def _right_edge(values: Iterable[float]) -> float:
 
 
 def _page_extents(
-    layout: object, page_height: float
+    layout: object, page_height: float, column: tuple[float, float]
 ) -> list[tuple[float, float]]:
     """Every mark on the page a crop edge could cut through, top-down.
 
-    Unlike :func:`_content_spans` this keeps small text. The exponent in
-    "2x²" is a 7.5pt glyph — the same size as the barcode strip the size
-    filter exists to remove — so filtering by size left the top of every
-    superscript outside the crop (measured on 9231 s25 P1 Q7: 2.5pt of it).
-    Size cannot tell those two apart, but overlap can, and overlap is all
-    this feeds: a superscript overlaps the line it belongs to, while the
-    barcode sits alone above everything and so is never grown into.
+    Unlike :func:`_content_spans` this keeps *some* small text, because the
+    exponent in "2x²" is a 7.5pt glyph — the same size as the barcode strip
+    the size filter exists to remove — and filtering by size alone left the
+    top of every superscript outside the crop (2.5pt of it, on 9231 s25 P1
+    Q7). Size cannot separate the two, so two other properties do, and each
+    is needed for a different piece of CIE furniture:
+
+    * **Inside the writing column.** The copyright line runs *down* the page
+      margin, one glyph box per character, each touching the next — a ladder
+      the crop edge climbs several points at a time.
+    * **Overlapping something of body size.** The barcode is inside the
+      column, but it sits alone above the text block; a superscript always
+      shares its line with full-size glyphs.
+
+    Both were measured on the same page: without the first, a band's top
+    climbed from y57 to y49 and dragged the barcode at y51–56 into the crop.
     """
     from pdfminer.layout import (
         LTCurve,
@@ -481,16 +498,31 @@ def _page_extents(
         LTTextLine,
     )
 
-    out: list[tuple[float, float]] = []
+    body: list[tuple[float, float]] = []
+    small: list[tuple[float, float, float, float]] = []
     for element in layout:  # type: ignore[attr-defined]
         if isinstance(element, LTTextContainer):
             for line in element:
-                if isinstance(line, LTTextLine) and not _is_filler(line):
-                    out.append((page_height - line.y1, page_height - line.y0))
+                if not isinstance(line, LTTextLine) or _is_filler(line):
+                    continue
+                top, bottom = page_height - line.y1, page_height - line.y0
+                if _text_size(line) >= _MIN_TEXT_SIZE:
+                    body.append((top, bottom))
+                else:
+                    small.append((top, bottom, line.x0, line.x1))
         elif isinstance(
             element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
         ) and element.height <= _FURNITURE_RATIO * page_height:
-            out.append((page_height - element.y1, page_height - element.y0))
+            body.append((page_height - element.y1, page_height - element.y0))
+
+    left, right = column
+    out = list(body)
+    out.extend(
+        (top, bottom)
+        for top, bottom, x0, x1 in small
+        if left <= x0 and x1 <= right
+        and any(b_top < bottom and b_bottom > top for b_top, b_bottom in body)
+    )
     return out
 
 
@@ -684,7 +716,9 @@ def content_bands(
         # has already thrown it away by the time the band is measured — the
         # question's own first line included.
         if region_band.page_idx not in extents:
-            extents[region_band.page_idx] = _page_extents(page_layout, height)
+            extents[region_band.page_idx] = _page_extents(
+                page_layout, height, column
+            )
         band = region_band.from_top(_uncut_top(
             extents[region_band.page_idx], region_band.y_top, top_margin
         ))
