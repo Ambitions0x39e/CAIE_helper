@@ -55,7 +55,7 @@ HAIRLINE_FAINT = ft.Colors.GREY_100
 FIELD_BORDER = ft.Colors.GREY_400
 
 # ── 浅底色（横幅 / 表头）──────────────────────────────────────────
-#: Tailwind slate-50——跟新 PRIMARY 同一个色系的最浅档，不再是 Material BLUE_50。
+#: Tailwind slate-50——跟 PRIMARY 同一个色系的最浅档。
 PRIMARY_TINT = "#F8FAFC"
 DANGER_TINT = ft.Colors.RED_50
 SUCCESS_TINT = ft.Colors.GREEN_50

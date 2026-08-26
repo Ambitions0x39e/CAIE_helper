@@ -110,8 +110,8 @@ def show_score_dialog(
 
         result = PaperManager(store=state.store).submit_score(update)
         if not result.success:
-            # Keep the dialog open — closing it on failure used to discard
-            # both the typed scores and the reason they were rejected.
+            # Keep the dialog open on failure so the typed scores and the
+            # rejection reason both stay visible to the user.
             error_text.value = result.error or "提交失败"
             error_text.visible = True
             page.update()

@@ -1,9 +1,7 @@
 """Shared state for the Mark tab's sections.
 
-``build_mark_tab`` used to be one ~1,500-line closure in which every helper
-reached its neighbours' state through ``list``-of-one refs — the only way a
-nested function can rebind an outer name. Now that the sections live in
-separate modules that trick is neither needed nor readable: the refs are
+The sections live in separate modules (``setup_step`` / ``answer_pages`` /
+``grade_step`` / ``results`` / ``mcq``) and reach each other's state through
 plain attributes on this object, which each section takes as its first
 argument.
 """
