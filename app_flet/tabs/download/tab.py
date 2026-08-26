@@ -19,9 +19,8 @@ from app_flet.tabs.download.request import build_request_tab
 # expand 撑不出约束，TabBarView 会按内在高度铺开 —— 那正是页面底下拖出一大截空白的原因。
 # 高度是算出来的，就必须跟着窗口走，见 build_download_tab 里的 on_resize。
 #
-# 拆成具名的几项而不是一个数：这个常量原本写死 210，其中 80 是**底部导航栏**。
-# 导航改到左边一列之后底部不再占垂直空间，那 80 就变成了页面底下一条白边，
-# 而一个光秃秃的 210 看不出哪一项该减。以后再动页头/标题就改对应那一项。
+# 拆成具名的几项而不是一个数：一个光秃秃的数看不出以后动页头/标题时该改
+# 哪一项，具名之后改对应那一项就行。导航栏在左侧一列，不占这里的垂直空间。
 #: 页头 Container：上下 padding 各 12 + Material 按钮 40。
 _HEADER_H = 64
 #: 页内标题 Container：top padding 20 + 24pt 文字行盒约 32。

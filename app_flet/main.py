@@ -170,8 +170,8 @@ def main(page: ft.Page) -> None:
     # A hand-rolled rail rather than ft.NavigationRail: the destinations have
     # to cluster at the top with 设置 pinned to the bottom, and the built-in
     # rail spreads / groups them on its own terms.
-    #: 每个入口是一个圆角正方形：图标+文字打包成一组，整组在方形里居中——
-    #: 不再分上 2/3/下 1/3 两条带，那样图标和文字各自对齐，组合起来不居中。
+    #: 每个入口是一个圆角正方形：图标+文字打包成一组，整组在方形里居中。
+    #: 拆成上 2/3/下 1/3 两条带会让图标和文字分别对齐，组合起来反而不居中。
     _NAV_BUTTON_SIZE = 64
     _NAV_RADIUS = round(_NAV_BUTTON_SIZE * theme.SQUIRCLE_RADIUS_RATIO, 2)
     nav_icons: list[ft.Icon] = []

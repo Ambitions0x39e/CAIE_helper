@@ -2,11 +2,10 @@
 
 Settings-app-style menu: tapping "SMTP / GoodNotes", "Grader API" or "关于"
 swaps the tab's own content for the sub-page, with a back arrow + title row
-(``_sub_header``) standing in for a real AppBar. This used to push a full
-``ft.View`` onto ``page.views`` instead — that gave a native slide-in
-transition and AppBar back button (including iOS edge-swipe-back), but a
-pushed ``ft.View`` replaces the *entire* window, so the left-hand nav_rail
-and header from main.py disappeared behind it too. Embedding keeps the tab
+(``_sub_header``) standing in for a real AppBar. A pushed ``ft.View`` would
+give a native slide-in transition and AppBar back button (including iOS
+edge-swipe-back), but it replaces the *entire* window, taking the left-hand
+nav_rail and header from main.py down with it. Embedding keeps the tab
 inside ``content_area`` like every other tab, at the cost of that native
 transition/gesture.
 
@@ -183,8 +182,8 @@ def _actions(*controls: ft.Control) -> ft.Control:
 
 
 def _sub_header(title: str, on_back: Callable[[], None]) -> ft.Row:
-    """Stands in for the AppBar a pushed ``ft.View`` used to give us for
-    free: back arrow + bold title, same visual weight."""
+    """Stands in for a native AppBar: back arrow + bold title, same visual
+    weight."""
     return ft.Row(
         [
             ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda e: on_back()),
@@ -897,9 +896,8 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
     )
     content.controls.append(menu)
 
-    # 20 on all four sides, same as every other tab — horizontal used to be
-    # 24, which pushed this page's title 4px right of the others'. No
-    # explicit bgcolor: this Container (and every sub-page's) inherits
-    # content_area's — i.e. page.bgcolor — same as the rest of the app,
-    # instead of whatever default a pushed ft.View used to render with.
+    # 20 on all four sides, same as every other tab, so this page's title
+    # lines up with the others'. No explicit bgcolor: this Container (and
+    # every sub-page's) inherits content_area's — i.e. page.bgcolor — same
+    # as the rest of the app.
     return ft.Container(content, padding=20)
