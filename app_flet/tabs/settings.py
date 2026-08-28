@@ -511,10 +511,12 @@ def _build_about_view(
     def _quit_for_install() -> None:
         """Get out of the installer's way.
 
-        Inno Setup cannot overwrite our own .exe while this process holds it
-        open, so exiting is not optional — os._exit is deliberate: a clean
-        shutdown could be blocked by a pending UI task and leave the file
-        locked with the installer already running.
+        Nothing can replace an app that is still running — Inno Setup cannot
+        overwrite our own .exe while this process holds it open, and swapping
+        a live .app bundle on macOS is no safer. So exiting is not optional,
+        and os._exit is deliberate: a clean shutdown could be blocked by a
+        pending UI task and leave the files held with the installer already
+        running.
         """
         # Let the detached installer get going and the close command flush.
         time.sleep(0.8)

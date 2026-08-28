@@ -10,6 +10,7 @@ symmetrical newer / equal / older trio below.
 """
 from __future__ import annotations
 
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -97,7 +98,7 @@ def _release(
 
     Field names and the asset naming convention were verified against the
     live API on 2026-07-28 (which then served v1.0.0 with
-    cie-helper-1.0.0-setup.exe / .pkg).
+    cie-helper-1.0.0-setup.exe / -setup.dmg).
     """
     if assets is None:
         assets = [
@@ -109,10 +110,10 @@ def _release(
                 ),
             },
             {
-                "name": "cie-helper-9.9.9-setup.pkg",
+                "name": "cie-helper-9.9.9-setup.dmg",
                 "browser_download_url": (
                     "https://github.com/Ambitions0x39e/CAIE_helper/releases"
-                    "/download/v9.9.9/cie-helper-9.9.9-setup.pkg"
+                    "/download/v9.9.9/cie-helper-9.9.9-setup.dmg"
                 ),
             },
         ]
@@ -327,7 +328,7 @@ def test_check_picks_the_exe_asset_on_windows(
     assert result.download_url.endswith(".exe")
 
 
-def test_check_picks_the_pkg_asset_on_macos(
+def test_check_picks_the_dmg_asset_on_macos(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -337,7 +338,7 @@ def test_check_picks_the_pkg_asset_on_macos(
 
     assert result.update_available is True
     assert result.download_url is not None
-    assert result.download_url.endswith(".pkg")
+    assert result.download_url.endswith(".dmg")
 
 
 @pytest.mark.parametrize("platform", ["linux", "ios", "android", "freebsd"])
@@ -356,7 +357,7 @@ def test_check_reports_platform_not_supported_without_touching_network(
 def test_check_reports_platform_not_supported_when_no_asset_matches(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    """A release that only shipped a .pkg must not hand Windows the .pkg."""
+    """A release that only shipped a .dmg must not hand Windows the .dmg."""
     _patch_get(
         monkeypatch,
         _FakeResponse(
@@ -364,8 +365,8 @@ def test_check_reports_platform_not_supported_when_no_asset_matches(
                 "v9.9.9",
                 assets=[
                     {
-                        "name": "cie-helper-9.9.9-setup.pkg",
-                        "browser_download_url": "https://example.test/a.pkg",
+                        "name": "cie-helper-9.9.9-setup.dmg",
+                        "browser_download_url": "https://example.test/a.dmg",
                     },
                 ],
             ),
@@ -399,7 +400,7 @@ def test_platform_asset_suffix_maps_only_win32_and_darwin(
     monkeypatch.setattr(sys, "platform", "win32")
     assert platform_asset_suffix() == ".exe"
     monkeypatch.setattr(sys, "platform", "darwin")
-    assert platform_asset_suffix() == ".pkg"
+    assert platform_asset_suffix() == ".dmg"
     monkeypatch.setattr(sys, "platform", "linux")
     assert platform_asset_suffix() is None
 
@@ -901,28 +902,72 @@ def test_install_detaches_the_windows_installer_from_this_process(
     )
 
 
-def test_install_opens_the_pkg_with_open_on_macos(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+def test_install_runs_the_swap_script_detached_on_macos(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, updates_dir: Path,
 ) -> None:
-    """`open` shows Installer.app; the `installer` CLI would need sudo."""
+    """The script must outlive the app that is about to exit."""
     monkeypatch.setattr(sys, "platform", "darwin")
     calls = _spy_popen(monkeypatch)
-    pkg = _installer(tmp_path, "cie-helper-9.9.9-setup.pkg")
+    dmg = _installer(tmp_path, "cie-helper-9.9.9-setup.dmg")
 
-    result = AppUpdater(current_version="1.1.2").install(pkg)
+    result = AppUpdater(current_version="1.1.2").install(dmg)
 
     assert result.success is True
     assert len(calls) == 1
-    assert calls[0]["argv"] == ["open", str(pkg)]
+    assert calls[0]["argv"] == ["/bin/sh", str(updates_dir / "install.sh")]
+    assert calls[0]["start_new_session"] is True
     assert "creationflags" not in calls[0]
 
 
-def test_install_refuses_a_pkg_on_windows(
+def test_macos_script_mounts_copies_and_reopens(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, updates_dir: Path,
+) -> None:
+    """The order is the whole point: mount, copy, unmount, launch."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _spy_popen(monkeypatch)
+    dmg = _installer(tmp_path, "cie-helper-9.9.9-setup.dmg")
+
+    AppUpdater(current_version="1.1.2").install(dmg)
+    body = (updates_dir / "install.sh").read_text(encoding="utf-8")
+
+    # Quoted, because the path runs through the user's home directory.
+    assert shlex.quote(str(dmg)) in body
+    assert 'dest=/Applications/$(basename "$src")' in body
+    # rindex for the unmount: the "no .app inside" guard detaches and bails
+    # out earlier in the script.
+    assert body.index("hdiutil attach") < body.index("ditto ")
+    assert body.index("ditto ") < body.rindex("hdiutil detach")
+    assert body.rindex("hdiutil detach") < body.index("open ")
+    # Staged and swapped, so a failed copy cannot delete a working install.
+    assert 'mv "$dest.new" "$dest"' in body
+    assert body.index("ditto ") < body.index("rm -rf")
+
+
+def test_install_falls_back_to_mounting_when_the_script_cannot_be_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, updates_dir: Path,
+) -> None:
+    """An image the user can drag from beats refusing to update at all."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls = _spy_popen(monkeypatch)
+    dmg = _installer(tmp_path, "cie-helper-9.9.9-setup.dmg")
+
+    def _no_write(*args: object, **kwargs: object) -> None:
+        raise OSError("read-only volume")
+
+    monkeypatch.setattr(Path, "write_text", _no_write)
+
+    result = AppUpdater(current_version="1.1.2").install(dmg)
+
+    assert result.success is True
+    assert calls[0]["argv"] == ["open", str(dmg)]
+
+
+def test_install_refuses_a_dmg_on_windows(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tmp_path: Path,
 ) -> None:
     """Installing the wrong platform's package is worse than not updating."""
     calls = _spy_popen(monkeypatch)
-    pkg = _installer(tmp_path, "cie-helper-9.9.9-setup.pkg")
+    pkg = _installer(tmp_path, "cie-helper-9.9.9-setup.dmg")
 
     result = AppUpdater(current_version="1.1.2").install(pkg)
 

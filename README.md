@@ -10,9 +10,9 @@ A local app to download CIE past papers, mark them with AI, and track your score
 
 ### Installers for distribution
 - **Windows**: compile `packaging/windows/cie-helper.iss` with Inno Setup 6 → `dist/cie-helper-<version>-setup.exe`.
-- **macOS**: run `./packaging/macos/build-pkg.sh` after `flet build macos` → `dist/cie-helper-<version>.pkg`. The app inside a .pkg installs without Gatekeeper's quarantine flag, so it launches cleanly; only the unsigned .pkg itself needs a one-time bypass — right-click → Open (macOS 15+: System Settings → Privacy & Security → "Open Anyway").
+- **macOS**: run `./packaging/macos/build-dmg.sh` after `flet build macos` → `dist/cie-helper-<version>-setup.dmg`. Drag the app onto the Applications shortcut inside the image, then clear the quarantine flag the browser attached to the download: `xattr -rd com.apple.quarantine /Applications/cie-helper.app`.
 
-Both installers ship unsigned, so expect the usual first-open warnings (SmartScreen on Windows, Gatekeeper on macOS).
+Both installers ship unsigned, so expect the usual first-open warnings (SmartScreen on Windows, Gatekeeper on macOS). In-app updates need no bypass on either platform — the app fetches and installs the package itself, and nothing quarantines a file it downloaded.
 
 ---
 
