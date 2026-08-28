@@ -487,7 +487,7 @@ def build_answer_sheet(
     written = 0
 
     for paper_id, mains in main_questions_by_paper(items).items():
-        config = cached_mark_scheme(ms_path_of.get(paper_id, paper_id))
+        config = cached_mark_scheme(ms_path_of.get(paper_id, ""))
         if config is None:
             warnings.append(f"{paper_id}: 还没解析过 mark scheme，已跳过")
             continue

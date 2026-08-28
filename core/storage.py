@@ -298,13 +298,26 @@ class MistakeStore:
                 return None
             return str(val).strip()
 
+        def _nullable_float(val: object) -> float | None:
+            # None rather than raising here: score/max_score are required,
+            # non-Optional fields, so passing None through to model_validate
+            # lets MistakeRecord's own validator reject it with a normal
+            # ValidationError — the same "N invalid row(s)" path every other
+            # malformed field already goes through. float(str(val)) on a
+            # blank cell would otherwise silently produce NaN, which passes
+            # both the non-negative and score<=max_score checks (nan < 0 and
+            # nan > max_score are both False).
+            if pd.isna(val) or str(val).strip() == "":
+                return None
+            return float(str(val))
+
         return {
             "paper_id": str(row["paper_id"]).strip(),
             "question_id": str(row["question_id"]).strip(),
             "topic_id": _nullable_str(row["topic_id"]),
             "topic_name": _nullable_str(row["topic_name"]),
-            "score": float(str(row["score"])),
-            "max_score": float(str(row["max_score"])),
+            "score": _nullable_float(row["score"]),
+            "max_score": _nullable_float(row["max_score"]),
             "comment": _nullable_str(row["comment"]) or "",
             "timestamp": datetime.datetime.fromisoformat(
                 str(row["timestamp"]).strip()
