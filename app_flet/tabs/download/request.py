@@ -115,12 +115,20 @@ def build_request_tab(
     result_list = ft.Column(spacing=0, visible=False)
     error_area = ft.Column(visible=False, spacing=4)
 
+    # 查询和批量下载共用一把锁：两边都会改 rows / result_list.controls /
+    # last_result / rendered_head / total_files，双击或者查询没完就点下载
+    # 都会让两个后台线程同时改同一份没上锁的状态。
+    busy = [False]
     # (勾选框, 右侧状态文字, 条目) — 只装可勾选的行（qp / gt）
     rows: list[tuple[ft.Checkbox, ft.Text, QueryEntry]] = []
     total_files = [0]  # 这一次查询返回的文件总数，含挂在 qp 下面的 ms / insert
     # 最近一次查询结果 + 它渲染时用的表头模式。留着是为了窗口变宽/变窄时能
     # 就地重排，不必重新发一次网络查询。
     last_result: list[QueryResult | None] = [None]
+    #: 拿到 last_result 时用的科目 —— 表头必须按它来标，而不是随手一读下拉框
+    #: 当前的值：查完之后用户可能已经把下拉框切到别的科目，此时表头再读
+    #: 一次下拉框会用新科目的卷子名去标旧科目查出来的结果。
+    last_syllabus_id: list[str | None] = [None]
     #: 上次渲染用的表头方案 (显不显示卷子名, 留几行)，给 _reflow_on_resize 比对。
     rendered_head: list[tuple[bool, int] | None] = [None]
 
@@ -205,6 +213,9 @@ def build_request_tab(
         page.update()
 
     def on_send_request(_: ft.ControlEvent) -> None:
+        if busy[0]:
+            show_snack("上一次请求还没完成，请稍候")  # type: ignore[operator]
+            return
         if not paper_type_dd.value or not year_dd.value or not season_dd.value:
             show_snack("请先选择完整的查询条件")  # type: ignore[operator]
             return
@@ -212,6 +223,7 @@ def build_request_tab(
             paper_type_dd.value, year_dd.value, season_dd.value,
         )
 
+        busy[0] = True
         progress_ring.visible = True
         result_list.visible = False
         batch_bar.visible = False
@@ -221,41 +233,52 @@ def build_request_tab(
         page.update()
 
         def _work() -> None:
-            result = query_available(
-                syllabus_id,
-                year,
-                cast(QuerySeason, season),
-                store=state.store,
-            )
+            try:
+                result = query_available(
+                    syllabus_id,
+                    year,
+                    cast(QuerySeason, season),
+                    store=state.store,
+                )
 
-            progress_ring.visible = False
-            rows.clear()
-            result_list.controls.clear()
-            error_area.controls.clear()
-            error_area.visible = False
+                progress_ring.visible = False
+                rows.clear()
+                result_list.controls.clear()
+                error_area.controls.clear()
+                error_area.visible = False
 
-            if not result.success:
-                status_text.color = theme.DANGER
-                status_text.value = f"查询失败: {result.error}"
-                page.update()
-                return
+                if not result.success:
+                    status_text.color = theme.DANGER
+                    status_text.value = f"查询失败: {result.error}"
+                    page.update()
+                    return
 
-            if not result.entries:
-                status_text.color = theme.MUTED
-                status_text.value = "这个考季没有查到任何文件"
-                page.update()
-                return
+                if not result.entries:
+                    status_text.color = theme.MUTED
+                    status_text.value = "这个考季没有查到任何文件"
+                    page.update()
+                    return
 
-            last_result[0] = result
-            _render_result(result)
+                last_result[0] = result
+                last_syllabus_id[0] = syllabus_id
+                _render_result(result)
+            finally:
+                busy[0] = False
 
         page.run_thread(_work)
 
     def _type_names() -> dict[str, str]:
-        """当前科目的 卷号 → 卷子名（没配就是空表）。"""
-        selected = next(
-            (s for s in syllabi if s.syllabus_id == paper_type_dd.value), None
+        """当前结果所属科目的 卷号 → 卷子名（没配就是空表）。
+
+        按 ``last_syllabus_id``（这份结果实际查询时用的科目）来标，而不是
+        直接读下拉框此刻的值 —— 查完之后用户切了下拉框，结果还没重新查询，
+        这里不能跟着换。还没查过（``None``）时才退回下拉框当前值。
+        """
+        sid = (
+            last_syllabus_id[0]
+            if last_syllabus_id[0] is not None else paper_type_dd.value
         )
+        selected = next((s for s in syllabi if s.syllabus_id == sid), None)
         return selected.paper_types_as_dict() if selected else {}
 
     def _header_label(digit: str, named: str | None) -> str:
@@ -401,99 +424,112 @@ def build_request_tab(
         on_resize_hooks.append(_reflow_on_resize)
 
     def on_batch_download(_: ft.ControlEvent) -> None:
+        if busy[0]:
+            show_snack("上一次请求还没完成，请稍候")  # type: ignore[operator]
+            return
         picked = [(cb, note, e) for cb, note, e in rows if cb.value]
         if not picked:
             show_snack("请先勾选要下载的文件")  # type: ignore[operator]
             return
 
+        busy[0] = True
         progress_ring.visible = True
         error_area.controls.clear()
         error_area.visible = False
         page.update()
 
         def _work() -> None:
-            downloader = PaperDownloader(store=state.store)
-            succeeded = skipped = failed = 0
-            errors: list[str] = []
-            # insert 下载失败不算这一行失败（QP+MS 已经到手），单独攒起来提示。
-            warnings: list[str] = []
+            try:
+                downloader = PaperDownloader(store=state.store)
+                succeeded = skipped = failed = 0
+                errors: list[str] = []
+                # insert 下载失败不算这一行失败（QP+MS 已经到手），单独攒起来提示。
+                warnings: list[str] = []
 
-            for idx, (checkbox, note, entry) in enumerate(picked, start=1):
-                if entry.already_downloaded:
-                    skipped += 1
-                    checkbox.value = False
-                    continue
+                for idx, (checkbox, note, entry) in enumerate(picked, start=1):
+                    if entry.already_downloaded:
+                        skipped += 1
+                        checkbox.value = False
+                        continue
 
-                status_text.color = theme.MUTED
-                status_text.value = f"下载中 {idx}/{len(picked)} — {entry.paper_id}"
+                    status_text.color = theme.MUTED
+                    status_text.value = (
+                        f"下载中 {idx}/{len(picked)} — {entry.paper_id}"
+                    )
+                    page.update()
+
+                    try:
+                        request = DownloadRequest(paper_id=entry.paper_id)
+                    except ValidationError as exc:
+                        failed += 1
+                        msgs = "; ".join(
+                            e["msg"].removeprefix("Value error, ")
+                            for e in exc.errors()
+                        )
+                        errors.append(f"{entry.paper_id}: {msgs}")
+                        continue
+
+                    # 这一列里显示了 insert 子行的，就走 QP+MS+in 那条；
+                    # 其余（含 gt）走 download()。
+                    dl = (
+                        downloader.download_with_insert(request)
+                        if entry.has_insert
+                        else downloader.download(request)
+                    )
+                    if dl.success:
+                        succeeded += 1
+                        if dl.insert_error:
+                            warnings.append(
+                                f"{entry.paper_id} 的 insert 没下到: "
+                                f"{dl.insert_error}"
+                            )
+                        entry.already_downloaded = True
+                        checkbox.value = False
+                        note.value = _row_note(entry)
+                        # 发 GoodNotes 只发 QP：gt 之类不排进待发送位。
+                        if entry.kind == "qp":
+                            state.last_downloaded_id = dl.paper_id
+                            state.last_downloaded_qp = dl.qp_path
+                    else:
+                        failed += 1
+                        errors.append(f"{entry.paper_id}: {dl.error}")
+
+                progress_ring.visible = False
+                _refresh_status()
+
+                if errors:
+                    error_area.controls.extend(
+                        error_banner(msg) for msg in errors[:5]
+                    )
+                    if len(errors) > 5:
+                        error_area.controls.append(
+                            ft.Text(
+                                f"…另有 {len(errors) - 5} 条失败",
+                                size=12,
+                                color=theme.DANGER,
+                            )
+                        )
+                    error_area.visible = True
+
+                if warnings:
+                    error_area.controls.extend(
+                        warning_banner(msg) for msg in warnings[:5]
+                    )
+                    error_area.visible = True
+
                 page.update()
-
-                try:
-                    request = DownloadRequest(paper_id=entry.paper_id)
-                except ValidationError as exc:
-                    failed += 1
-                    msgs = "; ".join(
-                        e["msg"].removeprefix("Value error, ") for e in exc.errors()
-                    )
-                    errors.append(f"{entry.paper_id}: {msgs}")
-                    continue
-
-                # 这一列里显示了 insert 子行的，就走 QP+MS+in 那条；
-                # 其余（含 gt）还是原来的 download()。
-                dl = (
-                    downloader.download_with_insert(request)
-                    if entry.has_insert
-                    else downloader.download(request)
+                show_snack(  # type: ignore[operator]
+                    f"成功 {succeeded} · 跳过 {skipped} · 失败 {failed}",
+                    theme.DANGER if failed else theme.SUCCESS,
                 )
-                if dl.success:
-                    succeeded += 1
-                    if dl.insert_error:
-                        warnings.append(
-                            f"{entry.paper_id} 的 insert 没下到: {dl.insert_error}"
-                        )
-                    entry.already_downloaded = True
-                    checkbox.value = False
-                    note.value = _row_note(entry)
-                    # 发 GoodNotes 只发 QP：gt 之类不排进待发送位。
-                    if entry.kind == "qp":
-                        state.last_downloaded_id = dl.paper_id
-                        state.last_downloaded_qp = dl.qp_path
-                else:
-                    failed += 1
-                    errors.append(f"{entry.paper_id}: {dl.error}")
-
-            progress_ring.visible = False
-            _refresh_status()
-
-            if errors:
-                error_area.controls.extend(error_banner(msg) for msg in errors[:5])
-                if len(errors) > 5:
-                    error_area.controls.append(
-                        ft.Text(
-                            f"…另有 {len(errors) - 5} 条失败",
-                            size=12,
-                            color=theme.DANGER,
-                        )
-                    )
-                error_area.visible = True
-
-            if warnings:
-                error_area.controls.extend(
-                    warning_banner(msg) for msg in warnings[:5]
-                )
-                error_area.visible = True
-
-            page.update()
-            show_snack(  # type: ignore[operator]
-                f"成功 {succeeded} · 跳过 {skipped} · 失败 {failed}",
-                theme.DANGER if failed else theme.SUCCESS,
-            )
+            finally:
+                busy[0] = False
 
         page.run_thread(_work)
 
     send_btn = ft.Button(
         "查询",
-        icon=ft.Icons.SEARCH,
+        icon=ft.CupertinoIcons.SEARCH,
         on_click=on_send_request,  # type: ignore[arg-type]
         style=theme.filled_button(),
     )
