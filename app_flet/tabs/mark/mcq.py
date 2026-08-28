@@ -189,6 +189,13 @@ def _on_detect_click(ctx: MarkTabContext) -> None:
         progress_text.value = f"第 {cur}/{tot} 页…"
         ctx.page.update()
 
+    # Captured now, not re-read from ctx.selected_paper at confirm time: the
+    # paper picker stays interactive while these results are on screen, so a
+    # switch before confirming must not relabel this run's paper_id.
+    graded_paper_id = (
+        ctx.selected_paper if ctx.ms_source == "downloaded" else None
+    )
+
     def _do_detect() -> None:
         try:
             detected, undetected = detect_student_answers(
@@ -203,6 +210,7 @@ def _on_detect_click(ctx: MarkTabContext) -> None:
             )
             state.mcq_detected = detected
             state.mcq_undetected = undetected
+            state.graded_paper_id = graded_paper_id
             ctx.manual_answer_values.clear()
         except Exception as exc:
             ctx.show_snack(f"检测失败: {exc}", theme.DANGER)
