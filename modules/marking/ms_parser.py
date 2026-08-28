@@ -508,13 +508,10 @@ def cached_mark_scheme(pdf_path: str | Path) -> PaperConfig | None:
 
     path = Path(pdf_path)
     plain = _cache_path_for(path)
-    candidates = sorted(
-        app_settings.ms_cache_dir.glob(f"{path.stem}.sp*.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    found = list(app_settings.ms_cache_dir.glob(f"{path.stem}.sp*.json"))
     if plain.exists():
-        candidates.append(plain)
+        found.append(plain)
+    candidates = sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
     for candidate in candidates:
         try:
             return PaperConfig.model_validate_json(
