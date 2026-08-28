@@ -1,7 +1,7 @@
 """Parse CIE MCQ mark schemes and detect student answers from annotated QP PDFs.
 
 Two responsibilities:
-1. Mark-scheme parsing: PyMuPDF block extraction reads the answer table directly —
+1. Mark-scheme parsing: pdfminer.six reads the answer table's geometry directly —
    no vision model needed.
 2. Student-answer detection: renders the annotated QP page-by-page, sends each
    page (or stitched pair for cross-page questions) to a VL model, and collects
@@ -13,11 +13,12 @@ import base64
 import io
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
-from pdfminer.high_level import extract_text
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LTTextContainer, LTTextLine
 
 from core.settings import GraderConfig
 from modules.marking.ms_parser import PaperConfig, QuestionConfig
@@ -142,6 +143,69 @@ def _build_page_batches(
     return [[i] for i in range(n_pages) if i not in skip_pages]
 
 
+class _Cell(NamedTuple):
+    """One extracted text line, with the geometry needed to rebuild a row."""
+
+    text: str
+    x0: float
+    x1: float
+    y: float  # vertical centre
+
+
+# Question number and answer sit on the same baseline; a few points of slack
+# covers the different glyph heights of "10" vs "B".
+_ROW_TOLERANCE_PT = 4.0
+
+
+def _iter_page_cells(pdf_bytes: bytes) -> Iterator[list[_Cell]]:
+    """Yield one list of positioned text lines per page.
+
+    pdfminer.six only (pure Python, iOS-safe — no pdfplumber, no PyMuPDF).
+    """
+    for page in extract_pages(io.BytesIO(pdf_bytes)):
+        cells: list[_Cell] = []
+        for element in page:
+            if not isinstance(element, LTTextContainer):
+                continue
+            for line in element:
+                if not isinstance(line, LTTextLine):
+                    continue
+                text = line.get_text().strip()
+                if text:
+                    cells.append(
+                        _Cell(text, line.x0, line.x1, (line.y0 + line.y1) / 2)
+                    )
+        yield cells
+
+
+def _pair_table_rows(cells: list[_Cell]) -> dict[int, str]:
+    """Rebuild ``{question number: answer letter}`` from one page's geometry.
+
+    CIE draws the answer table **column by column**, so pdfminer emits every
+    question number before the first answer letter — reading pairs off adjacent
+    text lines (as this parser once did) matched only where two columns happen
+    to abut, yielding two bogus questions per paper instead of forty. Rows are
+    therefore matched on the shared baseline instead.
+
+    The "Marks" column is a third run of bare digits; it drops out because a
+    question number must have its answer letter to the *right* of it, and
+    nothing sits right of Marks.
+    """
+    numbers = [c for c in cells if c.text.isdigit()]
+    letters = [c for c in cells if c.text in _ANSWER_LETTERS]
+
+    rows: dict[int, str] = {}
+    for num in numbers:
+        same_row = [
+            c
+            for c in letters
+            if c.x0 > num.x1 and abs(c.y - num.y) <= _ROW_TOLERANCE_PT
+        ]
+        if same_row:
+            rows[int(num.text)] = min(same_row, key=lambda c: c.x0).text
+    return rows
+
+
 # ── Public: mark scheme parsing ────────────────────────────────────────────
 
 def parse_mcq_mark_scheme(pdf_path: str | Path) -> PaperConfig:
@@ -152,41 +216,38 @@ def parse_mcq_mark_scheme(pdf_path: str | Path) -> PaperConfig:
     and ``mark_scheme`` set to the correct answer letter (A/B/C/D).
 
     Raises:
-        ValueError: If no answers could be extracted from the PDF.
+        ValueError: If no answers could be extracted from the PDF, or if the
+            recovered table has gaps — a partial key would silently mark the
+            missing questions wrong, so it is refused rather than returned.
     """
     path = Path(pdf_path)
-    questions: dict[str, QuestionConfig] = {}
 
-    # pdfminer.six text extraction (pure Python, iOS-safe — no pdfplumber).
-    text = extract_text(io.BytesIO(to_pdf_bytes(path))) or ""
-    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-    i = 0
-    while i < len(lines) - 1:
-        if (
-            re.fullmatch(r"\d+", lines[i])
-            and lines[i + 1] in _ANSWER_LETTERS
-        ):
-            qid = f"Q{lines[i]}"
-            questions[qid] = QuestionConfig(
-                max_marks=1, mark_scheme=lines[i + 1]
-            )
-            i += 2
-        else:
-            i += 1
+    answers: dict[int, str] = {}
+    for cells in _iter_page_cells(to_pdf_bytes(path)):
+        answers.update(_pair_table_rows(cells))
 
-    if not questions:
+    if not answers:
         raise ValueError(
             f"No MCQ answers found in {path.name}. "
             "Ensure this is a CIE MCQ mark scheme PDF."
         )
 
-    sorted_questions = dict(
-        sorted(questions.items(), key=lambda kv: int(kv[0][1:]))
-    )
+    missing = sorted(set(range(1, max(answers) + 1)) - answers.keys())
+    if missing:
+        raise ValueError(
+            f"Incomplete MCQ answer table in {path.name}: no answer found for "
+            f"question {', '.join(str(q) for q in missing)}. "
+            "The mark scheme layout may be unsupported."
+        )
+
+    questions = {
+        f"Q{num}": QuestionConfig(max_marks=1, mark_scheme=answers[num])
+        for num in sorted(answers)
+    }
     return PaperConfig(
         paper_id=_extract_paper_id(path),
-        total_marks=len(sorted_questions),
-        questions=sorted_questions,
+        total_marks=len(questions),
+        questions=questions,
     )
 
 

@@ -14,6 +14,7 @@ def data_table(
     show_checkbox_column: bool = False,
     on_select_all: Callable[..., None] | None = None,
     row_height: float | None = None,
+    compact: bool = False,
 ) -> ft.Row:
     """全 app 统一的表格样式，宽度铺满窗口。
 
@@ -30,19 +31,31 @@ def data_table(
 
     ``row_height`` 只给单元格里放了控件（下拉框、按钮）的表用 —— 默认行高按纯
     文本算，塞进一个下拉框会被裁掉。不传就沿用 Flet 的默认，既有调用方不受影响。
+
+    ``compact=True`` 收紧行高、列距，并补上竖分隔线：给单元格只有一两个字符的
+    密集表格用（批改页的 MCQ 答题卡，一屏要放 40 题），列一多就必须有竖线才对得
+    上题号。两个都传时 ``row_height`` 说了算 —— 它是调用方给出的确切数值，
+    compact 那档只是默认值。默认那档是给管理页那种整行文字的表格用的，不要动。
     """
+    compact_min, compact_max = (30, 34) if compact else (None, None)
     return ft.Row([
         ft.DataTable(
             columns=columns,
             rows=rows,
             show_checkbox_column=show_checkbox_column,
             on_select_all=on_select_all,
-            data_row_min_height=row_height,
-            data_row_max_height=row_height,
+            data_row_min_height=row_height if row_height else compact_min,
+            data_row_max_height=row_height if row_height else compact_max,
             expand=True,
             border=ft.Border.all(1, theme.HAIRLINE),
             border_radius=theme.CARD_RADIUS,
             heading_row_color=theme.PRIMARY_TINT,
+            heading_row_height=32 if compact else None,
+            column_spacing=8 if compact else None,
+            horizontal_margin=10 if compact else None,
+            vertical_lines=(
+                ft.BorderSide(1, theme.HAIRLINE_FAINT) if compact else None
+            ),
         )
     ])
 
@@ -88,7 +101,7 @@ def status_badge(status: str) -> ft.Container:
 def section_title(text: str) -> ft.Text:
     return ft.Text(
         text,
-        size=24,
+        size=theme.TITLE,
         weight=ft.FontWeight.BOLD,
     )
 

@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from app_flet import theme
+from app_flet.components.widgets import section_title
 from app_flet.tabs.mark.context import MarkTabContext
+from app_flet.tabs.mark.mcq import answer_sheet_table
 from core.config_store import grading_type_for_paper
 from core.models import PaperType
 from modules.marking.ms_parser import (
@@ -78,7 +80,7 @@ def _async_click(
 def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     state = ctx.state
     controls: list[ft.Control] = [
-        ft.Text("AI 批改", size=24, weight=ft.FontWeight.BOLD),
+        section_title("AI 批改"),
         ft.Divider(),
         ft.Text(
             "Step 1 — 选择试卷与答卷", size=18,
@@ -126,7 +128,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         controls.append(ft.Row([
             ft.Button(
                 "选择 MS PDF 文件",
-                icon=ft.Icons.UPLOAD_FILE,
+                icon=ft.CupertinoIcons.CLOUD_UPLOAD,
                 on_click=_async_click(_on_ms_upload_click, ctx),
             ),
             ft.Text(upload_label, size=12, color=theme.MUTED),
@@ -156,7 +158,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     controls.append(ft.Row([
         ft.Button(
             "选择已批注 QP PDF" if is_mcq else "选择答卷 PDF",
-            icon=ft.Icons.UPLOAD_FILE,
+            icon=ft.CupertinoIcons.CLOUD_UPLOAD,
             on_click=_async_click(_on_answer_pick_click, ctx),
         ),
         ft.Text(answer_label, size=12, color=theme.MUTED),
@@ -171,7 +173,10 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     if ctx.paper_type == PaperType.MATH and state.grader_config is None:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
+                ft.Icon(
+                    ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+                    color=theme.WARNING,
+                ),
                 ft.Text("请先在设置中配置 Grader API 凭证", color=theme.WARNING),
             ]),
             padding=8,
@@ -189,7 +194,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
             if ctx.answer_path and not is_mcq
             else "解析 Mark Scheme"
         ),
-        icon=ft.Icons.SEARCH,
+        icon=ft.CupertinoIcons.SEARCH,
         disabled=not can_parse,
         style=theme.filled_button(),
         on_click=lambda _: start_analysis(ctx, force=False),
@@ -197,7 +202,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     if state.paper_config and state.ms_from_cache:
         parse_row.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.HISTORY, color=theme.ACCENT_STRONG, size=16),
+                ft.Icon(ft.CupertinoIcons.CLOCK, color=theme.ACCENT_STRONG, size=16),
                 ft.Text("此结果来自缓存", size=12),
                 ft.TextButton(
                     "重新解析",
@@ -216,22 +221,30 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     # Parsed config preview (hidden while a new parse is running)
     if state.paper_config and not ctx.parsing:
         pc = state.paper_config
-        q_controls: list[ft.Control] = []
-        for qid, qcfg in pc.questions.items():
-            q_controls.append(ft.Text(
-                f"{qid} — {qcfg.max_marks} marks",
-                weight=ft.FontWeight.BOLD, size=13,
-            ))
-            q_controls.append(ft.Text(
-                qcfg.mark_scheme, size=12, color=theme.MUTED,
-            ))
+        # MCQ 的 mark_scheme 就是单个字母，逐题两行文字铺 40 题读不出任何东西 ——
+        # 走批改页那张答题卡（每 8 题一表），跟 Step 2 的结果表对得上。MATH 的
+        # mark_scheme 是整段评分说明，还得留着逐题列表。
+        # 看的是「这份 config 是按什么解析出来的」(state)，不是单选框现在选的是
+        # 什么 (ctx)：解析完再去点一下 MATH，预览不该跟着换一种画法。
+        body: ft.Control
+        if state.paper_type == PaperType.MCQ.value:
+            body = answer_sheet_table(pc)
+        else:
+            q_controls: list[ft.Control] = []
+            for qid, qcfg in pc.questions.items():
+                q_controls.append(ft.Text(
+                    f"{qid} — {qcfg.max_marks} marks",
+                    weight=ft.FontWeight.BOLD, size=theme.BODY,
+                ))
+                q_controls.append(ft.Text(
+                    qcfg.mark_scheme, size=theme.CAPTION, color=theme.MUTED,
+                ))
+            body = ft.Column(q_controls, spacing=4)
         controls.append(ft.ExpansionTile(
             title=ft.Text(
                 f"已解析: {pc.paper_id} ({len(pc.questions)} 题)",
             ),
-            controls=[ft.Container(
-                ft.Column(q_controls, spacing=4), padding=12,
-            )],
+            controls=[ft.Container(body, padding=12)],
         ))
 
     return controls
@@ -320,10 +333,16 @@ def _sync_paper_type(ctx: MarkTabContext) -> None:
     paper_id = ctx.selected_paper
     if not paper_id or paper_id == ctx.paper_type_synced_for:
         return
-    ctx.paper_type_synced_for = paper_id
     configured = grading_type_for_paper(paper_id)
-    if configured is not None:
-        ctx.paper_type = configured
+    if configured is None:
+        # Not in syllabus_config — leave paper_type_synced_for unset so a
+        # config added later in this session is picked up on the next visit,
+        # and reset paper_type instead of carrying over whatever the last
+        # configured paper left it at.
+        ctx.paper_type = PaperType.MATH
+        return
+    ctx.paper_type_synced_for = paper_id
+    ctx.paper_type = configured
 
 
 def _sync_syllabus_to_subject(ctx: MarkTabContext) -> None:
@@ -363,7 +382,7 @@ def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
     row: list[ft.Control] = [
         ft.Button(
             "选择大纲 PDF",
-            icon=ft.Icons.MENU_BOOK,
+            icon=ft.CupertinoIcons.BOOK,
             disabled=ctx.syllabus_parsing,
             on_click=_async_click(_on_syllabus_upload_click, ctx),
         ),
@@ -373,7 +392,7 @@ def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
     if slug:
         row.append(ft.TextButton(
             "去官网下载",
-            icon=ft.Icons.OPEN_IN_NEW,
+            icon=ft.CupertinoIcons.ARROW_UP_RIGHT_SQUARE,
             on_click=_launch_syllabus_url(ctx, slug),
         ))
     return [ft.Row(row, spacing=8, wrap=True)]

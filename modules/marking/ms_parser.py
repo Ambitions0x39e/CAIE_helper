@@ -429,8 +429,9 @@ def _cache_path_for(pdf_path: Path, start_page: int | None = None) -> Path:
 
     VL-parsed (MATH) caches embed the resolved start page in the key —
     the same PDF parsed from a different start page covers a different
-    set of questions, so the results must not shadow each other. MCQ
-    caches pass None and keep the plain filename key.
+    set of questions, so the results must not shadow each other. Only
+    MATH is cached; ``start_page`` stays optional for the tests that
+    exercise the keying itself.
     """
     from core.settings import app_settings
 
@@ -497,24 +498,30 @@ def cached_mark_scheme(pdf_path: str | Path) -> PaperConfig | None:
     already produced, and a cache miss there must not fire off a paid VL run
     behind the user's back.
 
-    Takes no ``paper_type``: MCQ caches under the plain stem and MATH under
-    ``stem.spN``, so both keys are simply tried. That also avoids re-running
-    start-page detection, which would mean opening the PDF — and the PDF may
-    well be gone while its cache is still here. When several start pages
-    have been parsed the newest wins, on the grounds that a re-parse from an
-    overridden start page is the more considered answer.
+    Takes no ``paper_type``: only VL-parsed papers are cached, all under
+    ``stem.spN``, so the key is looked up without resolving a start page —
+    which would mean opening the PDF, and the PDF may well be gone while its
+    cache is still here. When several start pages have been parsed the newest
+    wins, on the grounds that a re-parse from an overridden start page is the
+    more considered answer.
+
+    The plain ``stem.json`` key is deliberately NOT read. Nothing writes it
+    any more (MCQ parses locally per call and never caches), and what it
+    still holds cannot be trusted: entries from the pre-fix MCQ parser, which
+    stored 2 questions for a 40-question paper. Typesetting one of those as
+    an answer sheet would look like a real answer sheet. Entries predating
+    the ``.spN`` keying also live under this name, but they are VL parses
+    that were re-cached under a start page the first time they were opened
+    again — a plain key with no ``.spN`` twin is the untrustworthy case.
     """
     from core.settings import app_settings
 
     path = Path(pdf_path)
-    plain = _cache_path_for(path)
     candidates = sorted(
         app_settings.ms_cache_dir.glob(f"{path.stem}.sp*.json"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
-    if plain.exists():
-        candidates.append(plain)
     for candidate in candidates:
         try:
             return PaperConfig.model_validate_json(
@@ -539,7 +546,7 @@ def ms_cache_exists(
     """
     path = Path(pdf_path)
     if paper_type == PaperType.MCQ:
-        return _cache_path_for(path).exists()
+        return False  # MCQ parses locally in ~0.1s and is never cached.
     resolved = resolve_ms_start_page(path, start_page)
     return _cache_path_for(path, resolved).exists()
 
@@ -574,13 +581,13 @@ def parse_mark_scheme(
     path = Path(pdf_path)
 
     if paper_type == PaperType.MCQ:
-        cached = None if force else _load_cached(path)
-        if cached is not None:
-            return cached
+        # Not cached: the answer table is read straight out of the PDF in a
+        # fraction of a second, with no API call to save. Caching it only
+        # ever froze a bad parse in place — entries written before the
+        # column-major table fix held 2 questions instead of 40 and survived
+        # the fix.
         from modules.marking.mcq_parser import parse_mcq_mark_scheme
-        config = parse_mcq_mark_scheme(pdf_path)
-        _save_cache(path, config)
-        return config
+        return parse_mcq_mark_scheme(pdf_path)
 
     if paper_type != PaperType.MATH:
         raise NotImplementedError(

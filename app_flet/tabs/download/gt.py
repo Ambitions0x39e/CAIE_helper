@@ -45,6 +45,9 @@ def build_by_gt_tab(
 
     # (表格行, 这个 option 要下的完整卷号)
     rows: list[tuple[ft.DataRow, list[str]]] = []
+    # 查询分数线和批量下载共用一把锁：两边都会改 rows / result_area /
+    # error_area，没锁的话双击或者一个没完就点另一个会撞车。
+    busy = [False]
 
     def _selected_papers() -> list[str]:
         """勾中的所有卷号，去重后保持出现顺序 —— 多个 option 常共用同一份卷。"""
@@ -70,59 +73,71 @@ def build_by_gt_tab(
         page.update()
 
     def on_batch_download(_: ft.ControlEvent) -> None:
+        if busy[0]:
+            show_snack("上一次请求还没完成，请稍候")  # type: ignore[operator]
+            return
         papers = _selected_papers()
         if not papers:
             show_snack("请先勾选要下载的 option")  # type: ignore[operator]
             return
 
+        busy[0] = True
         progress_ring.visible = True
         error_area.controls.clear()
         error_area.visible = False
         page.update()
 
         def _work() -> None:
-            # 走和「按考季查询」「按 ID 下载」同一条下载路径，不另开逻辑。
-            downloader = PaperDownloader(store=state.store)
-            succeeded = failed = 0
-            errors: list[str] = []
+            try:
+                # 走和「按考季查询」「按 ID 下载」同一条下载路径，不另开逻辑。
+                downloader = PaperDownloader(store=state.store)
+                succeeded = failed = 0
+                errors: list[str] = []
 
-            for idx, paper_id in enumerate(papers, start=1):
-                status_text.color = theme.MUTED
-                status_text.value = f"下载中 {idx}/{len(papers)} — {paper_id}"
+                for idx, paper_id in enumerate(papers, start=1):
+                    status_text.color = theme.MUTED
+                    status_text.value = (
+                        f"下载中 {idx}/{len(papers)} — {paper_id}"
+                    )
+                    page.update()
+                    try:
+                        request = DownloadRequest(paper_id=paper_id)
+                    except ValidationError as exc:
+                        failed += 1
+                        msgs = "; ".join(
+                            e["msg"].removeprefix("Value error, ")
+                            for e in exc.errors()
+                        )
+                        errors.append(f"{paper_id}: {msgs}")
+                        continue
+
+                    dl = downloader.download(request)
+                    if dl.success:
+                        succeeded += 1
+                        state.last_downloaded_id = dl.paper_id
+                        state.last_downloaded_qp = dl.qp_path
+                    else:
+                        failed += 1
+                        errors.append(f"{paper_id}: {dl.error}")
+
+                progress_ring.visible = False
+                _set_all(False)
+                if errors:
+                    error_area.controls.extend(
+                        error_banner(m) for m in errors[:5]
+                    )
+                    if len(errors) > 5:
+                        error_area.controls.append(
+                            error_banner(f"还有 {len(errors) - 5} 个错误未显示")
+                        )
+                    error_area.visible = True
+                show_snack(  # type: ignore[operator]
+                    f"完成: 成功 {succeeded}，失败 {failed}",
+                    theme.SUCCESS if not failed else theme.WARNING,
+                )
                 page.update()
-                try:
-                    request = DownloadRequest(paper_id=paper_id)
-                except ValidationError as exc:
-                    failed += 1
-                    msgs = "; ".join(
-                        e["msg"].removeprefix("Value error, ") for e in exc.errors()
-                    )
-                    errors.append(f"{paper_id}: {msgs}")
-                    continue
-
-                dl = downloader.download(request)
-                if dl.success:
-                    succeeded += 1
-                    state.last_downloaded_id = dl.paper_id
-                    state.last_downloaded_qp = dl.qp_path
-                else:
-                    failed += 1
-                    errors.append(f"{paper_id}: {dl.error}")
-
-            progress_ring.visible = False
-            _set_all(False)
-            if errors:
-                error_area.controls.extend(error_banner(m) for m in errors[:5])
-                if len(errors) > 5:
-                    error_area.controls.append(
-                        error_banner(f"还有 {len(errors) - 5} 个错误未显示")
-                    )
-                error_area.visible = True
-            show_snack(  # type: ignore[operator]
-                f"完成: 成功 {succeeded}，失败 {failed}",
-                theme.SUCCESS if not failed else theme.WARNING,
-            )
-            page.update()
+            finally:
+                busy[0] = False
 
         page.run_thread(_work)
 
@@ -130,7 +145,7 @@ def build_by_gt_tab(
         [
             ft.Button(
                 "批量下载",
-                icon=ft.Icons.DOWNLOAD_FOR_OFFLINE,
+                icon=ft.CupertinoIcons.ARROW_DOWN_TO_LINE,
                 on_click=on_batch_download,  # type: ignore[arg-type]
                 style=theme.filled_button(),
             ),
@@ -245,6 +260,9 @@ def build_by_gt_tab(
         ]
 
     def on_download(_: ft.ControlEvent) -> None:
+        if busy[0]:
+            show_snack("上一次请求还没完成，请稍候")  # type: ignore[operator]
+            return
         if not picker.is_complete():
             show_snack("请先选择完整的查询条件")  # type: ignore[operator]
             return
@@ -259,6 +277,7 @@ def build_by_gt_tab(
             show_snack(f"验证失败: {msgs}", theme.DANGER)  # type: ignore[operator]
             return
 
+        busy[0] = True
         progress_ring.visible = True
         result_area.visible = False
         batch_bar.visible = False
@@ -267,30 +286,37 @@ def build_by_gt_tab(
         page.update()
 
         def _work() -> None:
-            dl = PaperDownloader(store=state.store).download(request)
+            try:
+                dl = PaperDownloader(store=state.store).download(request)
 
-            progress_ring.visible = False
-            result_area.controls.clear()
+                progress_ring.visible = False
+                result_area.controls.clear()
 
-            if not dl.success:
-                result_area.controls.append(error_banner(f"下载失败: {dl.error}"))
+                if not dl.success:
+                    result_area.controls.append(
+                        error_banner(f"下载失败: {dl.error}")
+                    )
+                    result_area.visible = True
+                    page.update()
+                    return
+
+                result_area.controls.append(
+                    success_banner(
+                        f"已下载: {dl.paper_id}", [f"PDF → {dl.qp_path}"],
+                    )
+                )
+                doc = _parse(dl.qp_path, pid)
+                if isinstance(doc, str):
+                    result_area.controls.append(error_banner(doc))
+                else:
+                    result_area.controls.extend(_render_options(doc))
+                    batch_bar.visible = True
+                    _refresh_status()
+
                 result_area.visible = True
                 page.update()
-                return
-
-            result_area.controls.append(
-                success_banner(f"已下载: {dl.paper_id}", [f"PDF → {dl.qp_path}"])
-            )
-            doc = _parse(dl.qp_path, pid)
-            if isinstance(doc, str):
-                result_area.controls.append(error_banner(doc))
-            else:
-                result_area.controls.extend(_render_options(doc))
-                batch_bar.visible = True
-                _refresh_status()
-
-            result_area.visible = True
-            page.update()
+            finally:
+                busy[0] = False
 
         page.run_thread(_work)
 
@@ -314,7 +340,7 @@ def build_by_gt_tab(
                                     [
                                         ft.Button(
                                             "查询分数线",
-                                            icon=ft.Icons.DOWNLOAD,
+                                            icon=ft.CupertinoIcons.TRAY_ARROW_DOWN,
                                             style=theme.filled_button(),
                                             on_click=on_download,  # type: ignore[arg-type]
                                         ),

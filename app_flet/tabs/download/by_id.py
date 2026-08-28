@@ -45,6 +45,9 @@ def build_by_id_tab(
     result_area = ft.Column(visible=False)
     progress_ring = ft.ProgressRing(visible=False, width=20, height=20)
     gn_section = ft.Column(visible=False)
+    #: 挡住下载没完时的重复点击 —— 后台线程和一次新点击都会改 result_area /
+    #: state.last_downloaded_id，没锁的话两次下载会踩到同一份状态。
+    busy = [False]
 
     def _refresh_gn_section() -> None:
         gn_section.controls.clear()
@@ -60,7 +63,7 @@ def build_by_id_tab(
                     ),
                     ft.Button(
                         "发送到 GoodNotes",
-                        icon=ft.Icons.SEND,
+                        icon=ft.CupertinoIcons.PAPERPLANE,
                         on_click=on_send_gn,  # type: ignore[arg-type]
                         style=theme.filled_button(theme.ACCENT),
                     ),
@@ -71,6 +74,9 @@ def build_by_id_tab(
             gn_section.visible = False
 
     def on_download(_: ft.ControlEvent) -> None:
+        if busy[0]:
+            show_snack("上一次下载还没完成，请稍候")  # type: ignore[operator]
+            return
         pid = paper_id_field.value or ""
         if not pid.strip():
             show_snack("请输入 Paper ID")  # type: ignore[operator]
@@ -87,32 +93,38 @@ def build_by_id_tab(
             show_snack(f"验证失败: {msgs}", theme.DANGER)  # type: ignore[operator]
             return
 
+        busy[0] = True
         progress_ring.visible = True
         result_area.visible = False
         page.update()
 
         def _work() -> None:
-            downloader = PaperDownloader(store=state.store)
-            dl = downloader.download(request)
+            try:
+                downloader = PaperDownloader(store=state.store)
+                dl = downloader.download(request)
 
-            progress_ring.visible = False
-            result_area.controls.clear()
+                progress_ring.visible = False
+                result_area.controls.clear()
 
-            if dl.success:
-                result_area.controls.append(
-                    success_banner(
-                        f"已下载: {dl.paper_id}",
-                        [f"QP → {dl.qp_path}", f"MS → {dl.ms_path}"],
+                if dl.success:
+                    result_area.controls.append(
+                        success_banner(
+                            f"已下载: {dl.paper_id}",
+                            [f"QP → {dl.qp_path}", f"MS → {dl.ms_path}"],
+                        )
                     )
-                )
-                state.last_downloaded_id = dl.paper_id
-                state.last_downloaded_qp = dl.qp_path
-            else:
-                result_area.controls.append(error_banner(f"下载失败: {dl.error}"))
+                    state.last_downloaded_id = dl.paper_id
+                    state.last_downloaded_qp = dl.qp_path
+                else:
+                    result_area.controls.append(
+                        error_banner(f"下载失败: {dl.error}")
+                    )
 
-            result_area.visible = True
-            _refresh_gn_section()
-            page.update()
+                result_area.visible = True
+                _refresh_gn_section()
+                page.update()
+            finally:
+                busy[0] = False
 
         page.run_thread(_work)
 
@@ -171,14 +183,14 @@ def build_by_id_tab(
 
     download_btn = ft.Button(
         "下载",
-        icon=ft.Icons.DOWNLOAD,
+        icon=ft.CupertinoIcons.TRAY_ARROW_DOWN,
         on_click=on_download,  # type: ignore[arg-type]
         style=theme.filled_button(),
     )
 
     record_btn = ft.Button(
         "仅记录",
-        icon=ft.Icons.NOTE_ADD,
+        icon=ft.CupertinoIcons.TEXT_BADGE_PLUS,
         on_click=on_record,  # type: ignore[arg-type]
         style=theme.filled_button(theme.NEUTRAL),
     )
