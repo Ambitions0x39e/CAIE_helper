@@ -11,6 +11,7 @@ from flet_pdf_render import PdfRenderer
 
 from app_flet import theme
 from app_flet.components.dialogs import show_score_dialog
+from app_flet.components.widgets import hoverable
 from app_flet.state import AppState
 from app_flet.tabs.analytics import build_analytics_tab
 from app_flet.tabs.download import build_download_tab
@@ -132,7 +133,14 @@ def main(page: ft.Page) -> None:
     def _switch_tab(idx: int) -> None:
         nonlocal selected_index
         selected_index = idx
+        # Flush the rail on its own, before the tab is built. Building costs
+        # single-digit milliseconds, but shipping a whole tab's control tree
+        # across to Flutter and laying it out does not — and until that lands
+        # the click has produced nothing on screen. This update carries a few
+        # colours, so it paints immediately; the old tab stays up meanwhile,
+        # which is why the rail is repainted before the content is cleared.
         _apply_nav_selection()
+        page.update()
         content_area.controls.clear()
         if idx == 0:
             content_area.controls.append(
@@ -180,7 +188,7 @@ def main(page: ft.Page) -> None:
 
     def _make_nav_button(
         idx: int, icon: ft.IconData, label: str,
-    ) -> ft.Container:
+    ) -> ft.GestureDetector:
         icon_ctl = ft.Icon(icon, size=26)
         label_ctl = ft.Text(label, size=12, no_wrap=True)
         button = ft.Container(
@@ -194,22 +202,40 @@ def main(page: ft.Page) -> None:
             height=_NAV_BUTTON_SIZE,
             border_radius=_NAV_RADIUS,
             alignment=ft.Alignment.CENTER,
-            ink=True,
+            # Covers every property _apply_nav_selection() mutates on this
+            # container — bgcolor, border, shadow — plus the hover wash.
+            animate=ft.Animation(theme.DURATION_INSTANT, theme.CURVE_IN),
             on_click=lambda _: _switch_tab(idx),
         )
         nav_icons.append(icon_ctl)
         nav_labels.append(label_ctl)
         nav_buttons.append(button)
-        return button
+        return hoverable(
+            button,
+            tinted=[icon_ctl, label_ctl],
+            rest_bgcolor=lambda: theme.SURFACE if idx == selected_index else None,
+            rest_color=lambda: (
+                theme.PRIMARY if idx == selected_index else theme.MUTED
+            ),
+        )
 
     def _apply_nav_selection() -> None:
+        # The container's three properties fade — it carries `animate`. The
+        # icon and label colours snap: in Flet 0.86.4 `animate` is
+        # Container-only, and Icon/Text expose no colour tween at all.
+        #
+        # Icon and label share one resting colour: an entry is one object, and
+        # hoverable() restores both from a single provider.
         for i, button in enumerate(nav_buttons):
             active = i == selected_index
             button.bgcolor = theme.SURFACE if active else None
             button.border = ft.Border.all(1, theme.HAIRLINE) if active else None
-            button.shadow = theme.row_shadow() if active else None
-            nav_icons[i].color = theme.PRIMARY if active else theme.MUTED
-            nav_labels[i].color = theme.PRIMARY if active else theme.TEXT_PRIMARY
+            button.shadow = (
+                theme.row_shadow() if active else theme.row_shadow(opacity=0)
+            )
+            resting = theme.PRIMARY if active else theme.MUTED
+            nav_icons[i].color = resting
+            nav_labels[i].color = resting
             nav_labels[i].weight = (
                 ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL
             )

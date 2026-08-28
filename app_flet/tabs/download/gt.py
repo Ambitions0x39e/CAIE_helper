@@ -296,7 +296,7 @@ def build_by_gt_tab(
 
     # scroll + expand, unlike the sibling sub-tabs: those are short enough to
     # fit, but a thresholds list runs to dozens of options. Everything here
-    # lives inside ft.Tabs(height=…), which clips rather than scrolls, so a
+    # lives inside a fixed-height slot, which clips rather than scrolls, so a
     # long list would simply lose its bottom rows.
     return ft.Container(
         ft.Column(
@@ -310,7 +310,6 @@ def build_by_gt_tab(
                                 #     size=13, color=theme.MUTED,
                                 # ),
                                 picker.row(),
-                                ft.Container(height=4),
                                 ft.Row(
                                     [
                                         ft.Button(
@@ -325,7 +324,7 @@ def build_by_gt_tab(
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                             ],
-                            spacing=12,
+                            spacing=theme.SPACE_MD,
                         ),
                         expand=True,
                         padding=theme.SPACE_MD,
@@ -344,7 +343,7 @@ def build_by_gt_tab(
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         ),
-        padding=theme.SPACE_XL // 2,
+        padding=theme.SPACE_XL,
     )
 
 

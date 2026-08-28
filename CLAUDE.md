@@ -48,8 +48,10 @@ uv run ruff check .
 # Format
 uv run ruff format .
 
-# Type check
-uv run mypy .
+# Type check — name the three packages; a bare `.` pulls in
+# extensions/flet_pdf_render/examples/…/src/main.py and dies on the
+# duplicate `main` module before checking anything.
+uv run mypy app_flet core modules
 
 # Run tests
 uv run pytest

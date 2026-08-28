@@ -199,14 +199,13 @@ def build_by_id_tab(
                                     spacing=12,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
-                                ft.Container(height=8),
                                 ft.Row(
                                     [download_btn, record_btn, progress_ring],
                                     spacing=12,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                             ],
-                            spacing=4,
+                            spacing=theme.SPACE_MD,
                         ),
                         expand=True,
                         padding=theme.SPACE_MD,
@@ -221,5 +220,5 @@ def build_by_id_tab(
             ],
             spacing=4,
         ),
-        padding=theme.SPACE_XL // 2,
+        padding=theme.SPACE_XL,
     )

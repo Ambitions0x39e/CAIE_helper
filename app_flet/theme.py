@@ -35,6 +35,46 @@ NEUTRAL = ft.Colors.GREY_600
 #: 填充色按钮上的文字/图标
 ON_FILLED = ft.Colors.WHITE
 
+# ── 交互态色档 ────────────────────────────────────────────────────
+# 每个语义色配一组 hover / pressed，方向统一：hover 比底色浅，pressed 比底色
+# 深。浅=还没落下，深=已经按到底，光照的直觉本身就把两个状态分开了，不必再
+# 靠色相。档位是导出的不是挑的——Material 调色板的语义色直接取 _400 / _800，
+# PRIMARY 是 Tailwind slate 手写值，取同一梯度的 slate-600 / slate-800。
+PRIMARY_HOVER = "#475569"
+PRIMARY_PRESSED = "#1E293B"
+SUCCESS_HOVER = ft.Colors.GREEN_400
+SUCCESS_PRESSED = ft.Colors.GREEN_800
+DANGER_HOVER = ft.Colors.RED_400
+DANGER_PRESSED = ft.Colors.RED_800
+WARNING_HOVER = ft.Colors.ORANGE_400
+WARNING_PRESSED = ft.Colors.ORANGE_800
+ACCENT_HOVER = ft.Colors.AMBER_400
+ACCENT_PRESSED = ft.Colors.AMBER_800
+NEUTRAL_HOVER = ft.Colors.GREY_400
+NEUTRAL_PRESSED = ft.Colors.GREY_800
+
+#: 底色 → (hover, pressed)。filled_button() 按底色查这张表。表里没有的颜色
+#: 三态同色，等于没有交互态——新增一档语义色，要在这里补一行才带得上反馈。
+_BUTTON_SHADES: dict[str, tuple[str, str]] = {
+    PRIMARY: (PRIMARY_HOVER, PRIMARY_PRESSED),
+    SUCCESS: (SUCCESS_HOVER, SUCCESS_PRESSED),
+    DANGER: (DANGER_HOVER, DANGER_PRESSED),
+    WARNING: (WARNING_HOVER, WARNING_PRESSED),
+    ACCENT: (ACCENT_HOVER, ACCENT_PRESSED),
+    NEUTRAL: (NEUTRAL_HOVER, NEUTRAL_PRESSED),
+}
+
+#: 无底色的可点区域（nav 按钮、分段条、settings 菜单行）悬停时铺的一层底。
+#: 与官网的 ``--primary-tint-hover`` 同值——app 和站点是同一套语言。
+#:
+#: 这一档看着很浅，是因为**底色只扛一半信号，另一半在前景色**：这批区域静息
+#: 时前景是 MUTED，悬停时提到 TEXT_PRIMARY，两件事一起发生才读得出来。只让
+#: 底色扛就得一路加深到边框色的量级，那时铺出来是一整块死板的色块。
+SURFACE_HOVER = "#EEF2F6"
+#: 同一批区域被按住时的底，比 SURFACE_HOVER 再深一档（slate-200）。方向跟按钮
+#: 的 pressed 一致：按下去总是更深。
+SURFACE_PRESSED = "#E2E8F0"
+
 # ── 中性色 ────────────────────────────────────────────────────────
 #: 卡片/面板（"白色圆角矩形"）底色。不是纯白——微降一点点，配边框+柔和阴影用。
 SURFACE = "#FDFDFC"
@@ -55,7 +95,8 @@ HAIRLINE_FAINT = ft.Colors.GREY_100
 FIELD_BORDER = ft.Colors.GREY_400
 
 # ── 浅底色（横幅 / 表头）──────────────────────────────────────────
-#: Tailwind slate-50——跟 PRIMARY 同一个色系的最浅档。
+#: Tailwind slate-50——跟 PRIMARY 同一个色系的最浅档。也是选中态的底：官网的
+#: ``--primary-tint`` 一个值同时管横幅和导航条的 active，这里照搬。
 PRIMARY_TINT = "#F8FAFC"
 DANGER_TINT = ft.Colors.RED_50
 SUCCESS_TINT = ft.Colors.GREEN_50
@@ -115,12 +156,48 @@ CAPTION = 12
 #: 仅例外场景（目前只有 mcq.py，本轮范围外）
 MICRO = 11
 
+# ── 时长 scale ────────────────────────────────────────────────────
+#: 交互态：容器的 hover / 选中底色切换。0 = 当帧变色，跟按钮那套 ControlState
+#: 色表对齐。这一档是跟着指针走的，任何时长都会被读成延迟而不是过渡，跟下面
+#: 几档「引导视线」的用途不是一回事。名字底下是个旋钮：容器的交互态要带补间，
+#: 改这一个数就够。
+DURATION_INSTANT = 0
+#: 结果区三态、banner 进出、列表项
+DURATION_FAST = 200
+#: tab 切换、settings 子页切换
+DURATION_BASE = 320
+#: 对话框、大面积材质
+DURATION_SLOW = 400
+
+# ── 曲线 ──────────────────────────────────────────────────────────
+# 可逆的过渡两个方向必须互为镜像，否则来回走的不是同一条路。
+#: 进场：快起慢收
+CURVE_IN = ft.AnimationCurve.EASE_OUT_CUBIC
+#: 退场：慢起快走
+CURVE_OUT = ft.AnimationCurve.EASE_IN_CUBIC
+#: 页面级双向切换
+CURVE_PAGE = ft.AnimationCurve.EASE_IN_OUT_CUBIC_EMPHASIZED
+
 
 def filled_button(bgcolor: str = PRIMARY) -> ft.ButtonStyle:
-    """实心按钮：彩色底 + 白字 + squircle 圆角。默认主色，传别的语义色改用途。"""
+    """实心按钮：彩色底 + 白字 + squircle 圆角。默认主色，传别的语义色改用途。
+
+    三态底色走 ``ControlState`` 色表，切换是瞬时的 —— ``animation_duration``
+    对色表无效，所以这里不设时长。按下当帧就变色，正是这一档要的反馈。
+
+    ``overlay_color`` 设成透明是为了关掉 Material 的涟漪：那层灰白盖在
+    slate-700 上跟这套克制的中性调性对不上，而且反馈已经由三态色表接管，
+    留着就是两套交互态叠在一起。
+    """
+    hover, pressed = _BUTTON_SHADES.get(bgcolor, (bgcolor, bgcolor))
     return ft.ButtonStyle(
-        bgcolor=bgcolor,
+        bgcolor={
+            ft.ControlState.DEFAULT: bgcolor,
+            ft.ControlState.HOVERED: hover,
+            ft.ControlState.PRESSED: pressed,
+        },
         color=ON_FILLED,
+        overlay_color=ft.Colors.TRANSPARENT,
         shape=ft.RoundedRectangleBorder(radius=SQUIRCLE_RADIUS),
     )
 
@@ -158,13 +235,18 @@ def card_shadow() -> ft.BoxShadow:
     )
 
 
-def row_shadow() -> ft.BoxShadow:
+def row_shadow(*, opacity: float = 0.05) -> ft.BoxShadow:
     """行档阴影（列表行尺寸），比 card_shadow() 更轻。不透明度同样减半
     （10% → 5%）。每次返回新对象，理由同上。
+
+    ``opacity=0`` 给的是几何一样、只是不着色的一层影子，专门用来接
+    ``animate`` 的另一端：动画容器只能在**两侧都存在**的属性之间补间，那一侧
+    换成 ``None``，影子会在整段淡出期间原样杵着，到最后一帧才消失 —— 看起来
+    是结束时闪一下。
     """
     return ft.BoxShadow(
         blur_radius=14,
         spread_radius=-3,
-        color=ft.Colors.with_opacity(0.05, ft.Colors.BLACK),
+        color=ft.Colors.with_opacity(opacity, ft.Colors.BLACK),
         offset=ft.Offset(0, 2),
     )
