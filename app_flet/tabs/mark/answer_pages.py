@@ -30,7 +30,8 @@ def build_answer_pages(ctx: MarkTabContext) -> list[ft.Control]:
     controls.append(ft.Container(
         ft.Row([
             ft.Icon(
-                ft.Icons.WARNING if incomplete else ft.Icons.INFO,
+                ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL if incomplete
+                else ft.CupertinoIcons.INFO_CIRCLE_FILL,
                 color=theme.WARNING if incomplete else theme.PRIMARY,
                 size=18,
             ),
@@ -90,7 +91,7 @@ def build_answer_pages(ctx: MarkTabContext) -> list[ft.Control]:
             ft.Row([
                 tf,
                 ft.IconButton(
-                    ft.Icons.CLOSE, tooltip=f"移除 {qid}",
+                    ft.CupertinoIcons.XMARK, tooltip=f"移除 {qid}",
                     icon_size=18, on_click=_delete_handler(ctx, qid),
                 ),
             ], spacing=0),

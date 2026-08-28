@@ -37,11 +37,15 @@ _QUESTIONS_PER_ROW = 8
 def _given_cell(
     qid: str, answers: dict[str, str], per_q: dict[str, bool],
 ) -> ft.Control:
-    """学生作答格：对错既给颜色也给图标，不靠单一颜色区分。"""
+    """学生作答格：对错既给颜色也给图标，不靠单一颜色区分。
+
+    图标走 Cupertino（全 app 已统一）；这里用不带圆圈的 CHECKMARK / XMARK ——
+    格子只有 13px 高，实心圆圈那档在这个尺寸下糊成一个点。
+    """
     if qid not in answers:
         return ft.Row(
             [
-                ft.Icon(ft.Icons.REMOVE, size=13, color=theme.MUTED),
+                ft.Icon(ft.CupertinoIcons.MINUS, size=13, color=theme.MUTED),
                 ft.Text("–", size=theme.CAPTION, color=theme.MUTED),
             ],
             spacing=2, tight=True,
@@ -51,7 +55,8 @@ def _given_cell(
     return ft.Row(
         [
             ft.Icon(
-                ft.Icons.CHECK if correct else ft.Icons.CLOSE,
+                ft.CupertinoIcons.CHECKMARK if correct
+                else ft.CupertinoIcons.XMARK,
                 size=13, color=color,
             ),
             ft.Text(
@@ -163,7 +168,10 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
     if state.grader_config is None:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
+                ft.Icon(
+                    ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+                    color=theme.WARNING,
+                ),
                 ft.Text(
                     "请先在设置中配置 Grader API 凭证以启用自动检测",
                     color=theme.WARNING,
@@ -174,7 +182,7 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
 
     controls.append(ft.Button(
         "检测答案",
-        icon=ft.Icons.SEARCH,
+        icon=ft.CupertinoIcons.SEARCH,
         disabled=(
             state.grader_config is None or state.grading_in_progress
         ),
@@ -240,7 +248,7 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
         ))
         controls.append(ft.Button(
             "确认并记录分数",
-            icon=ft.Icons.CHECK,
+            icon=ft.CupertinoIcons.CHECKMARK,
             style=theme.filled_button(theme.SUCCESS),
             on_click=lambda _: _on_confirm_click(ctx),
         ))
@@ -280,6 +288,13 @@ def _on_detect_click(ctx: MarkTabContext) -> None:
         progress_text.value = f"第 {cur}/{tot} 页…"
         ctx.page.update()
 
+    # Captured now, not re-read from ctx.selected_paper at confirm time: the
+    # paper picker stays interactive while these results are on screen, so a
+    # switch before confirming must not relabel this run's paper_id.
+    graded_paper_id = (
+        ctx.selected_paper if ctx.ms_source == "downloaded" else None
+    )
+
     def _do_detect() -> None:
         try:
             detected, undetected = detect_student_answers(
@@ -294,6 +309,7 @@ def _on_detect_click(ctx: MarkTabContext) -> None:
             )
             state.mcq_detected = detected
             state.mcq_undetected = undetected
+            state.graded_paper_id = graded_paper_id
             ctx.manual_answer_values.clear()
         except Exception as exc:
             ctx.show_snack(f"检测失败: {exc}", theme.DANGER)

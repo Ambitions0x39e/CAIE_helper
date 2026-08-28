@@ -101,7 +101,7 @@ def status_badge(status: str) -> ft.Container:
 def section_title(text: str) -> ft.Text:
     return ft.Text(
         text,
-        size=24,
+        size=theme.TITLE,
         weight=ft.FontWeight.BOLD,
     )
 

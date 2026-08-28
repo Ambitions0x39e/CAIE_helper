@@ -37,7 +37,10 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     if state.grading_error:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.ERROR, color=theme.DANGER, size=18),
+                ft.Icon(
+                    ft.CupertinoIcons.XMARK_CIRCLE_FILL,
+                    color=theme.DANGER, size=18,
+                ),
                 ft.Text(
                     state.grading_error,
                     color=theme.DANGER, size=13, expand=True,
@@ -49,7 +52,10 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     if state.grader_config is None:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
+                ft.Icon(
+                    ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+                    color=theme.WARNING,
+                ),
                 ft.Text("请先在设置中配置 Grader API 凭证", color=theme.WARNING),
             ]),
             padding=8,
@@ -119,7 +125,7 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     )
     controls.append(ft.Button(
         "开始批改",
-        icon=ft.Icons.ROCKET_LAUNCH,
+        icon=ft.CupertinoIcons.ROCKET_FILL,
         disabled=not can_grade,
         style=theme.filled_button(),
         on_click=lambda _: _on_grade_click(ctx),
@@ -189,6 +195,12 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
         dpi=gc.dpi,
         enable_thinking=ctx.thinking,
     )
+    # Captured now, not re-read from ctx.selected_paper at confirm time: the
+    # paper picker stays interactive while these results are on screen, so a
+    # switch before confirming must not relabel this grading run's paper_id.
+    graded_paper_id = (
+        ctx.selected_paper if ctx.ms_source == "downloaded" else None
+    )
 
     state.grading_error = None  # clear any prior failure banner
     progress_bar = ft.ProgressBar(value=0, visible=True)
@@ -223,14 +235,12 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
                 # resolves the component → topic list. Uploading a mark
                 # scheme therefore means no topic tagging *and* no mistake
                 # record — deliberately the same condition, not two.
-                paper_id=(
-                    ctx.selected_paper
-                    if ctx.ms_source == "downloaded" else None
-                ),
+                paper_id=graded_paper_id,
                 on_progress=_on_progress,
             )
             # Partial results are kept on failure, so publish either way.
             state.grading_results = list(outcome.results)
+            state.graded_paper_id = graded_paper_id
             state.score_overrides = {
                 r.question: r.total for r in outcome.results
             }

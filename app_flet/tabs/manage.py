@@ -6,7 +6,7 @@ import flet as ft
 
 from app_flet import theme
 from app_flet.components.dialogs import show_delete_dialog
-from app_flet.components.widgets import data_table, status_badge
+from app_flet.components.widgets import data_table, section_title, status_badge
 from core.models import PaperRecord
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import PaperManager
@@ -83,13 +83,13 @@ def build_manage_tab(
                         ft.DataCell(
                             ft.Row([
                                 ft.IconButton(
-                                    ft.Icons.DESCRIPTION,
+                                    ft.CupertinoIcons.DOC_TEXT,
                                     tooltip="打开 QP",
                                     on_click=_make_open_handler(r.qp_path),  # type: ignore[arg-type]
                                     icon_size=18,
                                 ),
                                 ft.IconButton(
-                                    ft.Icons.FACT_CHECK,
+                                    ft.CupertinoIcons.DOC_CHECKMARK,
                                     tooltip="打开 MS",
                                     on_click=_make_open_handler(r.ms_path),  # type: ignore[arg-type]
                                     icon_size=18,
@@ -130,13 +130,13 @@ def build_manage_tab(
             ) -> list[ft.Control]:
                 btns: list[ft.Control] = [
                     ft.IconButton(
-                        ft.Icons.DESCRIPTION,
+                        ft.CupertinoIcons.DOC_TEXT,
                         tooltip="打开 QP",
                         on_click=lambda _, p=rec.qp_path: _open_pdf(p),
                         icon_size=18,
                     ),
                     ft.IconButton(
-                        ft.Icons.FACT_CHECK,
+                        ft.CupertinoIcons.DOC_CHECKMARK,
                         tooltip="打开 MS",
                         on_click=lambda _, p=rec.ms_path: _open_pdf(p),
                         icon_size=18,
@@ -145,7 +145,7 @@ def build_manage_tab(
                 if state.mail_config and rec.qp_path:
                     btns.append(
                         ft.IconButton(
-                            ft.Icons.SEND,
+                            ft.CupertinoIcons.PAPERPLANE,
                             tooltip="发送到 GoodNotes",
                             on_click=lambda _, rid=rec.paper_id, rqp=rec.qp_path: _send_gn(rid, rqp),  # noqa: E501
                             icon_size=18,
@@ -153,7 +153,7 @@ def build_manage_tab(
                     )
                 btns.append(
                     ft.IconButton(
-                        ft.Icons.DELETE,
+                        ft.CupertinoIcons.TRASH,
                         tooltip="删除",
                         icon_color=theme.DANGER,
                         on_click=lambda _, rid=rec.paper_id: show_delete_dialog(
@@ -267,28 +267,13 @@ def build_manage_tab(
     # Initial build
     _rebuild_content()
 
-    # Submit Btn, now deprecated and move to the upper bar.
-    # submit_btn = ft.Button(
-    #     "提交分数",
-    #     icon=ft.Icons.EDIT,
-    #     on_click=lambda _: show_score_dialog(
-    #         page, state, refresh_cb=refresh_cb,
-    #     ),
-    #     style=theme.filled_button(),
-    # )
-
     return ft.Container(
         ft.Column(
             [
                 ft.Row(
                     [
-                        ft.Text(
-                            "管理试卷",
-                            size=24,
-                            weight=ft.FontWeight.BOLD,
-                        ),
+                        section_title("管理试卷"),
                         ft.Container(expand=True),
-                        # submit_btn,
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
