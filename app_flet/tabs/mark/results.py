@@ -28,9 +28,7 @@ def record_score(ctx: MarkTabContext, totals: ScoreSummary) -> bool:
     An uploaded mark scheme has no record to attach to, so the score is only
     reported back to the user.
     """
-    paper_id = (
-        ctx.selected_paper if ctx.ms_source == "downloaded" else None
-    )
+    paper_id = ctx.state.graded_paper_id
     if paper_id is None:
         ctx.show_snack(
             f"分数: {totals.score:g}/{totals.max_score:g} "
@@ -68,20 +66,21 @@ def record_score(ctx: MarkTabContext, totals: ScoreSummary) -> bool:
 def record_mistakes(ctx: MarkTabContext) -> None:
     """File every question that lost marks into the 错题本.
 
-    Gated on ``ms_source == "downloaded"`` exactly like :func:`record_score`,
-    and for the same reason: an uploaded mark scheme has no real paper_id,
-    and paper_id is how the notebook reconstructs subject / session /
-    component downstream.
+    Gated on ``state.graded_paper_id`` being set, exactly like
+    :func:`record_score`, and for the same reason: an uploaded mark scheme
+    has no real paper_id, and paper_id is how the notebook reconstructs
+    subject / session / component downstream.
 
     Failure here never blocks the score that was just recorded — the mistake
     notebook is a bonus, so a broken CSV gets a warning, not an error path.
     """
-    if ctx.ms_source != "downloaded" or not ctx.selected_paper:
+    paper_id = ctx.state.graded_paper_id
+    if paper_id is None:
         return
     records = mistakes_from_results(
         ctx.state.grading_results,
-        paper_id=ctx.selected_paper,
-        topics=topics_for_paper(ctx.syllabus_info, ctx.selected_paper),
+        paper_id=paper_id,
+        topics=topics_for_paper(ctx.syllabus_info, paper_id),
         timestamp=datetime.datetime.now(),
     )
     if not records:
@@ -136,8 +135,8 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
             mark_controls.append(ft.Row(
                 [
                     ft.Icon(
-                        ft.Icons.CHECK_CIRCLE if m.awarded
-                        else ft.Icons.CANCEL,
+                        ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL if m.awarded
+                        else ft.CupertinoIcons.XMARK_CIRCLE_FILL,
                         color=theme.SUCCESS if m.awarded else theme.DANGER,
                         size=18,
                     ),
@@ -156,7 +155,7 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
                 ft.Row(
                     [
                         ft.Icon(
-                            ft.Icons.CHAT_BUBBLE,
+                            ft.CupertinoIcons.CHAT_BUBBLE,
                             color=theme.PRIMARY, size=16,
                         ),
                         ft.Text(
@@ -208,7 +207,7 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
         ))
         controls.append(ft.Button(
             "确认并记录分数",
-            icon=ft.Icons.CHECK,
+            icon=ft.CupertinoIcons.CHECKMARK,
             style=theme.filled_button(theme.SUCCESS),
             on_click=lambda _: _on_confirm_click(ctx),
         ))

@@ -241,13 +241,13 @@ def main(page: ft.Page) -> None:
             )
 
     _main_nav = [
-        _make_nav_button(0, ft.Icons.DOWNLOAD, "下载"),
-        _make_nav_button(1, ft.Icons.LIST_ALT, "管理"),
-        _make_nav_button(2, ft.Icons.BAR_CHART, "统计"),
-        _make_nav_button(3, ft.Icons.EDIT, "批改"),
-        _make_nav_button(4, ft.Icons.MENU_BOOK, "错题本"),
+        _make_nav_button(0, ft.CupertinoIcons.TRAY_ARROW_DOWN, "下载"),
+        _make_nav_button(1, ft.CupertinoIcons.LIST_BULLET, "管理"),
+        _make_nav_button(2, ft.CupertinoIcons.CHART_BAR, "统计"),
+        _make_nav_button(3, ft.CupertinoIcons.PENCIL, "批改"),
+        _make_nav_button(4, ft.CupertinoIcons.BOOK, "错题本"),
     ]
-    _settings_nav = _make_nav_button(5, ft.Icons.SETTINGS, "设置")
+    _settings_nav = _make_nav_button(5, ft.CupertinoIcons.SETTINGS, "设置")
     _apply_nav_selection()
 
     nav_rail = ft.Container(
@@ -265,7 +265,7 @@ def main(page: ft.Page) -> None:
     header = ft.Container(
         ft.Row(
             [
-                ft.Icon(ft.Icons.SCHOOL, color=theme.PRIMARY),
+                ft.Icon(ft.CupertinoIcons.BOOK_FILL, color=theme.PRIMARY),
                 ft.Text(
                     "CIE Helper",
                     size=20,
@@ -274,7 +274,7 @@ def main(page: ft.Page) -> None:
                 ft.Container(expand=True),
                 ft.Button(
                     "登记成绩",
-                    icon=ft.Icons.PLAYLIST_ADD_CHECK,
+                    icon=ft.CupertinoIcons.TEXT_BADGE_CHECKMARK,
                     tooltip="为待完成的试卷登记分数",
                     on_click=lambda _: show_score_dialog(
                         page, state, refresh_cb=refresh_current_tab,

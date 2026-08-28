@@ -28,7 +28,7 @@ import flet as ft
 from pydantic import ValidationError
 
 from app_flet import theme
-from app_flet.components.widgets import hoverable
+from app_flet.components.widgets import hoverable, section_title
 from core.settings import GraderConfig, MailConfig
 from modules.marking.syllabus_parser import (
     delete_syllabus,
@@ -205,7 +205,7 @@ def _sub_header(title: str, on_back: Callable[[], None]) -> ft.Row:
     weight."""
     return ft.Row(
         [
-            ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda e: on_back()),
+            ft.IconButton(ft.CupertinoIcons.BACK, on_click=lambda e: on_back()),
             ft.Text(title, size=20, weight=ft.FontWeight.BOLD),
         ],
         spacing=4,
@@ -309,7 +309,7 @@ def _build_mail_view(
                 status_text,
                 ft.Button(
                     "保存",
-                    icon=ft.Icons.SAVE,
+                    icon=ft.CupertinoIcons.FLOPPY_DISK,
                     on_click=on_save,  # type: ignore[arg-type]
                     style=theme.filled_button(),
                 ),
@@ -391,7 +391,7 @@ def _build_grader_view(
                 status_text,
                 ft.Button(
                     "保存",
-                    icon=ft.Icons.SAVE,
+                    icon=ft.CupertinoIcons.FLOPPY_DISK,
                     on_click=on_save,  # type: ignore[arg-type]
                     style=theme.filled_button(),
                 ),
@@ -420,7 +420,7 @@ def _build_about_view(
         )
         if icon_bytes is not None
         else ft.Container(
-            ft.Icon(ft.Icons.SCHOOL, size=48, color=theme.ON_FILLED),
+            ft.Icon(ft.CupertinoIcons.BOOK_FILL, size=48, color=theme.ON_FILLED),
             width=100,
             height=100,
             border_radius=20,
@@ -631,7 +631,7 @@ def _build_about_view(
 
     update_row = _menu_row(
         "更新", update_idle_subtitle,
-        ft.Icons.SYSTEM_UPDATE_OUTLINED, on_update,
+        ft.CupertinoIcons.CLOUD_DOWNLOAD, on_update,
     )
 
     return ft.Column(
@@ -663,7 +663,7 @@ def _build_about_view(
                 update_row,
                 _menu_row(
                     "反馈", "在 GitHub 提交问题或建议",
-                    ft.Icons.FEEDBACK_OUTLINED, open_feedback,
+                    ft.CupertinoIcons.CHAT_BUBBLE_TEXT, open_feedback,
                 ),
                 indent=_MENU_ROW_RADIUS,
             ),
@@ -777,7 +777,7 @@ def _syllabus_body(
         ),
         _actions(ft.Button(
             "删除并重新解析",
-            icon=ft.Icons.DELETE_OUTLINE,
+            icon=ft.CupertinoIcons.TRASH,
             on_click=_forget,
             style=theme.filled_button(theme.DANGER),
             tooltip="删掉这份记录，下次在批改页重新上传大纲 PDF 时会重新解析",
@@ -827,7 +827,7 @@ def _menu_row(
     # The chevron is what promises "this goes somewhere", so it is the part
     # that brightens on hover. The title is already at full strength and the
     # subtitle reading as loud as the title would flatten the pair.
-    chevron = ft.Icon(ft.Icons.CHEVRON_RIGHT, color=theme.MUTED, size=20)
+    chevron = ft.Icon(ft.CupertinoIcons.CHEVRON_RIGHT, color=theme.MUTED, size=20)
     row = ft.Container(
         ft.Row(
             [
@@ -889,31 +889,24 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
 
     menu = ft.Column(
         [
-            ft.Text(
-                "设置", size=24,
-                weight=ft.FontWeight.BOLD,
-            ),
-            # ft.Text(
-            #     "邮件与批改 API 凭证，保存到本地 ~/.cie_helper/.env",
-            #     size=13, color=theme.MUTED,
-            # ),
+            section_title("设置"),
             ft.Container(height=10),
             *_divided(
                 _menu_row(
                     "SMTP / GoodNotes", "邮件发送与 GoodNotes 导入地址",
-                    ft.Icons.MAIL_OUTLINE, open_mail,
+                    ft.CupertinoIcons.MAIL, open_mail,
                 ),
                 _menu_row(
                     "Grader API 设置", "批改用的多模态模型凭证",
-                    ft.Icons.SMART_TOY_OUTLINED, open_grader,
+                    ft.CupertinoIcons.WAND_STARS, open_grader,
                 ),
                 _menu_row(
                     "大纲 Topic 库", "已解析的大纲：topic 列表与 paper 映射",
-                    ft.Icons.MENU_BOOK_OUTLINED, open_syllabus,
+                    ft.CupertinoIcons.BOOK, open_syllabus,
                 ),
                 _menu_row(
                     "关于", "版本信息与反馈",
-                    ft.Icons.INFO_OUTLINE, open_about,
+                    ft.CupertinoIcons.INFO_CIRCLE, open_about,
                 ),
                 indent=_MENU_ROW_RADIUS,
             ),
