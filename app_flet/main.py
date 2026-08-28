@@ -90,8 +90,10 @@ def main(page: ft.Page) -> None:
         ),
     )
     page.padding = 0
-    page.window.width = 1920
-    page.window.height = 1080
+    # 逻辑像素（dp），不是物理像素 —— 150% 缩放下 1280 dp 已经占掉 1920 物理
+    # 像素。按物理分辨率填这两个数，窗口会被系统按到屏幕上，开起来就是满屏。
+    page.window.width = 1280
+    page.window.height = 800
     page.bgcolor = theme.PAGE_BG
     page.adaptive = False
 
