@@ -22,6 +22,7 @@ a working install rather than merely failing to update it:
 from __future__ import annotations
 
 import contextlib
+import shlex
 import subprocess
 import sys
 import time
@@ -75,7 +76,7 @@ _INNO_SILENT_ARGS: Final[tuple[str, ...]] = (
 #: releases page instead.
 _ASSET_SUFFIX: Final[dict[str, str]] = {
     "win32": ".exe",
-    "darwin": ".pkg",
+    "darwin": ".dmg",
 }
 
 _UNSUPPORTED_PLATFORM: Final[str] = "platform not supported"
@@ -298,8 +299,9 @@ class AppUpdater:
     ) -> UpdateInstallResult:
         """Hand the installer to the OS, detached from this process.
 
-        The caller MUST exit the app right after a successful return on
-        Windows: Inno Setup cannot overwrite the .exe while it is running.
+        The caller MUST exit the app right after a successful return: Inno
+        Setup cannot overwrite the .exe while it is running, and replacing a
+        running .app bundle underneath macOS is no better.
 
         Which is also why reopening it afterwards cannot be done here — by then
         this process is gone. On Windows we instead spawn a detached ``cmd``
@@ -309,10 +311,12 @@ class AppUpdater:
         explicitly to test, or pass nothing when running from source (there is
         no app to reopen, and the install still happens).
 
-        macOS gets ``open`` rather than the ``installer`` CLI on purpose —
-        installing into /Applications needs an admin password, and
-        ``installer`` would either hang or fail outright without a terminal to
-        prompt in. A visible Installer.app window is the honest behaviour.
+        macOS is the same idea with a different script: a detached ``sh`` that
+        mounts the disk image, copies the bundle over the installed one and
+        reopens it. Merely ``open``-ing the image would leave the user to drag
+        the app across by hand, which is the friction this flow exists to
+        remove. If the script cannot be written we fall back to exactly that —
+        a mounted image the user can install from is better than no update.
         """
         suffix = platform_asset_suffix()
         if suffix is None:
@@ -321,7 +325,7 @@ class AppUpdater:
             )
 
         # Last line of defence against running a package built for another
-        # platform — a .pkg passed to Windows would at best do nothing.
+        # platform — a .dmg passed to Windows would at best do nothing.
         if installer_path.suffix.lower() != suffix:
             return UpdateInstallResult(
                 success=False,
@@ -372,7 +376,16 @@ class AppUpdater:
                         creationflags=detached,
                     )
             else:
-                subprocess.Popen(["open", str(installer_path)])
+                script = self._write_macos_install_script(installer_path)
+                if script is None:
+                    subprocess.Popen(["open", str(installer_path)])
+                else:
+                    # start_new_session so the swap outlives the app that is
+                    # about to exit — the shell equivalent of the detached cmd
+                    # on Windows.
+                    subprocess.Popen(
+                        ["/bin/sh", str(script)], start_new_session=True,
+                    )
         except OSError as exc:
             return UpdateInstallResult(
                 success=False, error=f"Could not start installer: {exc}",
@@ -410,6 +423,24 @@ class AppUpdater:
                 newline="",
             )
         except (OSError, UnicodeError):
+            return None
+        return script
+
+    def _write_macos_install_script(self, dmg: Path) -> Path | None:
+        """Write the mount-copy-reopen script. None if it cannot be written.
+
+        Run as ``sh <path>`` by the caller, so it never needs the execute bit.
+        """
+        script = self._updates_dir / "install.sh"
+        try:
+            self._updates_dir.mkdir(parents=True, exist_ok=True)
+            script.write_text(
+                _macos_install_script(
+                    dmg, self._updates_dir / "install.log",
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
             return None
         return script
 
@@ -536,6 +567,55 @@ def current_executable() -> Path | None:
     if exe is None or exe.stem.lower() in {"python", "pythonw"}:
         return None
     return exe
+
+
+def _macos_install_script(dmg: Path, log: Path) -> str:
+    """A shell script that swaps the bundle inside ``dmg`` into /Applications.
+
+    /Applications because that is where the disk image tells people to drag
+    the app, and the bundle name comes from the image rather than from us: it
+    is whatever they would have dragged out of the mounted volume by hand.
+
+    Written to a file for the same reason as the Windows one — the paths run
+    through the app name and the user's home directory, and a file we author
+    has exactly the quoting we put in it. Every interpolated path goes through
+    ``shlex.quote``.
+
+    The copy is staged as ``…app.new`` and swapped in only once ``ditto``
+    succeeds, so a half-written copy can never replace a working install. The
+    app is reopened either way: on a failed copy the previous version is still
+    there, and leaving the user with nothing is the worst outcome available.
+    """
+    q = shlex.quote
+    return f"""#!/bin/sh
+set -u
+exec >{q(str(log))} 2>&1
+set -x
+
+# The app that spawned us is on its way out; its bundle must not be replaced
+# while it is still running.
+sleep 3
+
+mount=$(mktemp -d)
+hdiutil attach {q(str(dmg))} -nobrowse -readonly -mountpoint "$mount" || exit 1
+src=$(find "$mount" -maxdepth 1 -name '*.app' -print -quit)
+if [ -z "$src" ]; then
+  hdiutil detach "$mount" -force
+  exit 1
+fi
+
+dest=/Applications/$(basename "$src")
+if ditto "$src" "$dest.new"; then
+  rm -rf "$dest"
+  mv "$dest.new" "$dest"
+fi
+hdiutil detach "$mount" -force
+
+# One line against the "damaged app" dialog, for any image that did reach
+# this Mac through a browser.
+xattr -dr com.apple.quarantine "$dest" 2>/dev/null
+open "$dest"
+"""
 
 
 def _windows_relaunch_script(installer: Path, app_exe: Path, log: Path) -> str:
