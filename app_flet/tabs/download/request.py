@@ -522,14 +522,13 @@ def build_request_tab(
                         ft.Column(
                             [
                                 picker.row(),
-                                ft.Container(height=12),
                                 ft.Row(
                                     [send_btn, progress_ring],
                                     spacing=12,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                             ],
-                            spacing=4,
+                            spacing=theme.SPACE_MD,
                         ),
                         expand=True,
                         padding=theme.SPACE_MD,
@@ -549,5 +548,5 @@ def build_request_tab(
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         ),
-        padding=theme.SPACE_XL // 2,
+        padding=theme.SPACE_XL,
     )

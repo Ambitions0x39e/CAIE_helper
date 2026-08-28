@@ -28,6 +28,7 @@ import flet as ft
 from pydantic import ValidationError
 
 from app_flet import theme
+from app_flet.components.widgets import hoverable
 from core.settings import GraderConfig, MailConfig
 from modules.marking.syllabus_parser import (
     delete_syllabus,
@@ -38,6 +39,10 @@ from modules.marking.syllabus_parser import (
 if TYPE_CHECKING:
     from app_flet.state import AppState
     from modules.marking.syllabus_parser import SyllabusInfo
+
+#: Drill-down rows' corner radius. Also the inset their dividers need, so the
+#: two can't drift apart.
+_MENU_ROW_RADIUS = 8
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _APP_NAME = "CIE Helper"
@@ -156,16 +161,30 @@ def _row(
     return ft.Container(body, padding=ft.Padding.symmetric(vertical=12))
 
 
-def _divided(*rows: ft.Control) -> list[ft.Control]:
-    """Interleave hairlines between rows — never leading or trailing."""
+def _divided(*rows: ft.Control, indent: float = 0) -> list[ft.Control]:
+    """Interleave hairlines between rows — never leading or trailing.
+
+    ``indent`` pulls both ends of the line in, for rows that paint a rounded
+    background on hover: the block's corners curve inward over the radius, so
+    a line running the full width overshoots the thing it is dividing at
+    exactly the height where the two meet. Pass the row's corner radius.
+    """
     out: list[ft.Control] = []
     for i, row in enumerate(rows):
         if i:
-            out.append(
-                ft.Divider(height=1, thickness=1, color=_HAIRLINE),
-            )
+            out.append(_hairline(indent))
         out.append(row)
     return out
+
+
+def _hairline(indent: float = 0) -> ft.Divider:
+    return ft.Divider(
+        height=1,
+        thickness=1,
+        color=_HAIRLINE,
+        leading_indent=indent,
+        trailing_indent=indent,
+    )
 
 
 def _actions(*controls: ft.Control) -> ft.Control:
@@ -449,7 +468,10 @@ def _build_about_view(
 
     def _set_update_subtitle(text: str) -> None:
         """Rewrite the row's subtitle in place — it IS the progress readout."""
-        body = update_row.content
+        row = update_row.content
+        if not isinstance(row, ft.Container):
+            return
+        body = row.content
         if not isinstance(body, ft.Row):
             return
         labels = body.controls[1]
@@ -636,13 +658,14 @@ def _build_about_view(
                 text_align=ft.TextAlign.CENTER,
             ),
             ft.Container(height=20),
-            ft.Divider(height=1, thickness=1, color=_HAIRLINE),
+            _hairline(_MENU_ROW_RADIUS),
             *_divided(
                 update_row,
                 _menu_row(
                     "反馈", "在 GitHub 提交问题或建议",
                     ft.Icons.FEEDBACK_OUTLINED, open_feedback,
                 ),
+                indent=_MENU_ROW_RADIUS,
             ),
         ],
         spacing=0,
@@ -799,9 +822,13 @@ def _menu_row(
     subtitle: str,
     icon: ft.IconData,
     on_click: Callable[[ft.Event[ft.Container]], None],
-) -> ft.Container:
+) -> ft.GestureDetector:
     """A drill-down row: same left/right rhythm as _row, chevron on the right."""
-    return ft.Container(
+    # The chevron is what promises "this goes somewhere", so it is the part
+    # that brightens on hover. The title is already at full strength and the
+    # subtitle reading as loud as the title would flatten the pair.
+    chevron = ft.Icon(ft.Icons.CHEVRON_RIGHT, color=theme.MUTED, size=20)
+    row = ft.Container(
         ft.Row(
             [
                 ft.Icon(icon, color=theme.PRIMARY, size=20),
@@ -813,18 +840,17 @@ def _menu_row(
                     spacing=3,
                     expand=True,
                 ),
-                ft.Icon(
-                    ft.Icons.CHEVRON_RIGHT, color=theme.MUTED, size=20,
-                ),
+                chevron,
             ],
             spacing=12,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         padding=ft.Padding.symmetric(vertical=12, horizontal=8),
-        border_radius=8,
-        ink=True,
+        border_radius=_MENU_ROW_RADIUS,
+        animate=ft.Animation(theme.DURATION_INSTANT, theme.CURVE_IN),
         on_click=on_click,
     )
+    return hoverable(row, tinted=[chevron])
 
 
 def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
@@ -889,6 +915,7 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
                     "关于", "版本信息与反馈",
                     ft.Icons.INFO_OUTLINE, open_about,
                 ),
+                indent=_MENU_ROW_RADIUS,
             ),
         ],
         spacing=0,
