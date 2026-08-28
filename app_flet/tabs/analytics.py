@@ -9,7 +9,7 @@ import pandas as pd
 from flet import canvas as cv
 
 from app_flet import theme
-from app_flet.components.widgets import metric_card
+from app_flet.components.widgets import metric_card, section_title
 from core.config_store import ConfigStore
 
 if TYPE_CHECKING:
@@ -362,11 +362,7 @@ def build_analytics_tab(
     if not completed:
         return ft.Container(
             ft.Column([
-                ft.Text(
-                    "统计分析",
-                    size=24,
-                    weight=ft.FontWeight.BOLD,
-                ),
+                section_title("统计分析"),
                 ft.Container(height=20),
                 ft.Text(
                     "暂无已完成的试卷，提交分数后查看统计。",
@@ -408,14 +404,6 @@ def build_analytics_tab(
     avg = df["percentage"].mean()
     best = df["percentage"].max()
     latest = df["percentage"].iloc[-1]
-    # Commented out alongside the "最新变化" row below (see further down) rather
-    # than deleted, so re-enabling the readout is a matter of uncommenting both.
-    # delta = (
-    #     latest - df["percentage"].iloc[-2]
-    #     if done >= _MIN_FOR_TREND
-    #     else None
-    # )
-    # delta_text = f"{delta:+.1f}%" if delta is not None else ""
 
     overall_metrics = ft.Row(
         [
@@ -446,11 +434,7 @@ def build_analytics_tab(
     ]
 
     controls: list[ft.Control] = [
-        ft.Text(
-            "统计分析",
-            size=24,
-            weight=ft.FontWeight.BOLD,
-        ),
+        section_title("统计分析"),
         ft.Container(height=12),
         ft.Text(
             "Overall",
@@ -458,14 +442,6 @@ def build_analytics_tab(
         ),
         overall_metrics,
     ]
-    # if delta_text:
-    #     controls.append(
-    #         ft.Text(
-    #             f"最新变化: {delta_text}",
-    #             size=12,
-    #             color=theme.MUTED,
-    #         ),
-    #     )
     controls.append(ft.Divider())
     controls.extend(syllabus_sections)
 

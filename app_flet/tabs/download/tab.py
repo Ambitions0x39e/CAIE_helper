@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from app_flet.state import AppState
 
 
+from app_flet.components.widgets import section_title
 from app_flet.tabs.download.by_id import build_by_id_tab
 from app_flet.tabs.download.gt import build_by_gt_tab
 from app_flet.tabs.download.request import build_request_tab
@@ -98,11 +99,7 @@ def build_download_tab(
         ft.Column(
             [
                 ft.Container(
-                    ft.Text(
-                        "下载试卷",
-                        size=24,
-                        weight=ft.FontWeight.BOLD,
-                    ),
+                    section_title("下载试卷"),
                     # top=20 to sit level with every other tab's title. The
                     # other tabs get it from a plain `padding=20` on their
                     # outer Container; this one can't — the sub-tabs below
