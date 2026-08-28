@@ -37,7 +37,10 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     if state.grading_error:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.ERROR, color=theme.DANGER, size=18),
+                ft.Icon(
+                    ft.CupertinoIcons.XMARK_CIRCLE_FILL,
+                    color=theme.DANGER, size=18,
+                ),
                 ft.Text(
                     state.grading_error,
                     color=theme.DANGER, size=13, expand=True,
@@ -49,7 +52,10 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     if state.grader_config is None:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
+                ft.Icon(
+                    ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+                    color=theme.WARNING,
+                ),
                 ft.Text("请先在设置中配置 Grader API 凭证", color=theme.WARNING),
             ]),
             padding=8,
@@ -119,7 +125,7 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     )
     controls.append(ft.Button(
         "开始批改",
-        icon=ft.Icons.ROCKET_LAUNCH,
+        icon=ft.CupertinoIcons.ROCKET_FILL,
         disabled=not can_grade,
         style=theme.filled_button(),
         on_click=lambda _: _on_grade_click(ctx),

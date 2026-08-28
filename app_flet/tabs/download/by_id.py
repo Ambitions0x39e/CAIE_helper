@@ -63,7 +63,7 @@ def build_by_id_tab(
                     ),
                     ft.Button(
                         "发送到 GoodNotes",
-                        icon=ft.Icons.SEND,
+                        icon=ft.CupertinoIcons.PAPERPLANE,
                         on_click=on_send_gn,  # type: ignore[arg-type]
                         style=theme.filled_button(theme.ACCENT),
                     ),
@@ -183,14 +183,14 @@ def build_by_id_tab(
 
     download_btn = ft.Button(
         "下载",
-        icon=ft.Icons.DOWNLOAD,
+        icon=ft.CupertinoIcons.TRAY_ARROW_DOWN,
         on_click=on_download,  # type: ignore[arg-type]
         style=theme.filled_button(),
     )
 
     record_btn = ft.Button(
         "仅记录",
-        icon=ft.Icons.NOTE_ADD,
+        icon=ft.CupertinoIcons.TEXT_BADGE_PLUS,
         on_click=on_record,  # type: ignore[arg-type]
         style=theme.filled_button(theme.NEUTRAL),
     )
