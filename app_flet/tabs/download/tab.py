@@ -31,13 +31,18 @@ from app_flet.tabs.download.request import build_request_tab
 _HEADER_H = 64
 #: 页内标题 Container：top padding 20 + 24pt 文字行盒约 32。
 _TITLE_H = 52
-#: build_download_tab 里 Column 的 spacing —— 标题→分段条、分段条→内容各占一次。
-#: 24 是其它 tab 里标题到第一个控件的距离（管理页那条 Column 用的是 Flet 默认
-#: spacing 10 + 一个 4 的间隔块 + 10），下载页跟着对齐 —— 两边的起手都是
-#: padding 20 加同一个 24pt 标题，所以间隙一致就等于分段条和「数据库 / 列表」
-#: 切换器落在同一条水平线上。
-_STACK_GAP = 24
-_TAB_CHROME_H = _HEADER_H + _TITLE_H + SEGMENTED_STRIP_H + _STACK_GAP * 2
+#: 标题→分段条。24 是其它 tab 里标题到第一个控件的距离（管理页那条 Column 用
+#: 的是 Flet 默认 spacing 10 + 一个 4 的间隔块 + 10），下载页跟着对齐 —— 两边
+#: 的起手都是 padding 20 加同一个 24pt 标题，所以间隙一致就等于分段条和
+#: 「数据库 / 列表」切换器落在同一条水平线上。
+_TITLE_GAP = 24
+#: 分段条→内容。分段条选的就是下面显示谁，两者贴紧才读得出这层从属关系。
+#: Column 的 spacing 一个值管两个间隙，所以这一档取小的，标题那档差出来的部分
+#: 由标题自己的 bottom padding 补齐。
+_STACK_GAP = theme.SPACE_MD
+_TAB_CHROME_H = (
+    _HEADER_H + _TITLE_H + _TITLE_GAP + SEGMENTED_STRIP_H + _STACK_GAP
+)
 _TAB_MIN_H = 320
 _FALLBACK_PAGE_H = 800
 
@@ -105,7 +110,7 @@ def build_download_tab(
                     # to match that 20 by hand.
                     padding=ft.Padding(
                         left=theme.SPACE_XL, right=theme.SPACE_XL,
-                        top=theme.SPACE_XL, bottom=0,
+                        top=theme.SPACE_XL, bottom=_TITLE_GAP - _STACK_GAP,
                     ),
                 ),
                 # Same 20 as the title and as each sub-page's own padding, so
