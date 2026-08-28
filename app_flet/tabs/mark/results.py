@@ -135,8 +135,8 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
             mark_controls.append(ft.Row(
                 [
                     ft.Icon(
-                        ft.Icons.CHECK_CIRCLE if m.awarded
-                        else ft.Icons.CANCEL,
+                        ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL if m.awarded
+                        else ft.CupertinoIcons.XMARK_CIRCLE_FILL,
                         color=theme.SUCCESS if m.awarded else theme.DANGER,
                         size=18,
                     ),
@@ -155,7 +155,7 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
                 ft.Row(
                     [
                         ft.Icon(
-                            ft.Icons.CHAT_BUBBLE,
+                            ft.CupertinoIcons.CHAT_BUBBLE,
                             color=theme.PRIMARY, size=16,
                         ),
                         ft.Text(
@@ -207,7 +207,7 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
         ))
         controls.append(ft.Button(
             "确认并记录分数",
-            icon=ft.Icons.CHECK,
+            icon=ft.CupertinoIcons.CHECKMARK,
             style=theme.filled_button(theme.SUCCESS),
             on_click=lambda _: _on_confirm_click(ctx),
         ))

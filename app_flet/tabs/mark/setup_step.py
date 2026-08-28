@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from app_flet import theme
+from app_flet.components.widgets import section_title
 from app_flet.tabs.mark.context import MarkTabContext
 from core.config_store import grading_type_for_paper
 from core.models import PaperType
@@ -78,7 +79,7 @@ def _async_click(
 def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     state = ctx.state
     controls: list[ft.Control] = [
-        ft.Text("AI 批改", size=24, weight=ft.FontWeight.BOLD),
+        section_title("AI 批改"),
         ft.Divider(),
         ft.Text(
             "Step 1 — 选择试卷与答卷", size=18,
@@ -126,7 +127,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         controls.append(ft.Row([
             ft.Button(
                 "选择 MS PDF 文件",
-                icon=ft.Icons.UPLOAD_FILE,
+                icon=ft.CupertinoIcons.CLOUD_UPLOAD,
                 on_click=_async_click(_on_ms_upload_click, ctx),
             ),
             ft.Text(upload_label, size=12, color=theme.MUTED),
@@ -156,7 +157,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     controls.append(ft.Row([
         ft.Button(
             "选择已批注 QP PDF" if is_mcq else "选择答卷 PDF",
-            icon=ft.Icons.UPLOAD_FILE,
+            icon=ft.CupertinoIcons.CLOUD_UPLOAD,
             on_click=_async_click(_on_answer_pick_click, ctx),
         ),
         ft.Text(answer_label, size=12, color=theme.MUTED),
@@ -171,7 +172,10 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     if ctx.paper_type == PaperType.MATH and state.grader_config is None:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
+                ft.Icon(
+                    ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+                    color=theme.WARNING,
+                ),
                 ft.Text("请先在设置中配置 Grader API 凭证", color=theme.WARNING),
             ]),
             padding=8,
@@ -189,7 +193,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
             if ctx.answer_path and not is_mcq
             else "解析 Mark Scheme"
         ),
-        icon=ft.Icons.SEARCH,
+        icon=ft.CupertinoIcons.SEARCH,
         disabled=not can_parse,
         style=theme.filled_button(),
         on_click=lambda _: start_analysis(ctx, force=False),
@@ -197,7 +201,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     if state.paper_config and state.ms_from_cache:
         parse_row.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.HISTORY, color=theme.ACCENT_STRONG, size=16),
+                ft.Icon(ft.CupertinoIcons.CLOCK, color=theme.ACCENT_STRONG, size=16),
                 ft.Text("此结果来自缓存", size=12),
                 ft.TextButton(
                     "重新解析",
@@ -369,7 +373,7 @@ def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
     row: list[ft.Control] = [
         ft.Button(
             "选择大纲 PDF",
-            icon=ft.Icons.MENU_BOOK,
+            icon=ft.CupertinoIcons.BOOK,
             disabled=ctx.syllabus_parsing,
             on_click=_async_click(_on_syllabus_upload_click, ctx),
         ),
@@ -379,7 +383,7 @@ def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
     if slug:
         row.append(ft.TextButton(
             "去官网下载",
-            icon=ft.Icons.OPEN_IN_NEW,
+            icon=ft.CupertinoIcons.ARROW_UP_RIGHT_SQUARE,
             on_click=_launch_syllabus_url(ctx, slug),
         ))
     return [ft.Row(row, spacing=8, wrap=True)]

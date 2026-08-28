@@ -49,8 +49,8 @@ _COL_HEADER_LINE_H = 18
 #: 标题最多折两行，再长就省略号。
 _COL_HEADER_LINES = 2
 #: 13pt 粗体拉丁字符的保守估宽（px/字符），用来判断标题放不放得下一行。
-#: 宁可估宽：估宽了顶多多留一行空白（也就是改这版之前的样子），估窄了
-#: max_lines 会把标题截成省略号，那是把信息弄丢。
+#: 宁可估宽：估宽了顶多多留一行空白，估窄了 max_lines 会把标题截成省略号，
+#: 那是把信息弄丢。
 _HEADER_CHAR_W = 7.6
 #: 全角字符一个顶一个字宽。syllabus_config.json 是手写的，卷子名填中文
 #: 完全可能 —— 按拉丁字宽估会短掉近一半，标题就被截了。
@@ -141,15 +141,12 @@ def build_request_tab(
         return ""
 
     def _leaf(text: str, *, color: str = theme.MUTED) -> ft.Row:
-        """树的子行：子项图标 + 灰字，缩进到勾选框右边，不占选择列。
-
-        分支符号用 Material 图标
-        """
+        """树的子行：子项图标 + 灰字，缩进到勾选框右边，不占选择列。"""
         return ft.Row(
             [
                 ft.Container(width=_TREE_INDENT),
                 ft.Icon(
-                    ft.Icons.SUBDIRECTORY_ARROW_RIGHT,
+                    ft.CupertinoIcons.ARROW_TURN_DOWN_RIGHT,
                     size=_LEAF_ICON_SIZE,
                     color=color,
                 ),
@@ -538,7 +535,7 @@ def build_request_tab(
         [
             ft.Button(
                 "批量下载",
-                icon=ft.Icons.DOWNLOAD_FOR_OFFLINE,
+                icon=ft.CupertinoIcons.ARROW_DOWN_TO_LINE,
                 on_click=on_batch_download,  # type: ignore[arg-type]
                 style=theme.filled_button(),
             ),

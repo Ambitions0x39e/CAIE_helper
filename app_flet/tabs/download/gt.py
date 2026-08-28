@@ -145,7 +145,7 @@ def build_by_gt_tab(
         [
             ft.Button(
                 "批量下载",
-                icon=ft.Icons.DOWNLOAD_FOR_OFFLINE,
+                icon=ft.CupertinoIcons.ARROW_DOWN_TO_LINE,
                 on_click=on_batch_download,  # type: ignore[arg-type]
                 style=theme.filled_button(),
             ),
@@ -341,7 +341,7 @@ def build_by_gt_tab(
                                     [
                                         ft.Button(
                                             "查询分数线",
-                                            icon=ft.Icons.DOWNLOAD,
+                                            icon=ft.CupertinoIcons.TRAY_ARROW_DOWN,
                                             style=theme.filled_button(),
                                             on_click=on_download,  # type: ignore[arg-type]
                                         ),

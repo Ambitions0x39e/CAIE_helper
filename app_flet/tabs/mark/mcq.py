@@ -48,7 +48,10 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
     if state.grader_config is None:
         controls.append(ft.Container(
             ft.Row([
-                ft.Icon(ft.Icons.WARNING, color=theme.WARNING),
+                ft.Icon(
+                    ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+                    color=theme.WARNING,
+                ),
                 ft.Text(
                     "请先在设置中配置 Grader API 凭证以启用自动检测",
                     color=theme.WARNING,
@@ -59,7 +62,7 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
 
     controls.append(ft.Button(
         "检测答案",
-        icon=ft.Icons.SEARCH,
+        icon=ft.CupertinoIcons.SEARCH,
         disabled=(
             state.grader_config is None or state.grading_in_progress
         ),
@@ -119,10 +122,13 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
         student_ans = merged_answers.get(qid, "–")
         if qid in merged_answers:
             is_correct = per_q.get(qid, False)
-            icon = ft.Icons.CHECK_CIRCLE if is_correct else ft.Icons.CANCEL
+            icon = (
+                ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL if is_correct
+                else ft.CupertinoIcons.XMARK_CIRCLE_FILL
+            )
             icon_color = theme.SUCCESS if is_correct else theme.DANGER
         else:
-            icon = ft.Icons.REMOVE
+            icon = ft.CupertinoIcons.MINUS
             icon_color = theme.MUTED
         q_cards.append(ft.Container(
             ft.Column([
@@ -136,7 +142,7 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
             ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             width=60, padding=6,
             border=ft.Border.all(1, theme.HAIRLINE),
-            border_radius=6,
+            border_radius=theme.CARD_RADIUS,
         ))
     controls.append(ft.Row(q_cards, wrap=True, spacing=6))
 
@@ -149,7 +155,7 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
         ))
         controls.append(ft.Button(
             "确认并记录分数",
-            icon=ft.Icons.CHECK,
+            icon=ft.CupertinoIcons.CHECKMARK,
             style=theme.filled_button(theme.SUCCESS),
             on_click=lambda _: _on_confirm_click(ctx),
         ))
