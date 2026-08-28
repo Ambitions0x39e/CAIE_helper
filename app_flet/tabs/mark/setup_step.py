@@ -320,10 +320,16 @@ def _sync_paper_type(ctx: MarkTabContext) -> None:
     paper_id = ctx.selected_paper
     if not paper_id or paper_id == ctx.paper_type_synced_for:
         return
-    ctx.paper_type_synced_for = paper_id
     configured = grading_type_for_paper(paper_id)
-    if configured is not None:
-        ctx.paper_type = configured
+    if configured is None:
+        # Not in syllabus_config — leave paper_type_synced_for unset so a
+        # config added later in this session is picked up on the next visit,
+        # and reset paper_type instead of carrying over whatever the last
+        # configured paper left it at.
+        ctx.paper_type = PaperType.MATH
+        return
+    ctx.paper_type_synced_for = paper_id
+    ctx.paper_type = configured
 
 
 def _sync_syllabus_to_subject(ctx: MarkTabContext) -> None:
