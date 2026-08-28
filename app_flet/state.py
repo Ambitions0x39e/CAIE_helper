@@ -59,6 +59,12 @@ class AppState:
     unmatched_questions: list[str] = field(default_factory=list)
     deleted_questions: set[str] = field(default_factory=set)
     grading_results: list[QuestionResult] = field(default_factory=list)
+    #: paper_id the current grading_results actually belong to (None for an
+    #: uploaded mark scheme). Captured when grading runs, not read from the
+    #: paper picker at confirm time — the picker stays interactive after
+    #: grading finishes, so it can no longer be trusted to name the paper
+    #: these results were graded against.
+    graded_paper_id: str | None = None
     score_overrides: dict[str, float] = field(default_factory=dict)
     grading_confirmed: bool = False
     # Last grading failure, shown as a persistent banner (a snackbar toast

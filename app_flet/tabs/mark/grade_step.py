@@ -189,6 +189,12 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
         dpi=gc.dpi,
         enable_thinking=ctx.thinking,
     )
+    # Captured now, not re-read from ctx.selected_paper at confirm time: the
+    # paper picker stays interactive while these results are on screen, so a
+    # switch before confirming must not relabel this grading run's paper_id.
+    graded_paper_id = (
+        ctx.selected_paper if ctx.ms_source == "downloaded" else None
+    )
 
     state.grading_error = None  # clear any prior failure banner
     progress_bar = ft.ProgressBar(value=0, visible=True)
@@ -223,14 +229,12 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
                 # resolves the component → topic list. Uploading a mark
                 # scheme therefore means no topic tagging *and* no mistake
                 # record — deliberately the same condition, not two.
-                paper_id=(
-                    ctx.selected_paper
-                    if ctx.ms_source == "downloaded" else None
-                ),
+                paper_id=graded_paper_id,
                 on_progress=_on_progress,
             )
             # Partial results are kept on failure, so publish either way.
             state.grading_results = list(outcome.results)
+            state.graded_paper_id = graded_paper_id
             state.score_overrides = {
                 r.question: r.total for r in outcome.results
             }
