@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from core.settings import GraderConfig
     from modules.marking.ms_parser import PaperConfig
     from modules.marking.page_segmenter import PageClip, QuestionRegion
+    from modules.marking.syllabus_parser import SyllabusInfo
 
 _log = logging.getLogger("cie_helper.mark")
 
@@ -128,6 +129,49 @@ def summarise_scores(
     )
 
 
+# ── Syllabus topics ───────────────────────────────────────────────
+
+def component_paper_number(paper_id: str) -> str | None:
+    """``"9701_s25_qp_21"`` → ``"2"``; None when the id isn't that shape.
+
+    Same convention as ``config_store.get_paper_page_config``: the paper
+    number is the component's first digit. The id has to be a *downloaded*
+    one (``<subject>_<season><year>_qp_<component>``) — the mark scheme's own
+    cover-page id ("9701/21/M/J/25") is not guaranteed to line up with it.
+    """
+    parts = paper_id.split("_")
+    if len(parts) < 4:
+        return None
+    component = parts[3]
+    return component[0] if component[:1].isdigit() else None
+
+
+def topics_for_paper(
+    syllabus_info: SyllabusInfo | None, paper_id: str | None
+) -> dict[str, str] | None:
+    """Topic id → name for this paper, or None when it can't be resolved.
+
+    Returns None — never an empty dict — for every "no topics" case (no
+    syllabus, unusable paper id, or a component the syllabus doesn't map,
+    such as a practical paper), so the grader's prompt omits the topic
+    section instead of showing an empty list.
+    """
+    if syllabus_info is None or not paper_id:
+        return None
+    paper_number = component_paper_number(paper_id)
+    if paper_number is None:
+        return None
+    topic_ids = syllabus_info.component_topics.get(paper_number)
+    if not topic_ids:
+        return None
+    named = {
+        tid: syllabus_info.topics[tid].name
+        for tid in topic_ids
+        if tid in syllabus_info.topics
+    }
+    return named or None
+
+
 # ── Grading run ───────────────────────────────────────────────────
 
 class Renderer(Protocol):
@@ -198,6 +242,8 @@ def grade_paper(
     assignments: Mapping[str, list[int]],
     clips: Mapping[str, list[PageClip]],
     renderer: Renderer,
+    syllabus_info: SyllabusInfo | None = None,
+    paper_id: str | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
     max_workers: int = _MAX_CONCURRENT_QUESTIONS,
 ) -> GradeOutcome:
@@ -214,6 +260,10 @@ def grade_paper(
     ``on_progress`` calls are serialised (never invoked concurrently from two
     threads), so a caller that pushes them straight into a UI update doesn't
     need its own locking.
+
+    ``syllabus_info`` + ``paper_id`` are resolved once per run into the topic
+    list every question is graded against; either being absent simply means
+    the questions come back untagged, never that the run fails.
     """
     outcome = GradeOutcome()
     total = len(question_ids)
@@ -225,6 +275,8 @@ def grade_paper(
     results_by_qid: dict[str, QuestionResult] = {}
     progress_lock = threading.Lock()
     done = 0
+    # Resolved once, not per question: it is the same for the whole paper.
+    topic_list = topics_for_paper(syllabus_info, paper_id)
 
     def _grade_one(qid: str) -> None:
         nonlocal done
@@ -246,6 +298,7 @@ def grade_paper(
                 mark_scheme=qcfg.mark_scheme,
                 max_marks=qcfg.max_marks,
                 paper_type=paper_type,
+                topic_list=topic_list,
             )
             result: QuestionResult | None = parse_grading_result(raw)
             failure: QuestionFailure | None = None

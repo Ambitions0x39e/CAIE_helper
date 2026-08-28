@@ -18,9 +18,9 @@ Both installers ship unsigned, so expect the usual first-open warnings (SmartScr
 
 ## Marking
 This feature requires an image (vision) model to read the handwritten papers.
-By default the app uses the `qwen3-vl-flash` model, but you can change it to any model you like in Settings.
+By default the app uses the `qwen3.6-flash` model, but you can change it to any model you like in Settings.
 
-If you use `qwen3-vl-flash`, you will need an API key from DashScope by Alibaba Cloud (Aliyun).
+If you use `qwen3.6-flash`, you will need an API key from DashScope by Alibaba Cloud (Aliyun).
 
 ---
 

@@ -218,6 +218,15 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
                 renderer=NativeRenderer(
                     state.pdf_renderer, ctx.page.session.connection.loop,
                 ),
+                syllabus_info=ctx.syllabus_info,
+                # Only a downloaded paper has a real id, and the id is what
+                # resolves the component → topic list. Uploading a mark
+                # scheme therefore means no topic tagging *and* no mistake
+                # record — deliberately the same condition, not two.
+                paper_id=(
+                    ctx.selected_paper
+                    if ctx.ms_source == "downloaded" else None
+                ),
                 on_progress=_on_progress,
             )
             # Partial results are kept on failure, so publish either way.

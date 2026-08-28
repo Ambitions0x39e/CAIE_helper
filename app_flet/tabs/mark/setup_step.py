@@ -18,7 +18,8 @@ import flet as ft
 
 from app_flet import theme
 from app_flet.tabs.mark.context import MarkTabContext
-from app_flet.tabs.mark.mcq import answer_sheet
+from app_flet.tabs.mark.mcq import answer_sheet_table
+from core.config_store import grading_type_for_paper
 from core.models import PaperType
 from modules.marking.ms_parser import (
     ms_cache_exists,
@@ -31,12 +32,31 @@ from modules.marking.page_segmenter import (
     scan_document,
 )
 from modules.marking.renderer import NativeRenderer
+from modules.marking.syllabus_parser import (
+    SyllabusParseError,
+    load_syllabus,
+    parse_syllabus,
+)
 from modules.marking.workflow import regions_to_page_map
 
 if TYPE_CHECKING:
     from modules.marking.ms_parser import PaperConfig
 
 _log = logging.getLogger("cie_helper.mark")
+
+#: Where the user goes to fetch a syllabus PDF by hand. There is deliberately
+#: no download code: the site serves its app shell instead of the file unless
+#: the request carries the right headers, so a scraper would "succeed" with
+#: HTML — see the design doc's Non-Goals.
+_SYLLABUS_SLUGS: dict[str, str] = {
+    "9709": "mathematics-9709",
+    "9231": "further-mathematics-9231",
+    "9702": "physics-9702",
+    "9701": "chemistry-9701",
+    "9700": "biology-9700",
+    "9696": "geography-9696",
+}
+_SYLLABUS_URL = "https://pastpapers.co/caie/a-level/{slug}/syllabus-%26-specimen"
 
 
 def _async_click(
@@ -77,6 +97,14 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         on_change=lambda e: _on_source_change(ctx, e),
     ))
 
+    # Built before the type radio even though it renders after it: choosing
+    # the paper is what resolves the default selection, and the configured
+    # grading type follows from the paper.
+    selector = (
+        _build_paper_selector(ctx) if ctx.ms_source == "downloaded" else []
+    )
+    _sync_paper_type(ctx)
+
     # Paper type radio
     controls.append(ft.RadioGroup(
         content=ft.Row([
@@ -88,7 +116,8 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     ))
 
     if ctx.ms_source == "downloaded":
-        controls.extend(_build_paper_selector(ctx))
+        controls.extend(selector)
+        controls.extend(_build_syllabus_row(ctx))
     else:
         upload_label = (
             ctx.ms_upload_path.split("\\")[-1].split("/")[-1]
@@ -195,7 +224,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         # 什么 (ctx)：解析完再去点一下 MATH，预览不该跟着换一种画法。
         body: ft.Control
         if state.paper_type == PaperType.MCQ.value:
-            body = answer_sheet(pc)
+            body = answer_sheet_table(pc)
         else:
             q_controls: list[ft.Control] = []
             for qid, qcfg in pc.questions.items():
@@ -262,6 +291,157 @@ def _build_paper_selector(ctx: MarkTabContext) -> list[ft.Control]:
     ], spacing=12)]
 
 
+# ── Syllabus (optional, for topic tagging) ────────────────────────
+
+def _syllabus_status(ctx: MarkTabContext) -> ft.Text:
+    if ctx.syllabus_parsing:
+        return ft.Text("正在解析大纲…", size=12, color=theme.MUTED)
+    if ctx.syllabus_error:
+        return ft.Text(
+            f"大纲解析失败: {ctx.syllabus_error}", size=12, color=theme.DANGER,
+        )
+    info = ctx.syllabus_info
+    if info is None:
+        return ft.Text(
+            "未选择（不影响批改，仅用于给错题打 topic 标签）",
+            size=12, color=theme.MUTED,
+        )
+    return ft.Text(
+        f"{info.subject_id}: 已识别 {len(info.topics)} 个 topic，"
+        f"{len(info.component_topics)} 个 component",
+        size=12, color=theme.MUTED,
+    )
+
+
+def _sync_paper_type(ctx: MarkTabContext) -> None:
+    """Set the grading path from ``syllabus_config.json`` for this paper.
+
+    Picking it by hand every time is both a chore and a silent trap: grading
+    a structured paper in MCQ mode takes the deterministic answer-key path,
+    which never calls the VL model, so the paper comes back with no topics
+    and no mistake records and nothing says why.
+
+    The user still wins — moving the radio sets ``paper_type_overridden``
+    and that stands until they select a different paper.
+    """
+    if ctx.ms_source != "downloaded" or ctx.paper_type_overridden:
+        return
+    paper_id = ctx.selected_paper
+    if not paper_id or paper_id == ctx.paper_type_synced_for:
+        return
+    ctx.paper_type_synced_for = paper_id
+    configured = grading_type_for_paper(paper_id)
+    if configured is not None:
+        ctx.paper_type = configured
+
+
+def _sync_syllabus_to_subject(ctx: MarkTabContext) -> None:
+    """Point ``ctx.syllabus_info`` at the *selected* subject's syllabus.
+
+    Two things depend on this, both of which were wrong without it:
+
+    * a syllabus parsed in an earlier session is picked up from the store, so
+      the user uploads each subject's PDF once, not once per app start;
+    * switching the subject dropdown drops the previous subject's topics.
+      Keeping them would hand 9709's topic list to a 9231 paper and tag every
+      question against the wrong syllabus — silently, since the ids overlap.
+    """
+    if ctx.syllabus_parsing:
+        return
+    subject = ctx.selected_syllabus or ""
+    current = ctx.syllabus_info
+    if current is not None and current.subject_id == subject:
+        return
+    ctx.syllabus_info = load_syllabus(subject) if subject else None
+    ctx.syllabus_error = None
+    ctx.syllabus_path = None
+
+
+def _build_syllabus_row(ctx: MarkTabContext) -> list[ft.Control]:
+    """The 大纲 PDF picker plus a link to where one is downloaded.
+
+    Only shown for the downloaded-MS Math flow: MCQ papers are graded
+    deterministically and never call the VL model, and an uploaded mark
+    scheme has no paper id to resolve a component against — both cases would
+    show a control that could not do anything.
+    """
+    if ctx.ms_source != "downloaded" or ctx.paper_type != PaperType.MATH:
+        return []
+    _sync_syllabus_to_subject(ctx)
+
+    row: list[ft.Control] = [
+        ft.Button(
+            "选择大纲 PDF",
+            icon=ft.Icons.MENU_BOOK,
+            disabled=ctx.syllabus_parsing,
+            on_click=_async_click(_on_syllabus_upload_click, ctx),
+        ),
+        _syllabus_status(ctx),
+    ]
+    slug = _SYLLABUS_SLUGS.get(ctx.selected_syllabus or "")
+    if slug:
+        row.append(ft.TextButton(
+            "去官网下载",
+            icon=ft.Icons.OPEN_IN_NEW,
+            on_click=_launch_syllabus_url(ctx, slug),
+        ))
+    return [ft.Row(row, spacing=8, wrap=True)]
+
+
+def _launch_syllabus_url(
+    ctx: MarkTabContext, slug: str,
+) -> Callable[[ft.Event[ft.TextButton]], None]:
+    url = _SYLLABUS_URL.format(slug=slug)
+
+    async def _open() -> None:
+        await ctx.page.launch_url(url)
+
+    def _handler(_: ft.Event[ft.TextButton]) -> None:
+        ctx.page.run_task(_open)
+
+    return _handler
+
+
+async def _on_syllabus_upload_click(ctx: MarkTabContext) -> None:
+    if ctx.syllabus_picker is None:
+        ctx.syllabus_picker = ft.FilePicker()
+        ctx.page.services.append(ctx.syllabus_picker)
+    files = await ctx.syllabus_picker.pick_files(
+        allowed_extensions=["pdf"],
+        dialog_title="选择大纲 (Syllabus) PDF",
+    )
+    if not files or not files[0].path:
+        return
+    _start_syllabus_parse(ctx, files[0].path)
+
+
+def _start_syllabus_parse(ctx: MarkTabContext, path: str) -> None:
+    """Parse the syllabus off the UI thread; a failure is never fatal."""
+    subject_id = ctx.selected_syllabus or ""
+    ctx.syllabus_path = path
+    ctx.syllabus_error = None
+    ctx.syllabus_info = None
+    ctx.syllabus_parsing = True
+    ctx.rebuild()
+
+    def _run() -> None:
+        try:
+            # force: picking a file by hand is an explicit "use this one".
+            # Without it a corrected PDF would be swallowed by the copy
+            # already in the store.
+            ctx.syllabus_info = parse_syllabus(path, subject_id, force=True)
+        except SyllabusParseError as exc:
+            ctx.syllabus_error = str(exc)
+        except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+            _log.exception("syllabus parse failed")
+            ctx.syllabus_error = str(exc)
+        finally:
+            ctx.syllabus_parsing = False
+            ctx.rebuild()
+
+    ctx.page.run_thread(_run)
+
+
 # ── Handlers ──────────────────────────────────────────────────────
 
 def _on_source_change(
@@ -277,6 +457,8 @@ def _on_type_change(
     ctx.paper_type = (
         PaperType.MCQ if str(e.data) == "mcq" else PaperType.MATH
     )
+    # Their choice outranks the configured one until they change papers.
+    ctx.paper_type_overridden = True
     ctx.rebuild()
 
 
@@ -305,6 +487,8 @@ def _on_paper_select(
     ctx: MarkTabContext, e: ft.Event[ft.Dropdown],
 ) -> None:
     ctx.selected_paper = str(e.data) if e.data else None
+    # A different paper gets its own configured type, override cleared.
+    ctx.paper_type_overridden = False
     ctx.rebuild()
 
 

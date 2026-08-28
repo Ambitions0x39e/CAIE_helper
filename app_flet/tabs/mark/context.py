@@ -1,9 +1,7 @@
 """Shared state for the Mark tab's sections.
 
-``build_mark_tab`` used to be one ~1,500-line closure in which every helper
-reached its neighbours' state through ``list``-of-one refs — the only way a
-nested function can rebind an outer name. Now that the sections live in
-separate modules that trick is neither needed nor readable: the refs are
+The sections live in separate modules (``setup_step`` / ``answer_pages`` /
+``grade_step`` / ``results`` / ``mcq``) and reach each other's state through
 plain attributes on this object, which each section takes as its first
 argument.
 """
@@ -21,6 +19,7 @@ from core.models import PaperType
 if TYPE_CHECKING:
     from app_flet.state import AppState
     from modules.marking.page_segmenter import ScannedDocument
+    from modules.marking.syllabus_parser import SyllabusInfo
 
 
 def _noop() -> None:
@@ -46,6 +45,13 @@ class MarkTabContext:
     # ── Step 1 — what to analyse ───────────────────────────────────
     ms_source: str = "downloaded"
     paper_type: PaperType = PaperType.MATH
+    #: True once the user has moved the paper-type radio themselves, which
+    #: stops the configured type from overriding them. Reset when they pick
+    #: a different paper.
+    paper_type_overridden: bool = False
+    #: The paper whose configured type has already been applied, so the sync
+    #: runs once per selection instead of on every rebuild.
+    paper_type_synced_for: str | None = None
     #: ``None`` = auto-detect from the MS PDF; a number is a manual override.
     start_page: int | None = None
     selected_syllabus: str | None = None
@@ -58,6 +64,20 @@ class MarkTabContext:
     #: Last ``scan_document`` result, keyed by path — re-pressing 解析 after
     #: only the mark scheme changed shouldn't re-read the whole answer PDF.
     scanned: tuple[str, ScannedDocument] | None = None
+
+    # ── Step 1 — syllabus topics (optional) ────────────────────────
+    #: Picked syllabus PDF and what parsing it produced. All optional: a
+    #: paper grades exactly as before without one, its questions simply come
+    #: back untagged.
+    syllabus_path: str | None = None
+    syllabus_info: SyllabusInfo | None = None
+    #: Message from the last failed parse, shown next to the picker.
+    syllabus_error: str | None = None
+    syllabus_parsing: bool = False
+    #: Created on first use by ``setup_step`` and registered on
+    #: ``page.services``, rather than handed in like ``ms_picker`` —
+    #: ``build_mark_tab``'s signature is owned by the app shell.
+    syllabus_picker: ft.FilePicker | None = None
 
     # ── Step 1 — analysis in flight ────────────────────────────────
     #: While an analysis runs, the tab collapses to Step 1 plus these
