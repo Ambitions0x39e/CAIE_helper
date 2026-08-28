@@ -13,6 +13,7 @@ def data_table(
     *,
     show_checkbox_column: bool = False,
     on_select_all: Callable[..., None] | None = None,
+    compact: bool = False,
 ) -> ft.Row:
     """全 app 统一的表格样式，宽度铺满窗口。
 
@@ -26,6 +27,10 @@ def data_table(
 
     也不要再往外面套 ``Row(scroll=AUTO)``：横向滚动的行宽度无界，expand 撑不出
     约束，表格会缩回内容宽度。
+
+    ``compact=True`` 收紧行高、列距，并补上竖分隔线：给单元格只有一两个字符的
+    密集表格用（批改页的 MCQ 答题卡，一屏要放 40 题），列一多就必须有竖线才对得
+    上题号。默认那档是给管理页那种整行文字的表格用的，不要动。
     """
     return ft.Row([
         ft.DataTable(
@@ -37,6 +42,14 @@ def data_table(
             border=ft.Border.all(1, theme.HAIRLINE),
             border_radius=theme.CARD_RADIUS,
             heading_row_color=theme.PRIMARY_TINT,
+            heading_row_height=32 if compact else None,
+            data_row_min_height=30 if compact else None,
+            data_row_max_height=34 if compact else None,
+            column_spacing=8 if compact else None,
+            horizontal_margin=10 if compact else None,
+            vertical_lines=(
+                ft.BorderSide(1, theme.HAIRLINE_FAINT) if compact else None
+            ),
         )
     ])
 

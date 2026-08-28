@@ -28,7 +28,22 @@ def test_subject_mapping_unknown_returns_none() -> None:
     assert SUBJECT_PAPER_TYPES.get("9999") is None
 
 
-def test_grader_config_defaults() -> None:
+def test_grader_config_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The *defaults* — so the real ~/.cie_helper/.env must be out of the way.
+
+    Same trap the two try_load tests below already document: this one read the
+    developer's own .env and passed only while it happened to hold the default
+    model. The day someone switched models in the 设置 tab, it failed with no
+    code change behind it.
+    """
+    monkeypatch.setitem(
+        GraderConfig.model_config, "env_file", str(tmp_path / "absent.env"),
+    )
+    for var in _GRADER_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
     cfg = GraderConfig(api_key="test-key")
     assert cfg.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert cfg.model == "qwen3-vl-flash"

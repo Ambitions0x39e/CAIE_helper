@@ -429,8 +429,9 @@ def _cache_path_for(pdf_path: Path, start_page: int | None = None) -> Path:
 
     VL-parsed (MATH) caches embed the resolved start page in the key —
     the same PDF parsed from a different start page covers a different
-    set of questions, so the results must not shadow each other. MCQ
-    caches pass None and keep the plain filename key.
+    set of questions, so the results must not shadow each other. Only
+    MATH is cached; ``start_page`` stays optional for the tests that
+    exercise the keying itself.
     """
     from core.settings import app_settings
 
@@ -504,7 +505,7 @@ def ms_cache_exists(
     """
     path = Path(pdf_path)
     if paper_type == PaperType.MCQ:
-        return _cache_path_for(path).exists()
+        return False  # MCQ parses locally in ~0.1s and is never cached.
     resolved = resolve_ms_start_page(path, start_page)
     return _cache_path_for(path, resolved).exists()
 
@@ -539,13 +540,13 @@ def parse_mark_scheme(
     path = Path(pdf_path)
 
     if paper_type == PaperType.MCQ:
-        cached = None if force else _load_cached(path)
-        if cached is not None:
-            return cached
+        # Not cached: the answer table is read straight out of the PDF in a
+        # fraction of a second, with no API call to save. Caching it only
+        # ever froze a bad parse in place — entries written before the
+        # column-major table fix held 2 questions instead of 40 and survived
+        # the fix.
         from modules.marking.mcq_parser import parse_mcq_mark_scheme
-        config = parse_mcq_mark_scheme(pdf_path)
-        _save_cache(path, config)
-        return config
+        return parse_mcq_mark_scheme(pdf_path)
 
     if paper_type != PaperType.MATH:
         raise NotImplementedError(
