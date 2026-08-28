@@ -90,8 +90,8 @@ def main(page: ft.Page) -> None:
         ),
     )
     page.padding = 0
-    page.window.width = 960
-    page.window.height = 700
+    page.window.width = 1920
+    page.window.height = 1080
     page.bgcolor = theme.PAGE_BG
     page.adaptive = False
 
