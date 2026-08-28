@@ -506,10 +506,13 @@ def cached_mark_scheme(pdf_path: str | Path) -> PaperConfig | None:
     more considered answer.
 
     The plain ``stem.json`` key is deliberately NOT read. Nothing writes it
-    any more (MCQ parses locally per call and never caches), so the only
-    files left under it were written by the pre-fix MCQ parser, which stored
-    2 questions for a 40-question paper. Typesetting one of those as an
-    answer sheet would look like a real answer sheet.
+    any more (MCQ parses locally per call and never caches), and what it
+    still holds cannot be trusted: entries from the pre-fix MCQ parser, which
+    stored 2 questions for a 40-question paper. Typesetting one of those as
+    an answer sheet would look like a real answer sheet. Entries predating
+    the ``.spN`` keying also live under this name, but they are VL parses
+    that were re-cached under a start page the first time they were opened
+    again — a plain key with no ``.spN`` twin is the untrustworthy case.
     """
     from core.settings import app_settings
 
