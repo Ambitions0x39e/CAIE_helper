@@ -2,11 +2,10 @@
 
 Settings-app-style menu: tapping "SMTP / GoodNotes", "Grader API" or "关于"
 swaps the tab's own content for the sub-page, with a back arrow + title row
-(``_sub_header``) standing in for a real AppBar. This used to push a full
-``ft.View`` onto ``page.views`` instead — that gave a native slide-in
-transition and AppBar back button (including iOS edge-swipe-back), but a
-pushed ``ft.View`` replaces the *entire* window, so the left-hand nav_rail
-and header from main.py disappeared behind it too. Embedding keeps the tab
+(``_sub_header``) standing in for a real AppBar. A pushed ``ft.View`` would
+give a native slide-in transition and AppBar back button (including iOS
+edge-swipe-back), but it replaces the *entire* window, taking the left-hand
+nav_rail and header from main.py down with it. Embedding keeps the tab
 inside ``content_area`` like every other tab, at the cost of that native
 transition/gesture.
 
@@ -30,9 +29,15 @@ from pydantic import ValidationError
 
 from app_flet import theme
 from core.settings import GraderConfig, MailConfig
+from modules.marking.syllabus_parser import (
+    delete_syllabus,
+    stored_syllabuses,
+    syllabus_path,
+)
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
+    from modules.marking.syllabus_parser import SyllabusInfo
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _APP_NAME = "CIE Helper"
@@ -177,8 +182,8 @@ def _actions(*controls: ft.Control) -> ft.Control:
 
 
 def _sub_header(title: str, on_back: Callable[[], None]) -> ft.Row:
-    """Stands in for the AppBar a pushed ``ft.View`` used to give us for
-    free: back arrow + bold title, same visual weight."""
+    """Stands in for a native AppBar: back arrow + bold title, same visual
+    weight."""
     return ft.Row(
         [
             ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda e: on_back()),
@@ -316,8 +321,8 @@ def _build_grader_view(
         hint=_DEFAULT_BASE_URL,
     )
     grader_model = _tf(
-        saved_grader.model if saved_grader else "qwen3-vl-flash",
-        hint="qwen3-vl-flash",
+        saved_grader.model if saved_grader else "qwen3.6-flash",
+        hint="qwen3.6-flash",
     )
 
     status_text = ft.Text("", size=13)
@@ -332,7 +337,7 @@ def _build_grader_view(
             gc = GraderConfig(
                 api_key=grader_api_key.value or "",
                 base_url=grader_base_url.value or _DEFAULT_BASE_URL,
-                model=grader_model.value or "qwen3-vl-flash",
+                model=grader_model.value or "qwen3.6-flash",
             )
             gc.save_to_env()
             state.grader_config = gc
@@ -543,9 +548,13 @@ def _build_about_view(
                         size=13,
                         color=theme.MUTED,
                     ),
-                    ft.Text(
+                    ft.Markdown(
                         result.release_notes or "（本次发布没有填写更新说明）",
-                        size=13,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                        selectable=True,
+                        md_style_sheet=ft.MarkdownStyleSheet(
+                            p_text_style=ft.TextStyle(size=13),
+                        ),
                     ),
                     ft.Text(
                         "下载完成后会自动安装。安装时应用会自动退出，"
@@ -646,6 +655,145 @@ def _build_about_view(
 # Menu row helper + entry point (this is what gets embedded as the "设置" tab)
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Sub-page: 大纲 Topic 库
+# --------------------------------------------------------------------------
+
+def _compact_ids(ids: list[str]) -> str:
+    """``1..22`` → ``"1–22"``, ``1,2,5,6,7`` → ``"1–2, 5–7"``.
+
+    A science paper covers 22 or 37 topics; spelling every id out overflows
+    the row and buries the one thing worth reading, which is the range.
+    Non-numeric ids (the math family's ``N.M``) are left alone — those lists
+    are short and a range over them would be a lie.
+    """
+    if not ids:
+        return "（空）"
+    if not all(i.isdigit() for i in ids):
+        return ", ".join(ids)
+    nums = sorted(int(i) for i in ids)
+    runs: list[tuple[int, int]] = []
+    start = previous = nums[0]
+    for num in nums[1:]:
+        if num == previous + 1:
+            previous = num
+            continue
+        runs.append((start, previous))
+        start = previous = num
+    runs.append((start, previous))
+    return ", ".join(
+        str(lo) if lo == hi else f"{lo}–{hi}" for lo, hi in runs
+    )
+
+
+def _stacked(label: str, body: ft.Control) -> ft.Control:
+    """Label above, content below, both full width.
+
+    Not ``_row``: that puts the control hard right of the label on one line,
+    which is right for a switch or a short value and wrong for a block. Given
+    a block it squeezes the label column to nothing — literally one glyph per
+    line — and lets the content run off the right edge.
+    """
+    return ft.Container(
+        ft.Column([ft.Text(label, size=15), body], spacing=8),
+        padding=ft.Padding.symmetric(vertical=12),
+    )
+
+
+def _syllabus_body(
+    page: ft.Page, info: SyllabusInfo, on_changed: Callable[[], None],
+) -> list[ft.Control]:
+    """One stored syllabus: where it lives, what it maps, every topic."""
+    del page  # the caller owns the refresh
+    mapping = ft.Column(
+        [
+            ft.Text(
+                f"Paper {paper} → {_compact_ids(ids)}",
+                size=13, selectable=True, expand=True,
+            )
+            for paper, ids in sorted(info.component_topics.items())
+        ] or [ft.Text("（没有 component 映射）", size=13, color=theme.MUTED)],
+        spacing=4,
+    )
+    topics = ft.Column(
+        [
+            ft.Text(
+                f"{topic.topic_id}  {topic.name}"
+                + (f"   [{topic.category}]" if topic.category else ""),
+                size=12, color=theme.MUTED, selectable=True, expand=True,
+            )
+            for topic in info.topics.values()
+        ],
+        spacing=2,
+    )
+
+    def _forget(_: ft.Event[ft.Button]) -> None:
+        delete_syllabus(info.subject_id)
+        on_changed()
+
+    return [
+        _section(f"{info.subject_id}"),
+        *_divided(
+            _stacked(
+                "存储位置",
+                ft.Text(
+                    str(syllabus_path(info.subject_id)),
+                    size=12, color=theme.MUTED, selectable=True,
+                ),
+            ),
+            _row(
+                "规模",
+                ft.Text(
+                    f"{len(info.topics)} topic · "
+                    f"{len(info.component_topics)} component",
+                    size=13,
+                ),
+            ),
+            _stacked("Paper → topic", mapping),
+            _stacked("Topic 全表", topics),
+        ),
+        _actions(ft.Button(
+            "删除并重新解析",
+            icon=ft.Icons.DELETE_OUTLINE,
+            on_click=_forget,
+            style=theme.filled_button(theme.DANGER),
+            tooltip="删掉这份记录，下次在批改页重新上传大纲 PDF 时会重新解析",
+        )),
+    ]
+
+
+def _build_syllabus_view(
+    page: ft.Page, state: AppState, on_back: Callable[[], None],
+) -> ft.Control:
+    """Read-only dump of every parsed syllabus — the debug surface for it.
+
+    The parse runs once per subject and its result then silently steers every
+    graded question's topic tag, so there has to be somewhere to look at what
+    it actually produced.
+    """
+    del state  # every sub-page takes it; this one reads only the store
+    body = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def _render() -> None:
+        body.controls.clear()
+        stored = stored_syllabuses()
+        if not stored:
+            body.controls.append(ft.Text(
+                "还没有解析过任何大纲。在「批改」页选好科目后上传大纲 PDF，"
+                "解析结果会存到 ~/.cie_helper/syllabus/ 并在这里列出。",
+                size=13, color=theme.MUTED,
+            ))
+        for info in stored:
+            body.controls.extend(_syllabus_body(page, info, _render))
+        page.update()
+
+    _render()
+    return ft.Column(
+        [_sub_header("大纲 Topic 库", on_back), body],
+        expand=True,
+    )
+
+
 def _menu_row(
     title: str,
     subtitle: str,
@@ -703,6 +851,11 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
         content.controls.append(_build_grader_view(page, state, show_menu))
         page.update()
 
+    def open_syllabus(_: ft.Event[ft.Container]) -> None:
+        content.controls.clear()
+        content.controls.append(_build_syllabus_view(page, state, show_menu))
+        page.update()
+
     def open_about(_: ft.Event[ft.Container]) -> None:
         content.controls.clear()
         content.controls.append(_build_about_view(page, state, show_menu))
@@ -729,6 +882,10 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
                     ft.Icons.SMART_TOY_OUTLINED, open_grader,
                 ),
                 _menu_row(
+                    "大纲 Topic 库", "已解析的大纲：topic 列表与 paper 映射",
+                    ft.Icons.MENU_BOOK_OUTLINED, open_syllabus,
+                ),
+                _menu_row(
                     "关于", "版本信息与反馈",
                     ft.Icons.INFO_OUTLINE, open_about,
                 ),
@@ -739,9 +896,8 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
     )
     content.controls.append(menu)
 
-    # 20 on all four sides, same as every other tab — horizontal used to be
-    # 24, which pushed this page's title 4px right of the others'. No
-    # explicit bgcolor: this Container (and every sub-page's) inherits
-    # content_area's — i.e. page.bgcolor — same as the rest of the app,
-    # instead of whatever default a pushed ft.View used to render with.
+    # 20 on all four sides, same as every other tab, so this page's title
+    # lines up with the others'. No explicit bgcolor: this Container (and
+    # every sub-page's) inherits content_area's — i.e. page.bgcolor — same
+    # as the rest of the app.
     return ft.Container(content, padding=20)

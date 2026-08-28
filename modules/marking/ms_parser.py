@@ -491,6 +491,44 @@ def _repair_cover_info(
     return repaired
 
 
+def cached_mark_scheme(pdf_path: str | Path) -> PaperConfig | None:
+    """The parsed mark scheme for this PDF if one is already cached.
+
+    Never parses — the 错题本's answer sheet is built from what the Mark tab
+    already produced, and a cache miss there must not fire off a paid VL run
+    behind the user's back.
+
+    Takes no ``paper_type``: only VL-parsed papers are cached, all under
+    ``stem.spN``, so the key is looked up without resolving a start page —
+    which would mean opening the PDF, and the PDF may well be gone while its
+    cache is still here. When several start pages have been parsed the newest
+    wins, on the grounds that a re-parse from an overridden start page is the
+    more considered answer.
+
+    The plain ``stem.json`` key is deliberately NOT read. Nothing writes it
+    any more (MCQ parses locally per call and never caches), so the only
+    files left under it were written by the pre-fix MCQ parser, which stored
+    2 questions for a 40-question paper. Typesetting one of those as an
+    answer sheet would look like a real answer sheet.
+    """
+    from core.settings import app_settings
+
+    path = Path(pdf_path)
+    candidates = sorted(
+        app_settings.ms_cache_dir.glob(f"{path.stem}.sp*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for candidate in candidates:
+        try:
+            return PaperConfig.model_validate_json(
+                candidate.read_text("utf-8")
+            )
+        except Exception:  # noqa: BLE001, S112 — a bad cache file is a miss
+            continue
+    return None
+
+
 def ms_cache_exists(
     pdf_path: str | Path,
     paper_type: PaperType,

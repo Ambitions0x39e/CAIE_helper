@@ -1,10 +1,8 @@
 """In-app updater — check GitHub Releases, download the installer, run it.
 
-Before this existed, shipping a new version meant telling users to go to the
-GitHub releases page and install the package by hand. Now "设置 → 关于 → 更新"
-does the whole round trip: ask the API what the latest release is, compare it
-against our own version, and (once the user confirms) fetch the installer for
-*this* platform and hand it to the OS.
+"设置 → 关于 → 更新" does the whole round trip: ask the API what the latest
+release is, compare it against our own version, and (once the user confirms)
+fetch the installer for *this* platform and hand it to the OS.
 
 Same shape as ``modules.downloader``: every public method returns a Pydantic
 result object with ``success`` / ``error``, and the internal ``_UpdateError``

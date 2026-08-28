@@ -16,7 +16,7 @@
 ; ============================================================================
 
 #define MyAppName "CIE Helper"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.4.0"
 #define MyAppPublisher "Ambitions0x39e"      ; <-- edit to your name/handle
 #define MyAppExeName "cie-helper.exe"
 
@@ -65,6 +65,28 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[InstallDelete]
+; Wipe the payload dirs before installing. `ignoreversion` below overwrites
+; files but NEVER deletes ones the new build no longer ships, so without this
+; every upgrade leaves the previous version behind and the install dir only
+; grows. Measured on a real install: 474 stale files / +108 MB accumulated
+; (a whole cp314 site-packages + Lib\compression\ from back when
+; requires-python had no upper bound, plus pypdfium2 and a second pypdf).
+; That is not merely dead weight — the leftovers sit ON sys.path, so Python
+; walks them at every startup. Cold-start cost, same machine, same build:
+; clean 206 MB = 8.6 s; +108 MB parked outside sys.path = 11.3 s; the same
+; 108 MB left in site-packages\ and Lib\ = 17.5 s.
+; App data lives in ~/.cie_helper, never under {app}, so this deletes nothing
+; the user owns. Scoped to the payload — do NOT wipe {app}\* wholesale, that
+; would take out unins000.* and break uninstall registration.
+Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\site-packages"
+Type: filesandordirs; Name: "{app}\Lib"
+Type: filesandordirs; Name: "{app}\DLLs"
+Type: filesandordirs; Name: "{app}\data"
+Type: files; Name: "{app}\*.dll"
+Type: files; Name: "{app}\*.pyd"
 
 [Files]
 ; Ship the ENTIRE build\windows folder: exe + all DLLs + data\ + Lib\ + DLLs\ +

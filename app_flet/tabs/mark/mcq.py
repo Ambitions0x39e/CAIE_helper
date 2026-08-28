@@ -63,7 +63,7 @@ def _given_cell(
     )
 
 
-def answer_sheet(
+def answer_sheet_table(
     pc: PaperConfig,
     answers: dict[str, str] | None = None,
     per_q: dict[str, bool] | None = None,
@@ -229,7 +229,7 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
     controls.append(ft.Text(
         "逐题结果:", size=theme.BODY, weight=ft.FontWeight.BOLD,
     ))
-    controls.append(answer_sheet(pc, merged_answers, per_q))
+    controls.append(answer_sheet_table(pc, merged_answers, per_q))
 
     controls.append(ft.Divider())
     if state.mcq_confirmed:

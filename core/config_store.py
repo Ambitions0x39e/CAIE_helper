@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, field_validator
 
+from core.models import PaperType
+
 # Path relative to this file: repo_root/core/../data/syllabus_config.json
 _REPO_ROOT = Path(__file__).parent.parent
 _DEFAULT_CONFIG_PATH = _REPO_ROOT / "data" / "syllabus_config.json"
@@ -23,6 +25,13 @@ class PaperTypeConfig(BaseModel):
 
     digit: str
     name: str
+    #: Which grading path this paper takes, when it is known up front.
+    #: ``mcq`` is the deterministic answer-key path; ``math`` is the
+    #: VL-graded one, which despite the name suits any structured paper
+    #: (Chemistry Paper 2, a practical write-up) — the enum is named after
+    #: the first flow that used it. ``None`` means "not recorded", and the
+    #: Mark tab leaves whatever the user picked alone.
+    grading: PaperType | None = None
 
     @field_validator("digit")
     @classmethod
@@ -206,3 +215,32 @@ def get_paper_page_config(
             "ms_start_page": int(ms_raw),  # type: ignore[call-overload]
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Which grading path a paper takes
+# ---------------------------------------------------------------------------
+
+
+def grading_type_for_paper(
+    paper_id: str, config_path: Path | None = None
+) -> PaperType | None:
+    """``"9701_s25_qp_21"`` → the grading path recorded for that component.
+
+    None when the subject or its component isn't recorded, which leaves the
+    Mark tab's radio exactly where the user left it. Same component-prefix
+    convention as :func:`get_paper_page_config`: the first digit of the
+    component, so 21 / 22 / 23 all resolve to Paper 2.
+    """
+    parts = paper_id.split("_")
+    if len(parts) < 4 or not parts[3][:1].isdigit():
+        return None
+    subject_id, digit = parts[0], parts[3][0]
+
+    for entry in ConfigStore(config_path).load_all():
+        if entry.syllabus_id != subject_id:
+            continue
+        for paper_type in entry.paper_types:
+            if paper_type.digit == digit:
+                return paper_type.grading
+    return None
