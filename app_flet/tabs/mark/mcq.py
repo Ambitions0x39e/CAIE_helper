@@ -10,16 +10,131 @@ from collections.abc import Callable
 import flet as ft
 
 from app_flet import theme
-from app_flet.components.widgets import metric_card, success_banner
+from app_flet.components.widgets import (
+    data_table,
+    metric_card,
+    success_banner,
+)
 from app_flet.tabs.mark.context import MarkTabContext
 from app_flet.tabs.mark.results import record_score
 from modules.marking.mcq_parser import detect_student_answers, score_mcq_answers
+from modules.marking.ms_parser import PaperConfig
 from modules.marking.renderer import NativeRenderer
 from modules.marking.workflow import ScoreSummary, merge_mcq_answers
 
 
 def collect_answers(ctx: MarkTabContext) -> dict[str, str]:
     return merge_mcq_answers(ctx.state.mcq_detected, ctx.manual_answer_values)
+
+
+# ── Answer sheet ──────────────────────────────────────────────────
+
+#: 一张表放 8 题。桌面窗口下 8 列还能让每格宽到放下「✓ B」而不挤，40 题正好
+#: 五张表；再多一列，窄窗口就开始压字。
+_QUESTIONS_PER_ROW = 8
+
+
+def _given_cell(
+    qid: str, answers: dict[str, str], per_q: dict[str, bool],
+) -> ft.Control:
+    """学生作答格：对错既给颜色也给图标，不靠单一颜色区分。"""
+    if qid not in answers:
+        return ft.Row(
+            [
+                ft.Icon(ft.Icons.REMOVE, size=13, color=theme.MUTED),
+                ft.Text("–", size=theme.CAPTION, color=theme.MUTED),
+            ],
+            spacing=2, tight=True,
+        )
+    correct = per_q.get(qid, False)
+    color = theme.SUCCESS if correct else theme.DANGER
+    return ft.Row(
+        [
+            ft.Icon(
+                ft.Icons.CHECK if correct else ft.Icons.CLOSE,
+                size=13, color=color,
+            ),
+            ft.Text(
+                answers[qid], size=theme.CAPTION,
+                weight=ft.FontWeight.W_600, color=color,
+            ),
+        ],
+        spacing=2, tight=True,
+    )
+
+
+def answer_sheet(
+    pc: PaperConfig,
+    answers: dict[str, str] | None = None,
+    per_q: dict[str, bool] | None = None,
+) -> ft.Control:
+    """把 MCQ 答案排成答题卡：每张表 8 题，题号 / 作答 / 答案逐列对齐。
+
+    之前是 40 个 60px 小卡片 wrap 成一片，每格自己竖着堆四行字，既没有对齐基准，
+    也看不出第几题在哪。现在一竖列就是一题：题号在上、作答在中、正确答案在下，
+    错在哪一题一眼扫到。
+
+    ``answers`` 为 None 时只出题号 + 答案两行 —— Step 1 解析完 Mark Scheme 后的
+    答案预览用这一档，那时还没有学生作答。两处共用一份实现，改 8 列改一个地方。
+
+    不足 8 题的最后一段补空列，好让各段的列宽一致 —— 否则末段的几列会被
+    ``expand`` 拉宽，跟上面几段错位。
+    """
+    qids = list(pc.questions)
+    bands: list[ft.Control] = []
+    for start in range(0, len(qids), _QUESTIONS_PER_ROW):
+        chunk = qids[start:start + _QUESTIONS_PER_ROW]
+        blanks = _QUESTIONS_PER_ROW - len(chunk)
+
+        columns = [_label_column("题号")]
+        columns += [
+            ft.DataColumn(label=ft.Text(
+                qid[1:], size=theme.CAPTION, weight=ft.FontWeight.W_600,
+            ))
+            for qid in chunk
+        ]
+        columns += [_label_column("") for _ in range(blanks)]
+
+        rows: list[ft.DataRow] = []
+        if answers is not None:
+            given = [_label_cell("作答")]
+            given += [
+                ft.DataCell(_given_cell(qid, answers, per_q or {}))
+                for qid in chunk
+            ]
+            given += [_label_cell("") for _ in range(blanks)]
+            rows.append(ft.DataRow(given))
+
+        key = [_label_cell("答案")]
+        key += [
+            ft.DataCell(ft.Text(
+                pc.questions[qid].mark_scheme,
+                size=theme.CAPTION,
+                color=theme.MUTED if answers is not None else None,
+                weight=(
+                    ft.FontWeight.W_600 if answers is None else None
+                ),
+            ))
+            for qid in chunk
+        ]
+        key += [_label_cell("") for _ in range(blanks)]
+        rows.append(ft.DataRow(key))
+
+        bands.append(data_table(columns, rows, compact=True))
+
+    return ft.Column(bands, spacing=6)
+
+
+def _label_column(text: str) -> ft.DataColumn:
+    return ft.DataColumn(
+        label=ft.Text(text, size=theme.CAPTION, color=theme.MUTED),
+    )
+
+
+def _label_cell(text: str) -> ft.DataCell:
+    return ft.DataCell(
+        ft.Text(text, size=theme.CAPTION, color=theme.MUTED),
+    )
 
 
 # ── View ──────────────────────────────────────────────────────────
@@ -112,33 +227,9 @@ def build_mcq_flow(ctx: MarkTabContext) -> list[ft.Control]:
     ))
 
     controls.append(ft.Text(
-        "逐题结果:", size=13, weight=ft.FontWeight.BOLD,
+        "逐题结果:", size=theme.BODY, weight=ft.FontWeight.BOLD,
     ))
-    q_cards: list[ft.Control] = []
-    for qid in pc.questions:
-        student_ans = merged_answers.get(qid, "–")
-        if qid in merged_answers:
-            is_correct = per_q.get(qid, False)
-            icon = ft.Icons.CHECK_CIRCLE if is_correct else ft.Icons.CANCEL
-            icon_color = theme.SUCCESS if is_correct else theme.DANGER
-        else:
-            icon = ft.Icons.REMOVE
-            icon_color = theme.MUTED
-        q_cards.append(ft.Container(
-            ft.Column([
-                ft.Text(qid[1:], weight=ft.FontWeight.BOLD, size=13),
-                ft.Icon(icon, color=icon_color, size=16),
-                ft.Text(student_ans, size=12),
-                ft.Text(
-                    pc.questions[qid].mark_scheme,
-                    color=theme.MUTED, size=11,
-                ),
-            ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            width=60, padding=6,
-            border=ft.Border.all(1, theme.HAIRLINE),
-            border_radius=6,
-        ))
-    controls.append(ft.Row(q_cards, wrap=True, spacing=6))
+    controls.append(answer_sheet(pc, merged_answers, per_q))
 
     controls.append(ft.Divider())
     if state.mcq_confirmed:

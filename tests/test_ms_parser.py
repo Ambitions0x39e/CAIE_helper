@@ -326,14 +326,16 @@ def test_ms_cache_exists_math_keyed_by_resolved_start_page(
     assert not ms_cache_exists(pdf_path, PaperType.MATH, start_page=6)
 
 
-def test_ms_cache_exists_mcq_uses_plain_key(cache_env: Path) -> None:
+def test_ms_cache_exists_is_always_false_for_mcq(cache_env: Path) -> None:
+    """MCQ mark schemes are parsed locally in a fraction of a second, so they
+    are never cached — a cache entry would only preserve a bad parse across
+    parser fixes (an earlier layout bug cached 2 questions instead of 40)."""
     pdf_path = cache_env / "9702_s24_ms_11.pdf"
     pdf_path.write_bytes(_make_ms_pdf([_COVER_PAGE]))
     config = PaperConfig(paper_id="9702/11", total_marks=40, questions={})
+    _save_cache(pdf_path, config)
 
     assert not ms_cache_exists(pdf_path, PaperType.MCQ)
-    _save_cache(pdf_path, config)
-    assert ms_cache_exists(pdf_path, PaperType.MCQ)
 
 
 def test_cache_hit_backfills_missing_cover_info(cache_env: Path) -> None:
