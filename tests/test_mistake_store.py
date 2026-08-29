@@ -55,7 +55,7 @@ def test_append_then_load_all_round_trips_every_field(
     store: MistakeStore,
 ) -> None:
     record = _record()
-    store.append(record)
+    store.append_many([record])
 
     loaded = store.load_all()
 
@@ -65,7 +65,7 @@ def test_append_then_load_all_round_trips_every_field(
 
 def test_untagged_question_round_trips_as_none(store: MistakeStore) -> None:
     """No syllabus → blank topic columns → None, never the string "nan"."""
-    store.append(_record(topic_id=None, topic_name=None))
+    store.append_many([_record(topic_id=None, topic_name=None)])
 
     loaded = store.load_all()[0]
 
@@ -83,7 +83,7 @@ def test_a_fresh_store_is_empty_not_missing(tmp_path: Path) -> None:
 def test_append_many_keeps_existing_rows_and_order(
     store: MistakeStore,
 ) -> None:
-    store.append(_record("Q1"))
+    store.append_many([_record("Q1")])
     store.append_many([_record("Q2"), _record("Q3")])
 
     assert [r.question_id for r in store.load_all()] == ["Q1", "Q2", "Q3"]
@@ -93,8 +93,8 @@ def test_regrading_a_paper_appends_a_second_set_of_rows(
     store: MistakeStore,
 ) -> None:
     """Append-only, per the design doc: no dedup, no overwrite in v1."""
-    store.append(_record("Q1", score=2.0))
-    store.append(_record("Q1", score=4.0))
+    store.append_many([_record("Q1", score=2.0)])
+    store.append_many([_record("Q1", score=4.0)])
 
     assert [r.score for r in store.load_all()] == [2.0, 4.0]
 
@@ -117,7 +117,7 @@ def test_update_at_replaces_only_that_row(store: MistakeStore) -> None:
 
 def test_update_at_can_clear_a_tag(store: MistakeStore) -> None:
     """A cleared topic must round-trip as None, not the string "nan"."""
-    store.append(_record("Q1"))
+    store.append_many([_record("Q1")])
 
     store.update_at(0, _record("Q1", topic_id=None, topic_name=None))
 
@@ -129,7 +129,7 @@ def test_update_at_rejects_an_index_outside_the_store(
     store: MistakeStore, index: int
 ) -> None:
     """Silently appending or dropping a row would be worse than raising."""
-    store.append(_record("Q1"))
+    store.append_many([_record("Q1")])
 
     with pytest.raises(IndexError):
         store.update_at(index, _record("Q1"))
@@ -158,7 +158,7 @@ def test_update_at_indexes_match_load_all_after_a_regrade(
 
 def test_delete_removes_every_row_of_one_paper(store: MistakeStore) -> None:
     store.append_many([_record("Q1"), _record("Q2")])
-    store.append(_record("Q1", paper_id="9709_s25_qp_13"))
+    store.append_many([_record("Q1", paper_id="9709_s25_qp_13")])
 
     store.delete("9709_s25_qp_12")
 
@@ -174,7 +174,7 @@ def test_delete_can_target_a_single_question(store: MistakeStore) -> None:
 
 
 def test_delete_of_an_unknown_paper_raises(store: MistakeStore) -> None:
-    store.append(_record("Q1"))
+    store.append_many([_record("Q1")])
 
     with pytest.raises(KeyError):
         store.delete("9701_s25_qp_21")

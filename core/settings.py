@@ -8,6 +8,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ENV_PATH = Path.home() / ".cie_helper" / ".env"
 
 
+def _write_env(new_values: dict[str, str]) -> None:
+    """Write *new_values* into .env, preserving every line it does not own."""
+    existing: list[str] = []
+    if _ENV_PATH.exists():
+        existing = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+
+    kept = [
+        line for line in existing
+        if line.strip()
+        and not any(line.startswith(k + "=") for k in new_values)
+    ]
+    written = [f"{k}={v}" for k, v in new_values.items()]
+    _ENV_PATH.write_text(
+        "\n".join(kept + written) + "\n", encoding="utf-8"
+    )
+
+
 class MailConfig(BaseSettings):
     """SMTP credentials — loaded from .env or environment variables."""
 
@@ -43,10 +60,7 @@ class MailConfig(BaseSettings):
             return None
 
     def save_to_env(self) -> None:
-        """
-        Persist current credentials to .env.
-        Only overwrites keys managed by MailConfig; preserves all other lines.
-        """
+        """Persist the SMTP credentials to .env."""
         new_values: dict[str, str] = {
             "SMTP_SERVER": self.smtp_server or "smtp.gmail.com",
             "SMTP_PORT": str(self.smtp_port),
@@ -57,22 +71,7 @@ class MailConfig(BaseSettings):
             "GOODNOTES_EMAIL": str(self.goodnotes_email),
         }
 
-        existing_lines: list[str] = []
-        if _ENV_PATH.exists():
-            existing_lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
-
-        managed_keys = set(new_values.keys())
-        kept_lines = [
-            line for line in existing_lines
-            if not any(line.startswith(k + "=") for k in managed_keys)
-            and line.strip() != ""
-        ]
-
-        new_lines = [f"{k}={v}" for k, v in new_values.items()]
-        _ENV_PATH.write_text(
-            "\n".join(kept_lines + new_lines) + "\n",
-            encoding="utf-8",
-        )
+        _write_env(new_values)
 
 
 class GraderConfig(BaseSettings):
@@ -100,28 +99,14 @@ class GraderConfig(BaseSettings):
             return None
 
     def save_to_env(self) -> None:
+        """Persist the grader credentials to .env."""
         new_values: dict[str, str] = {
             "GRADER_API_KEY": self.api_key.get_secret_value(),
             "GRADER_BASE_URL": self.base_url,
             "GRADER_MODEL": self.model,
         }
 
-        existing_lines: list[str] = []
-        if _ENV_PATH.exists():
-            existing_lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
-
-        managed_keys = set(new_values.keys())
-        kept_lines = [
-            line for line in existing_lines
-            if not any(line.startswith(k + "=") for k in managed_keys)
-            and line.strip() != ""
-        ]
-
-        new_lines = [f"{k}={v}" for k, v in new_values.items()]
-        _ENV_PATH.write_text(
-            "\n".join(kept_lines + new_lines) + "\n",
-            encoding="utf-8",
-        )
+        _write_env(new_values)
 
 
 class AppSettings(BaseSettings):

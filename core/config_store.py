@@ -129,52 +129,16 @@ class ConfigStore:
             for e in entries
         }
 
-    def save_all(self, entries: list[SyllabusConfig]) -> None:
-        """Overwrite the JSON file with the given entries."""
-        data = [e.model_dump() for e in entries]
-        self._path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-    def upsert(self, entry: SyllabusConfig) -> None:
-        """Insert or replace a syllabus entry by syllabus_id."""
-        entries = self.load_all()
-        for i, e in enumerate(entries):
-            if e.syllabus_id == entry.syllabus_id:
-                entries[i] = entry
-                self.save_all(entries)
-                return
-        entries.append(entry)
-        self.save_all(entries)
-
-    def delete(self, syllabus_id: str) -> None:
-        """Remove a syllabus entry by syllabus_id."""
-        entries = self.load_all()
-        filtered = [e for e in entries if e.syllabus_id != syllabus_id]
-        if len(filtered) == len(entries):
-            raise KeyError(f"syllabus_id '{syllabus_id}' not found in config")
-        self.save_all(filtered)
-
 
 # ---------------------------------------------------------------------------
-# Paper page config  (data/paper_page_config.json)
+# QP page skipping  (data/paper_page_config.json)
 # ---------------------------------------------------------------------------
 
 
-class PaperPageConfig(BaseModel):
-    """QP/MS page layout for one (subject, component_prefix) pair."""
-
-    model_config = {"strict": True}
-
-    qp_skip_pages: set[int] = {0}
-    ms_start_page: int = 6
-
-
-def get_paper_page_config(
+def qp_skip_pages(
     subject_id: str, component: str, config_path: Path | None = None
-) -> PaperPageConfig:
-    """Return the page layout for the given subject and component.
+) -> set[int]:
+    """0-indexed QP pages the segmenter must skip — cover, formula list, …
 
     Args:
         subject_id: 4-digit syllabus code (e.g. "9702").
@@ -182,39 +146,28 @@ def get_paper_page_config(
                     The first character is used as the prefix key.
         config_path: Override for the JSON config path (used in tests).
 
-    Falls back to the "default" entry in paper_page_config.json when no
-    specific entry exists for this subject/component combination.
+    Resolved from the component's own entry, then the subject's ``_default``,
+    then the file's top-level ``default``, then ``{0}``.
     """
     path = config_path or _PAGE_CONFIG_PATH
-    raw: dict[str, object] = {}
+    raw: dict[str, dict[str, object]] = {}
     if path.exists():
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise ValueError(f"{path.name} is not valid JSON: {exc}") from exc
 
-    defaults: dict[str, object] = raw.get("default", {})  # type: ignore[assignment]
     prefix = component[0] if component else ""
-    subject_entry: dict[str, object] = raw.get(subject_id, {})  # type: ignore[assignment]
-    component_entry: dict[str, object] = subject_entry.get(prefix, {})  # type: ignore[assignment]
-    subject_defaults: dict[str, object] = subject_entry.get("_default", {})  # type: ignore[assignment]
-
-    def _get(key: str, fallback: object) -> object:
-        if key in component_entry:
-            return component_entry[key]
-        if key in subject_defaults:
-            return subject_defaults[key]
-        return defaults.get(key, fallback)
-
-    qp_raw = _get("qp_skip_pages", [0])
-    ms_raw = _get("ms_start_page", 6)
-
-    return PaperPageConfig.model_validate(
-        {
-            "qp_skip_pages": set(int(p) for p in qp_raw),  # type: ignore[attr-defined]
-            "ms_start_page": int(ms_raw),  # type: ignore[call-overload]
-        }
-    )
+    subject: dict[str, object] = raw.get(subject_id, {})
+    for entry in (
+        subject.get(prefix, {}),
+        subject.get("_default", {}),
+        raw.get("default", {}),
+    ):
+        pages = entry.get("qp_skip_pages") if isinstance(entry, dict) else None
+        if isinstance(pages, list):
+            return {int(p) for p in pages}
+    return {0}
 
 
 # ---------------------------------------------------------------------------

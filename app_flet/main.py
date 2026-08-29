@@ -182,7 +182,7 @@ def main(page: ft.Page) -> None:
     # rail spreads / groups them on its own terms.
     #: 每个入口是一个圆角正方形：图标+文字打包成一组，整组在方形里居中。
     #: 拆成上 2/3/下 1/3 两条带会让图标和文字分别对齐，组合起来反而不居中。
-    _NAV_BUTTON_SIZE = 64
+    _NAV_BUTTON_SIZE = theme.NAV_BUTTON_SIZE
     _NAV_RADIUS = round(_NAV_BUTTON_SIZE * theme.SQUIRCLE_RADIUS_RATIO, 2)
     nav_icons: list[ft.Icon] = []
     nav_labels: list[ft.Text] = []

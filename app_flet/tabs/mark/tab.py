@@ -55,13 +55,13 @@ def build_mark_tab(
             return
 
         if state.paper_config:
-            if state.paper_type == PaperType.MATH.value:
+            if state.paper_type is PaperType.MATH:
                 if state.answer_pdf_path and state.auto_pages_done:
                     content.controls.extend(build_answer_pages(ctx))
                     content.controls.extend(build_grade_step(ctx))
                 if state.grading_results:
                     content.controls.extend(build_results(ctx))
-            elif state.paper_type == PaperType.MCQ.value:
+            elif state.paper_type is PaperType.MCQ:
                 content.controls.extend(build_mcq_flow(ctx))
 
         page.update()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from core.models import PaperType
 from core.settings import GraderConfig, MailConfig
 from core.storage import CSVStore
 from modules.marking.ms_parser import PaperConfig
@@ -39,7 +40,9 @@ class AppState:
 
     # Mark tab — shared
     paper_config: PaperConfig | None = None
-    paper_type: str | None = None
+    #: How the current ``paper_config`` was parsed — not what the Step 1
+    #: radio shows right now (``MarkTabContext.paper_type``).
+    paper_type: PaperType | None = None
     # True when paper_config was served from the on-disk MS cache
     # (drives the "cached result — re-parse?" hint in Step 1).
     ms_from_cache: bool = False

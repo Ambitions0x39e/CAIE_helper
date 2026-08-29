@@ -1,7 +1,7 @@
-"""Tests for ``PaperDownloader.download_with_insert``.
+"""Tests for ``PaperDownloader.download(..., insert=True)``.
 
 The network is faked with monkeypatch — nothing here may touch cie.fraft.cn.
-Only ``requests.get`` is replaced; ``download_with_insert`` itself always runs
+Only ``requests.get`` is replaced; the download itself always runs
 for real.
 
 Two things these tests exist to pin down:
@@ -125,7 +125,7 @@ def test_downloads_qp_ms_and_insert(
     recorder = _GetRecorder({**_ok_pair(), _IN: _FakeResponse()})
     downloader, store = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    result = downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert result.success
     assert recorder.fetched_stems() == [_QP, _MS, _IN]
@@ -139,11 +139,11 @@ def test_downloads_qp_ms_and_insert(
 def test_registers_the_qp_ms_record(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The store row is the same one ``download()`` writes — insert excluded."""
+    """The insert is returned, never written to the store row."""
     recorder = _GetRecorder({**_ok_pair(), _IN: _FakeResponse()})
     downloader, store = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert len(store.appended) == 1
     record = store.appended[0]
@@ -165,7 +165,7 @@ def test_missing_insert_still_succeeds(
     recorder = _GetRecorder(_ok_pair())  # unlisted stems 404
     downloader, store = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    result = downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert result.success
     assert result.insert_path is None
@@ -183,7 +183,7 @@ def test_broken_insert_fetch_is_reported_not_fatal(
     )
     downloader, store = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    result = downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert result.success
     assert result.insert_path is None
@@ -198,7 +198,7 @@ def test_insert_http_500_is_reported_not_fatal(
     recorder = _GetRecorder({**_ok_pair(), _IN: _FakeResponse(status_code=500)})
     downloader, _ = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    result = downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert result.success
     assert result.insert_path is None
@@ -216,7 +216,7 @@ def test_missing_qp_fails_and_skips_the_rest(
     recorder = _GetRecorder({_MS: _FakeResponse(), _IN: _FakeResponse()})
     downloader, store = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    result = downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert not result.success
     assert result.error and "404" in result.error
@@ -230,7 +230,7 @@ def test_missing_ms_fails_and_skips_the_insert(
     recorder = _GetRecorder({_QP: _FakeResponse(), _IN: _FakeResponse()})
     downloader, store = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    result = downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert not result.success
     assert recorder.fetched_stems() == [_QP, _MS]
@@ -245,7 +245,7 @@ def test_duplicate_paper_id_fails(
         monkeypatch, tmp_path, recorder, _RecordingStore(existing=(_QP,))
     )
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id=_QP))
+    result = downloader.download(DownloadRequest(paper_id=_QP), insert=True)
 
     assert not result.success
     assert result.error and "already exists" in result.error
@@ -258,7 +258,7 @@ def test_gt_id_is_rejected_without_touching_the_network(
     recorder = _GetRecorder()
     downloader, store = _make_downloader(monkeypatch, tmp_path, recorder)
 
-    result = downloader.download_with_insert(DownloadRequest(paper_id="9701_s25_gt"))
+    result = downloader.download(DownloadRequest(paper_id="9701_s25_gt"), insert=True)
 
     assert not result.success
     assert recorder.urls == []

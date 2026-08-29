@@ -10,6 +10,6 @@ dependencies from siblings — some have no iOS wheels and would make every
 ``modules.*`` import fail on iOS.
 
 Import what you need directly, e.g. ``from modules.marking.page_segmenter
-import segment_questions``. Nothing in the codebase relies on package-level
+import segment_questions_report``. Nothing in the codebase relies on package-level
 re-exports (``from modules import X``), so this keeps each import minimal.
 """

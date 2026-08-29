@@ -1145,31 +1145,6 @@ def _build_regions(
 
 # ── Public API ────────────────────────────────────────────────────
 
-def segment_questions(
-    source: str | bytes,
-    question_ids: list[str],
-    *,
-    skip_pages: set[int] | None = None,
-) -> list[QuestionRegion]:
-    """Detect question boundaries and return cropping regions.
-
-    Args:
-        source: Path to, or raw bytes of, the PDF (question paper or
-            GoodNotes export). Parsed with pdfminer.six (iOS-safe).
-        question_ids: Ordered list from PaperConfig.questions.keys().
-        skip_pages: 0-indexed pages to skip (e.g. cover page).
-                    Defaults to {0} (skip first page).
-
-    Returns:
-        List of QuestionRegion, one per matched question.
-        May be shorter than question_ids if detection is partial.
-    """
-    regions, _report = segment_questions_report(
-        source, question_ids, skip_pages=skip_pages,
-    )
-    return regions
-
-
 @dataclass(frozen=True)
 class ScannedDocument:
     """The half of segmentation that depends only on the PDF.
@@ -1283,11 +1258,11 @@ def segment_questions_report(
     *,
     skip_pages: set[int] | None = None,
 ) -> tuple[list[QuestionRegion], SegmentationReport]:
-    """Same as :func:`segment_questions`, plus a report on what failed.
+    """Detect question boundaries, and report which questions failed.
 
-    Use this when the caller needs to tell the user which questions could
-    not be located — ``segment_questions`` alone cannot distinguish "not
-    detected" from "detected but unusable".
+    The report is what tells the user *which* questions could not be
+    located — the regions alone cannot distinguish "not detected" from
+    "detected but unusable".
 
     This is :func:`scan_document` followed by :func:`match_scanned`; call
     those two directly to overlap the scan with the mark-scheme parse.
