@@ -80,15 +80,10 @@ _HAIRLINE = theme.HAIRLINE
 # phones and iPad as well as desktop, so the side-by-side form is a
 # wide-window affordance, not the only layout.
 _NARROW_WIDTH = 560
-#: main.py's nav_rail (84px) + its 1px VerticalDivider — this tab now renders
-#: inside content_area, to the right of both, so page.width overstates the
-#: room actually available here by that much (same gap analytics.py's chart
-#: width had to account for).
-_NAV_CHROME_W = 85
 
 
 def _is_narrow(page: ft.Page) -> bool:
-    return (page.width or 1024) - _NAV_CHROME_W < _NARROW_WIDTH
+    return (page.width or 1024) - theme.NAV_CHROME_W < _NARROW_WIDTH
 
 
 def _tf(

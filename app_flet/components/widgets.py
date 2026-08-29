@@ -106,60 +106,65 @@ def section_title(text: str) -> ft.Text:
     )
 
 
-def success_banner(message: str, details: list[str] | None = None) -> ft.Container:
+def _banner(
+    message: str,
+    details: list[str] | None,
+    *,
+    icon: ft.IconValue,
+    icon_color: str,
+    bgcolor: str,
+    bold: bool,
+) -> ft.Container:
     controls: list[ft.Control] = [
         ft.Row([
-            ft.Icon(ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL, color=theme.SUCCESS),
-            ft.Text(message, weight=ft.FontWeight.BOLD),
+            ft.Icon(icon, color=icon_color),
+            ft.Text(
+                message,
+                weight=ft.FontWeight.BOLD if bold else None,
+            ),
         ]),
     ]
-    for d in details or []:
-        controls.append(ft.Text(d, size=12, color=theme.MUTED))
+    controls.extend(
+        ft.Text(d, size=theme.CAPTION, color=theme.MUTED) for d in details or []
+    )
     return ft.Container(
         content=ft.Column(controls),
-        bgcolor=theme.SUCCESS_TINT,
+        bgcolor=bgcolor,
         border_radius=theme.CARD_RADIUS,
         border=ft.Border.all(1, theme.HAIRLINE),
         shadow=theme.row_shadow(),
         padding=theme.SPACE_LG,
+    )
+
+
+def success_banner(message: str, details: list[str] | None = None) -> ft.Container:
+    return _banner(
+        message, details,
+        icon=ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL,
+        icon_color=theme.SUCCESS,
+        bgcolor=theme.SUCCESS_TINT,
+        bold=True,
     )
 
 
 def error_banner(message: str) -> ft.Container:
-    return ft.Container(
-        content=ft.Row([
-            ft.Icon(ft.CupertinoIcons.XMARK_CIRCLE_FILL, color=theme.DANGER),
-            ft.Text(message),
-        ]),
+    return _banner(
+        message, None,
+        icon=ft.CupertinoIcons.XMARK_CIRCLE_FILL,
+        icon_color=theme.DANGER,
         bgcolor=theme.DANGER_TINT,
-        border_radius=theme.CARD_RADIUS,
-        border=ft.Border.all(1, theme.HAIRLINE),
-        shadow=theme.row_shadow(),
-        padding=theme.SPACE_LG,
+        bold=False,
     )
 
 
 def warning_banner(message: str, details: list[str] | None = None) -> ft.Container:
-    controls: list[ft.Control] = [
-        ft.Row([
-            ft.Icon(ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL, color=theme.WARNING),
-            ft.Text(message, weight=ft.FontWeight.BOLD),
-        ]),
-    ]
-    for d in details or []:
-        controls.append(ft.Text(d, size=12, color=theme.MUTED))
-    return ft.Container(
-        content=ft.Column(controls),
+    return _banner(
+        message, details,
+        icon=ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+        icon_color=theme.WARNING,
         bgcolor=theme.WARNING_TINT,
-        border_radius=theme.CARD_RADIUS,
-        border=ft.Border.all(1, theme.HAIRLINE),
-        shadow=theme.row_shadow(),
-        padding=theme.SPACE_LG,
+        bold=True,
     )
-
-
-#: 颜色槽位收的东西：一个定值，或者一个「问的时候才算」的取值器。
-Tint = "ft.ColorValue | Callable[[], ft.ColorValue | None] | None"
 
 
 def _tint(source: ft.ColorValue | Callable[[], ft.ColorValue | None] | None) -> (
@@ -363,14 +368,4 @@ def segmented_strip(
         bgcolor=theme.PRIMARY_TINT,
         border=ft.Border.all(1, theme.HAIRLINE),
         border_radius=PILL_RADIUS,
-    )
-
-
-def loading_row(label: str) -> ft.Row:
-    return ft.Row(
-        [
-            ft.ProgressRing(width=20, height=20),
-            ft.Text(label, size=theme.CAPTION, color=theme.MUTED),
-        ],
-        spacing=theme.SPACE_SM,
     )

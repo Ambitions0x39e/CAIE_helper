@@ -64,10 +64,6 @@ _EXPORT_ANSWERS_FILENAME = "mistakes-answers.pdf"
 # window edge and drags every other column with it. Everything else gets a
 # fixed width so that "how much is left" is arithmetic rather than a guess.
 
-#: main.py's nav rail (64 + 20 padding) plus its 1px divider. ``page.width``
-#: is the whole window, so this comes off first — same constant, same reason,
-#: as analytics.py's ``_NAV_CHROME_W``.
-_NAV_CHROME_W = 85
 #: DataTable's own horizontal margin (24 each side) plus its checkbox column.
 _TABLE_CHROME = 48 + 48
 #: DataTable's default gap between columns; ``data_table`` doesn't override it.
@@ -95,7 +91,7 @@ def _usable_width(page: ft.Page, columns: int) -> int:
     """Room left for cell content once every fixed cost is paid."""
     return (
         int(page.width or 1024)
-        - _NAV_CHROME_W
+        - theme.NAV_CHROME_W
         - theme.SPACE_XL * 2            # page padding
         - theme.SPACE_LG * 2            # card padding
         - _TABLE_CHROME

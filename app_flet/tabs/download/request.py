@@ -340,7 +340,7 @@ def build_request_tab(
                 ft.Divider(height=9),
             ]
             # QP 打头、对应的 MS 和 insert 作 ╰─ 子行挂在下面；子行不单独占行、
-            # 不占选择列，因为勾一个 QP 下的就是一整套（download_with_insert
+            # 不占选择列，因为勾一个 QP 下的就是一整套（download(insert=True)
             # 就是 QP+MS+in 一起下）。一套打包成一个内层 Column（spacing=0，
             # 贴紧成一个整体）；这些整体之间、以及整体和上面表头之间走外层
             # Column 的 SPACE_SM，跟其他内容的间距一致。
@@ -466,13 +466,8 @@ def build_request_tab(
                         errors.append(f"{entry.paper_id}: {msgs}")
                         continue
 
-                    # 这一列里显示了 insert 子行的，就走 QP+MS+in 那条；
-                    # 其余（含 gt）走 download()。
-                    dl = (
-                        downloader.download_with_insert(request)
-                        if entry.has_insert
-                        else downloader.download(request)
-                    )
+                    # 这一列里显示了 insert 子行的，才连 insert 一起下。
+                    dl = downloader.download(request, insert=entry.has_insert)
                     if dl.success:
                         succeeded += 1
                         if dl.insert_error:

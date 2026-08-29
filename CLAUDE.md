@@ -48,9 +48,9 @@ uv run ruff check .
 # Format
 uv run ruff format .
 
-# Type check — name the three packages; a bare `.` pulls in
-# extensions/flet_pdf_render/examples/…/src/main.py and dies on the
-# duplicate `main` module before checking anything.
+# Type check — name the three packages. `tests/` and `main.py` are outside
+# strict mode (see [[tool.mypy.overrides]]), so a bare `.` reports dozens of
+# errors that are not the app's.
 uv run mypy app_flet core modules
 
 # Run tests
@@ -110,7 +110,6 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
 - **Python 3.13+** with `uv` as package manager
 - **Flet** for the UI (desktop/iOS app; `flet run app_flet`)
 - **Pydantic v2** for all validation, settings, and domain models (strict mode enabled on most models)
-- **pandas** for CSV store and analytics DataFrames
 - **pdfminer.six** for all PDF text/geometry extraction — segmentation *and* grade thresholds (both iOS-safe). **pdfplumber is dev-only now**, kept solely for the segmenter fidelity check that diffs the two engines; nothing shipped imports it, and the old `gt` extra is gone
 - **requests** for downloading PDFs
 - **ruff** (E/F/I/UP/B/SIM) + **mypy strict** for linting/typing
@@ -131,9 +130,10 @@ deleted UI is recoverable from git history.
 
 ### `core/` — infrastructure layer
 - **`settings.py`** — `AppSettings` (paths: `~/.cie_helper/`) and `MailConfig` (SMTP from .env). Singleton `app_settings` imported by all modules.
-- **`storage.py`** — `CSVStore` loads/saves `PaperRecord` list from/to `~/.cie_helper/data.csv` via pandas. Provides `load_all`, `save_all`, `append`, `update`, `delete`, `to_dataframe`.
+- **`storage.py`** — `CSVStore` loads/saves `PaperRecord` list from/to `~/.cie_helper/data.csv` via the stdlib `csv` module. Provides `load_all`, `save_all`, `append`, `update`, `delete`. `MistakeStore` is its append-only sibling for `mistakes.csv`. Both open with `newline=""` — without it the csv module's `
+` gets translated again on Windows and every row is followed by a blank line.
 - **`models.py`** — `PaperRecord` Pydantic model with computed `percentage` field and cross-field validators (scores required when Completed, raw ≤ total).
-- **`config_store.py`** — `ConfigStore` manages `data/syllabus_config.json` (syllabus names + paper type labels used by analytics).
+- **`config_store.py`** — `ConfigStore` reads `data/syllabus_config.json` (syllabus names + paper type labels used by analytics); `grading_type_for_paper` resolves a paper_id to its grading path, and `qp_skip_pages` reads `data/paper_page_config.json`. Read-only: both files are edited by hand.
 - **`gt_parser.py`** — `GTParser` parses CIE grade threshold PDFs into `GTDocument` / per-option `GradeThreshold`. Three things to know, all covered by `tests/test_gt_parser.py`:
   - **Tables come from ruling lines**, not pdfplumber's `extract_tables()` — CIE draws every border as a thin `LTRect`. Verticals from *different tables on one page* must not be pooled (that sliced `250` into `25`+`0`), and multi-line cells must be read line-by-line or their glyphs interleave.
   - **CID decoding is derived, not transcribed.** These PDFs embed Arial as an Identity-H subset with no ToUnicode *and* the font's own `cmap` stripped, so pdfminer emits `(cid:N)` where N is the raw glyph id. Those ids follow the standard Macintosh TrueType glyph order, whose entries 3–97 are printable ASCII — `_cid_to_char` computes that. The hand-transcribed table it replaced came from one document and silently mistranslated every other syllabus (9701_w25 reported a D boundary of `10` instead of `103`). **Never re-introduce a per-file CID table.**
@@ -153,7 +153,7 @@ deleted UI is recoverable from git history.
 - **Validation at boundaries** — `DownloadRequest`, `MailRequest`, `ScoreUpdate`, `DeleteRequest` are Pydantic models that validate user input at the entry point.
 - **CSV as database** — file lives at `~/.cie_helper/data.csv`; no SQL database.
 - **`.env`** — SMTP credentials stored at repo root, loaded by `MailConfig`/pydantic-settings.
-- **No `modules/` re-exports** — `modules/__init__.py` and `modules/marking/__init__.py` are deliberately empty of imports, so `import modules.marking.page_segmenter` doesn't drag in siblings' platform-specific deps (several have no iOS wheel, which would break `flet build ipa`). `tests/test_modules_import.py` guards this in a subprocess. `core/__init__.py` does re-export.
+- **No package re-exports** — `modules/__init__.py` and `modules/marking/__init__.py` are deliberately empty of imports, so `import modules.marking.page_segmenter` doesn't drag in siblings' platform-specific deps (several have no iOS wheel, which would break `flet build ipa`). `tests/test_modules_import.py` guards this in a subprocess. `core/__init__.py` is empty of imports for the same reason — `from core.models import PaperType` must not pull in `storage` and `settings` to reach an enum.
 
 ### Syllabus config
 - `data/syllabus_config.json` — JSON array of `{syllabus_id, name, paper_types[]}` entries. Read by the Analytics and Download tabs for syllabus/paper-type labels. **No in-app editor** since the Streamlit admin page was removed — edit the JSON by hand.
