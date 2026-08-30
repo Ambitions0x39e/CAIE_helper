@@ -350,9 +350,13 @@ def _build_syllabus_section(
             page.update()
 
     return ft.ExpansionTile(
+        leading=ft.Icon(
+            ft.CupertinoIcons.BOOK_FILL, color=theme.PRIMARY, size=18,
+        ),
         title=ft.Text(
-            f"📚 {syl_id} — {syl_name}",
+            f"{syl_id} — {syl_name}",
             weight=ft.FontWeight.BOLD,
+            style=theme.body_style(),
         ),
         expanded=False,
         on_change=_on_expand_change,  # type: ignore[arg-type]

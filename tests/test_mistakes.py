@@ -21,6 +21,7 @@ from modules.marking.mistakes import (
     group_by_paper,
     mistakes_from_results,
     retag,
+    split_topic_key,
     subject_id_of,
     to_csv,
     topic_key,
@@ -304,3 +305,26 @@ class TestToCsv:
         text = to_csv([_record("Q1"), _record("Q2"), _record("Q3")])
 
         assert len(text.strip().splitlines()) == 4
+
+
+class TestSplitTopicKey:
+    """错题本按 topic 浏览时先分 syllabus 那一层，靠这个把 key 拆回两半。"""
+
+    def test_round_trips_a_key_built_by_topic_key(self) -> None:
+        record = _record("Q1", topic_name="Quadratics")
+
+        assert split_topic_key(topic_key(record)) == ("9709", "Quadratics")
+
+    def test_unclassified_keeps_its_syllabus(self) -> None:
+        record = _record("Q1", topic_id=None, topic_name=None)
+
+        assert split_topic_key(topic_key(record)) == ("9709", UNCLASSIFIED)
+
+    def test_a_key_without_a_separator_is_all_topic(self) -> None:
+        """没有分隔符时整串都是 topic 名，不是 syllabus —— 否则一个裸名字会
+        被当成学科代码，在分组里长出一个叫「Quadratics」的科目。"""
+        assert split_topic_key("Quadratics") == ("", "Quadratics")
+
+    def test_a_topic_name_containing_the_separator_survives(self) -> None:
+        """分隔符只切第一处：topic 名里再出现一次不该把名字截断。"""
+        assert split_topic_key("9709 · Vectors · 3D") == ("9709", "Vectors · 3D")

@@ -27,6 +27,7 @@ import flet as ft
 
 from app_flet import theme
 from app_flet.components.widgets import data_table, push_track, segmented_strip
+from core.config_store import ConfigStore
 from core.models import MistakeRecord
 from core.storage import CSVStore, MistakeStore
 from modules.marking.answer_sheet import build_answer_sheet
@@ -37,6 +38,7 @@ from modules.marking.mistakes import (
     filter_by_topic,
     group_by_paper,
     retag,
+    split_topic_key,
     subject_id_of,
     to_csv,
     topic_key,
@@ -45,7 +47,7 @@ from modules.marking.syllabus_parser import load_syllabus
 from modules.marking.workflow import topics_for_paper
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from app_flet.state import AppState
 
@@ -267,6 +269,12 @@ def build_mistakes_tab(
     # and rows are not unique on their own (a re-grade repeats paper+question).
     selected: set[int] = set()
     active_topics: set[str] = set()
+    #: syllabus code → 学科名，给 by-topic 那层分组的标题用。读一次就够——
+    #: 配置是手改 JSON 的，不会在一次浏览里变。
+    syllabus_names: dict[str, str] = {
+        code: str(entry.get("name", ""))
+        for code, entry in ConfigStore().load_syllabus_config().items()
+    }
     view = _BY_PAPER
     content_area, show_view = push_track(
         page, len(_VIEWS), ft.Column(spacing=theme.SPACE_MD),
@@ -440,12 +448,16 @@ def build_mistakes_tab(
         indices: Sequence[int],
         *,
         show_paper: bool,
+        boxed: bool = True,
     ) -> ft.Control:
         """A collapsed group whose table is built the first time it opens.
 
         Same lazy pattern as 统计's syllabus panels: with a term's worth of
         papers in the store, building every table up front is work the user
         never asked for.
+
+        ``boxed=False`` 去掉外面那层卡片：嵌在别的组里时，两层卡片会叠出双重
+        描边和双重阴影，读起来像两块面板而不是一块里的一条。
         """
         body = ft.Column()
         built = [False]
@@ -456,7 +468,7 @@ def build_mistakes_tab(
                 body.controls.append(_table(indices, show_paper=show_paper))
                 page.update()
 
-        return _card(ft.ExpansionTile(
+        tile = ft.ExpansionTile(
             title=ft.Row(
                 [
                     ft.Icon(icon, color=theme.PRIMARY, size=18),
@@ -479,7 +491,8 @@ def build_mistakes_tab(
                     bottom=theme.SPACE_MD,
                 ),
             )],
-        ))
+        )
+        return _card(tile) if boxed else tile
 
     # ── By paper ──────────────────────────────────────────────────
 
@@ -501,7 +514,26 @@ def build_mistakes_tab(
 
     # ── By topic ──────────────────────────────────────────────────
 
-    def _topic_chip(key: str) -> ft.Chip:
+    def _by_syllabus(keys: Iterable[str]) -> dict[str, dict[str, str]]:
+        """``["9701 · Equilibria", …]`` → ``{"9701": {"Equilibria": <key>}}``。
+
+        两层都靠 dict 的插入序，而喂进来的 key 是 ``distinct_topic_keys``
+        排好的（未分类垫底），所以学科的先后和每个学科里 topic 的先后都是稳
+        的，未分类也仍然落在各自学科的最后一个。
+        """
+        grouped: dict[str, dict[str, str]] = {}
+        for key in keys:
+            syl, name = split_topic_key(key)
+            grouped.setdefault(syl, {})[name] = key
+        return grouped
+
+    def _syllabus_label(syl: str) -> str:
+        if not syl:
+            return UNCLASSIFIED
+        name = syllabus_names.get(syl)
+        return f"{syl} — {name}" if name else syl
+
+    def _topic_chip(key: str, label: str) -> ft.Chip:
         def _on_select(e: ft.Event[ft.Chip]) -> None:
             if e.control.selected:
                 active_topics.add(key)
@@ -510,14 +542,39 @@ def build_mistakes_tab(
             _rebuild_content()
 
         return ft.Chip(
+            # 芯片上只写 topic 名，学科代码由它上面那行小标题交代 —— 每颗都
+            # 顶着一遍「9701 · 」时，一行放不下几颗，而且真正要读的那半截被
+            # 挤到了后面。
             label=ft.Text(
-                key, size=theme.CAPTION, style=theme.caption_style(),
+                label, size=theme.CAPTION, style=theme.caption_style(),
             ),
             selected=key in active_topics,
             show_checkmark=True,
             bgcolor=theme.SURFACE,
             selected_color=theme.PRIMARY_TINT,
             on_select=_on_select,
+        )
+
+    def _chip_group(syl: str, topics: dict[str, str]) -> ft.Control:
+        return ft.Column(
+            [
+                ft.Text(
+                    _syllabus_label(syl),
+                    size=theme.CAPTION, color=theme.MUTED,
+                    weight=ft.FontWeight.W_600,
+                    style=theme.caption_style(),
+                ),
+                ft.Row(
+                    [
+                        _topic_chip(key, name)
+                        for name, key in topics.items()
+                    ],
+                    spacing=theme.SPACE_SM,
+                    run_spacing=theme.SPACE_SM,
+                    wrap=True,
+                ),
+            ],
+            spacing=theme.SPACE_XS,
         )
 
     def _topic_view() -> list[ft.Control]:
@@ -539,24 +596,63 @@ def build_mistakes_tab(
                 ),
             ], spacing=theme.SPACE_SM,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Row(
-                [_topic_chip(key) for key in distinct_topic_keys(records)],
-                spacing=theme.SPACE_SM,
-                run_spacing=theme.SPACE_SM,
-                wrap=True,
+            *(
+                _chip_group(syl, topics)
+                for syl, topics in _by_syllabus(
+                    distinct_topic_keys(records)
+                ).items()
             ),
         )
-        tiles = [
-            _group_tile(
-                key,
-                f"{len(indices)} 题",
-                ft.CupertinoIcons.TAG,
-                indices,
-                show_paper=True,
+        # 下面的分组列表按同一层次分：芯片按学科分了，列表还平铺的话，同一份
+        # 数据在一屏里有两种组织方式。
+        return [filter_card, *(
+            _syllabus_group(
+                syl, {name: index_by_topic[key] for name, key in topics.items()},
             )
-            for key, indices in index_by_topic.items()
-        ]
-        return [filter_card, *tiles]
+            for syl, topics in _by_syllabus(index_by_topic).items()
+        )]
+
+    def _syllabus_group(
+        syl: str, topics: dict[str, list[int]],
+    ) -> ft.Control:
+        """一个 syllabus 一块卡片，里面是它自己的 topic 分组。
+
+        外层不做懒加载：里面每个 topic 组的表格各自懒建，这一层只是把它们的
+        标题排起来，本来就没有多少活。
+        """
+        total = sum(len(v) for v in topics.values())
+        return _card(ft.ExpansionTile(
+            leading=ft.Icon(
+                ft.CupertinoIcons.BOOK_FILL, color=theme.PRIMARY, size=18,
+            ),
+            title=ft.Row(
+                [
+                    ft.Text(
+                        _syllabus_label(syl),
+                        size=theme.SUBHEAD, weight=ft.FontWeight.W_600,
+                    ),
+                    ft.Text(
+                        f"{len(topics)} 个 topic · {total} 题",
+                        size=theme.CAPTION, color=theme.MUTED,
+                        style=theme.caption_style(),
+                    ),
+                ],
+                spacing=theme.SPACE_SM,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            expanded=False,
+            controls=[
+                _group_tile(
+                    topic,
+                    f"{len(indices)} 题",
+                    ft.CupertinoIcons.TAG,
+                    indices,
+                    show_paper=True,
+                    boxed=False,
+                )
+                for topic, indices in topics.items()
+            ],
+        ))
 
     # ── Export ────────────────────────────────────────────────────
 
