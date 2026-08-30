@@ -123,14 +123,16 @@ deleted UI is recoverable from git history.
 ## Architecture
 
 ### Entry point
-- `main.py` / `app_flet/main.py` — Flet app: header + 5 tabs (下载 / 管理 / 统计 / 批改 / 设置)
+- `main.py` / `app_flet/main.py` — Flet app: header + 4 tabs (下载 / 管理 / 批改 / 设置)
 - `app_flet/state.py` — `AppState`, the mutable state shared across tabs
 - `app_flet/tabs/*.py` — one `build_*_tab()` per tab; `app_flet/components/` holds shared widgets and dialogs
-- `app_flet/tabs/mark/` — the one tab too big for a single file. `tab.py` owns the rebuild loop, `setup_step` / `answer_pages` / `grade_step` / `results` / `mcq` are the sections, and they share mutable state through `MarkTabContext` (`context.py`) instead of the closure refs the old single-file version used. UI-agnostic decisions live one layer down, in `modules/marking/workflow.py`.
+- `app_flet/tabs/manage/` — everything that reads back stored papers, in one tab with three sections. `tab.py` owns the section strip and hosts 总览's full-cover detail panel (the fixed-height `Stack` + `on_resize` pattern from `mark/tab.py` — a scrolling `Column` gives an overlay no viewport to pin to). `overview.py` is the aggregate view (a hand-drawn `canvas.Arc` donut plus one card per syllabus, opening onto its score table and trend chart); `organize.py` is browse-and-act (Finder's icon / detail layouts); `mistakes.py` is the per-paper breakdown of lost marks. The `finder_*` row style lives in `organize.py` and 错题 imports it — the two have different columns and share only the look.
+  - **The donut counts one unit per paper, not per mark.** A Pending record has no `score_total` (`completed_requires_scores` only demands them for Completed), so the grey slice has no marks to contribute. Each paper is one unit: a completed one splits into earned/lost by its score rate, a pending one is one whole grey unit. `tests/test_manage_overview.py` pins the slices summing to the paper count.
+- `app_flet/tabs/mark/` — the other tab too big for a single file. `tab.py` owns the rebuild loop, `setup_step` / `answer_pages` / `grade_step` / `results` / `mcq` are the sections, and they share mutable state through `MarkTabContext` (`context.py`) instead of the closure refs the old single-file version used. UI-agnostic decisions live one layer down, in `modules/marking/workflow.py`.
 
 ### `core/` — infrastructure layer
 - **`settings.py`** — `AppSettings` (paths: `~/.cie_helper/`) and `MailConfig` (SMTP from .env). Singleton `app_settings` imported by all modules.
-- **`storage.py`** — `CSVStore` loads/saves `PaperRecord` list from/to `~/.cie_helper/data.csv` via the stdlib `csv` module. Provides `load_all`, `save_all`, `append`, `update`, `delete`. `MistakeStore` is its append-only sibling for `mistakes.csv`. Both open with `newline=""` — without it the csv module's `
+- **`storage.py`** — `CSVStore` loads/saves `PaperRecord` list from/to `~/.cie_helper/data.csv` via the stdlib `csv` module. Provides `load_all`, `save_all`, `append`, `update`, `delete`. `MistakeStore` is its append-only sibling for `mistakes.csv`. Both open with `newline=""` — without it the csv module's `
 ` gets translated again on Windows and every row is followed by a blank line.
 - **`models.py`** — `PaperRecord` Pydantic model with computed `percentage` field and cross-field validators (scores required when Completed, raw ≤ total).
 - **`config_store.py`** — `ConfigStore` reads `data/syllabus_config.json` (syllabus names + paper type labels used by analytics); `grading_type_for_paper` resolves a paper_id to its grading path, and `qp_skip_pages` reads `data/paper_page_config.json`. Read-only: both files are edited by hand.
@@ -156,7 +158,7 @@ deleted UI is recoverable from git history.
 - **No package re-exports** — `modules/__init__.py` and `modules/marking/__init__.py` are deliberately empty of imports, so `import modules.marking.page_segmenter` doesn't drag in siblings' platform-specific deps (several have no iOS wheel, which would break `flet build ipa`). `tests/test_modules_import.py` guards this in a subprocess. `core/__init__.py` is empty of imports for the same reason — `from core.models import PaperType` must not pull in `storage` and `settings` to reach an enum.
 
 ### Syllabus config
-- `data/syllabus_config.json` — JSON array of `{syllabus_id, name, paper_types[]}` entries. Read by the Analytics and Download tabs for syllabus/paper-type labels. **No in-app editor** since the Streamlit admin page was removed — edit the JSON by hand.
+- `data/syllabus_config.json` — JSON array of `{syllabus_id, name, paper_types[]}` entries. Read by the 管理 and 下载 tabs for syllabus/paper-type labels, and by `manage/paper_icon.py`, which picks a subject glyph by **keyword in the name** rather than by code — one entry covers a subject at both IGCSE and A Level, and a new code needs no table edit. **No in-app editor** since the Streamlit admin page was removed — edit the JSON by hand.
 
 ## Key conventions
 
