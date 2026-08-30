@@ -241,7 +241,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         # 看的是「这份 config 是按什么解析出来的」(state)，不是单选框现在选的是
         # 什么 (ctx)：解析完再去点一下 MATH，预览不该跟着换一种画法。
         body: ft.Control
-        if state.paper_type == PaperType.MCQ.value:
+        if state.paper_type is PaperType.MCQ:
             body = answer_sheet_table(pc)
         else:
             q_controls: list[ft.Control] = []
@@ -706,7 +706,7 @@ def _commit(
     state = ctx.state
     state.paper_config = pc
     state.ms_from_cache = from_cache
-    state.paper_type = pt.value
+    state.paper_type = pt
     state.deleted_questions.clear()
     state.grading_results.clear()
     state.score_overrides.clear()

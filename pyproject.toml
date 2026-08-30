@@ -40,7 +40,6 @@ dependencies = [
     # this project declares >=3.13 — a mismatch waiting to bite.
     "flet>=0.86.4,<0.87",
     "flet-pdf-render",  # local native pdfrx render extension
-    "pandas>=2.2.0",
     "pydantic[email]>=2.7.0",
     "pydantic-settings>=2.3.0",
     "requests>=2.32.0",
@@ -51,7 +50,6 @@ dependencies = [
     "pypdf>=5.0.0",
     "python-dotenv>=1.0.0",
     "openai>=1.30.0",
-    "pyyaml>=6.0",
     # 2026-08-12: pypdfium2, pillow and pypdf all dropped together. They existed
     # only to work around the render RPC: the service took the PDF's *bytes*, so
     # a 35MB scan stalled the transport, and the fix was an in-process pypdfium2
@@ -64,7 +62,7 @@ dependencies = [
     # trees for `*.so` but NOT `*.dylib`, so every .dylib was silently left
     # arm64-only: pypdfium2_raw/libpdfium.dylib plus pillow's 18 vendored
     # PIL/.dylibs/*. Those 19 files were the only non-fat binaries in the whole
-    # bundle — everything else (pandas, numpy, pydantic-core, the app binary,
+    # bundle — everything else (pydantic-core, the app binary,
     # Python.framework) was already x86_64+arm64. They were also a second,
     # redundant copy of PDFium: pdfrx already ships a universal one in
     # Contents/Frameworks/PDFium.framework.
@@ -171,7 +169,7 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
-    "pandas", "pandas.*", "requests", "requests.*",
+    "requests", "requests.*",
     "pdfplumber", "pdfplumber.*",
 ]
 ignore_missing_imports = true

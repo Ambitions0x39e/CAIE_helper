@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import csv
 import datetime
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import IO, Any
 
-import pandas as pd
 from pydantic import ValidationError
 
 from core.models import MistakeRecord, PaperRecord
@@ -24,6 +26,56 @@ _COLUMNS: list[str] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# CSV helpers
+# ---------------------------------------------------------------------------
+#
+# ``newline=""`` on both sides is load-bearing on Windows, not decoration: the
+# csv module writes its own ``\r\n``, so letting text mode translate as well
+# produces ``\r\r\n`` and a blank line between every row.
+
+
+@contextmanager
+def _reading(path: Path) -> Iterator[IO[str]]:
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        yield fh
+
+
+@contextmanager
+def _writing(path: Path) -> Iterator[IO[str]]:
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        yield fh
+
+
+def _write_rows(
+    path: Path, columns: list[str], rows: Sequence[Mapping[str, object]]
+) -> None:
+    with _writing(path) as fh:
+        writer = csv.DictWriter(fh, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _cell(row: Mapping[str, str | None], key: str) -> str:
+    """One cell as a stripped string — blank for a missing or empty column."""
+    return (row.get(key) or "").strip()
+
+
+def _nullable_float(value: str) -> float | None:
+    """``""`` → None, leaving the field's own validator to judge the blank.
+
+    Never NaN: a blank cell parsed as NaN passes both the non-negative and the
+    ``score <= max_score`` checks, since ``nan < 0`` and ``nan > max`` are both
+    False — a mark that is silently neither too low nor too high. None cannot
+    pass any of them.
+    """
+    return float(value) if value else None
+
+
+def _nullable_dt(value: str) -> datetime.datetime | None:
+    return datetime.datetime.fromisoformat(value) if value else None
+
+
 class CSVStore:
     """Handles all persistence for PaperRecord objects via a flat CSV file."""
 
@@ -37,18 +89,21 @@ class CSVStore:
 
     def load_all(self) -> list[PaperRecord]:
         """Read CSV → validate every row → return list of PaperRecords."""
-        df = pd.read_csv(self._path, dtype=str)
         records: list[PaperRecord] = []
         errors: list[str] = []
 
-        for idx, row in df.iterrows():
-            try:
-                record = PaperRecord.model_validate(
-                    self._row_to_dict(row), strict=False
-                )
-                records.append(record)
-            except ValidationError as exc:
-                errors.append(f"Row {idx}: {exc.error_count()} error(s) — {exc}")
+        with _reading(self._path) as fh:
+            for idx, row in enumerate(csv.DictReader(fh)):
+                try:
+                    records.append(
+                        PaperRecord.model_validate(
+                            self._row_to_dict(row), strict=False
+                        )
+                    )
+                except ValidationError as exc:
+                    errors.append(
+                        f"Row {idx}: {exc.error_count()} error(s) — {exc}"
+                    )
 
         if errors:
             # Surface all validation errors at once rather than silently dropping rows
@@ -61,9 +116,7 @@ class CSVStore:
 
     def save_all(self, records: Sequence[PaperRecord]) -> None:
         """Validate and overwrite the entire CSV with the given records."""
-        rows = [self._record_to_row(r) for r in records]
-        df = pd.DataFrame(rows, columns=_COLUMNS)
-        df.to_csv(self._path, index=False)
+        _write_rows(self._path, _COLUMNS, [self._record_to_row(r) for r in records])
 
     def append(self, record: PaperRecord) -> None:
         """Append a single validated record to the CSV."""
@@ -93,16 +146,6 @@ class CSVStore:
             raise KeyError(f"paper_id '{paper_id}' not found in store")
         self.save_all(filtered)
 
-    def to_dataframe(
-        self, records: Sequence[PaperRecord] | None = None
-    ) -> pd.DataFrame:
-        """Return a DataFrame of all records (useful for Streamlit display)."""
-        if records is None:
-            records = self.load_all()
-        return pd.DataFrame(
-            [self._record_to_row(r) for r in records], columns=_COLUMNS
-        )
-
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -110,37 +153,25 @@ class CSVStore:
     def _ensure_file(self) -> None:
         """Create an empty CSV with headers if it doesn't exist yet."""
         if not self._path.exists():
-            pd.DataFrame(columns=_COLUMNS).to_csv(self._path, index=False)
+            _write_rows(self._path, _COLUMNS, [])
 
     @staticmethod
-    def _row_to_dict(row: pd.Series[object]) -> dict[str, object]:
+    def _row_to_dict(row: Mapping[str, str | None]) -> dict[str, object]:
         """Convert a raw CSV row (all strings) into types Pydantic can coerce."""
-
-        def _nullable_float(val: str) -> float | None:
-            return None if pd.isna(val) or str(val).strip() == "" else float(val)
-
-        def _nullable_dt(val: str) -> datetime.datetime | None:
-            if pd.isna(val) or str(val).strip() == "":
-                return None
-            return datetime.datetime.fromisoformat(str(val))
-
-        def _bool(val: str) -> bool:
-            return str(val).strip().lower() in {"true", "1", "yes"}
-
         return {
-            "paper_id": str(row["paper_id"]).strip(),
-            "status": str(row["status"]).strip(),
-            "qp_path": str(row["qp_path"]).strip(),
-            "ms_path": str(row["ms_path"]).strip(),
-            "score_raw": _nullable_float(row["score_raw"]),
-            "score_total": _nullable_float(row["score_total"]),
-            "sent_to_gn": _bool(row["sent_to_gn"]),
-            "timestamp": _nullable_dt(row["timestamp"]),
+            "paper_id": _cell(row, "paper_id"),
+            "status": _cell(row, "status"),
+            "qp_path": _cell(row, "qp_path"),
+            "ms_path": _cell(row, "ms_path"),
+            "score_raw": _nullable_float(_cell(row, "score_raw")),
+            "score_total": _nullable_float(_cell(row, "score_total")),
+            "sent_to_gn": _cell(row, "sent_to_gn").lower() in {"true", "1", "yes"},
+            "timestamp": _nullable_dt(_cell(row, "timestamp")),
         }
 
     @staticmethod
-    def _record_to_row(record: PaperRecord) -> dict[str, object]:
-        """Serialize a PaperRecord to a flat dict for DataFrame construction."""
+    def _record_to_row(record: PaperRecord) -> dict[str, Any]:
+        """Serialize a PaperRecord to a flat dict of CSV cells."""
         return {
             "paper_id": record.paper_id,
             "status": record.status,
@@ -185,19 +216,21 @@ class MistakeStore:
 
     def load_all(self) -> list[MistakeRecord]:
         """Read CSV → validate every row → return list of MistakeRecords."""
-        df = pd.read_csv(self._path, dtype=str)
         records: list[MistakeRecord] = []
         errors: list[str] = []
 
-        for idx, row in df.iterrows():
-            try:
-                records.append(
-                    MistakeRecord.model_validate(
-                        self._row_to_dict(row), strict=False
+        with _reading(self._path) as fh:
+            for idx, row in enumerate(csv.DictReader(fh)):
+                try:
+                    records.append(
+                        MistakeRecord.model_validate(
+                            self._row_to_dict(row), strict=False
+                        )
                     )
-                )
-            except ValidationError as exc:
-                errors.append(f"Row {idx}: {exc.error_count()} error(s) — {exc}")
+                except ValidationError as exc:
+                    errors.append(
+                        f"Row {idx}: {exc.error_count()} error(s) — {exc}"
+                    )
 
         if errors:
             # Surface all validation errors at once rather than silently
@@ -211,19 +244,16 @@ class MistakeStore:
 
     def save_all(self, records: Sequence[MistakeRecord]) -> None:
         """Validate and overwrite the entire CSV with the given records."""
-        rows = [self._record_to_row(r) for r in records]
-        df = pd.DataFrame(rows, columns=_MISTAKE_COLUMNS)
-        df.to_csv(self._path, index=False)
-
-    def append(self, record: MistakeRecord) -> None:
-        """Append a single record. Duplicates are allowed — see class docs."""
-        self.append_many([record])
+        _write_rows(
+            self._path, _MISTAKE_COLUMNS, [self._record_to_row(r) for r in records]
+        )
 
     def append_many(self, records: Sequence[MistakeRecord]) -> None:
         """Append a whole grading run's mistakes in one rewrite.
 
-        One paper yields a dozen or so rows at once; appending them one at a
-        time would reload and rewrite the file once per row.
+        Duplicates are allowed — see the class docs. One paper yields a dozen
+        or so rows at once; appending them one at a time would reload and
+        rewrite the file once per row.
         """
         if not records:
             return
@@ -267,16 +297,6 @@ class MistakeStore:
             raise KeyError(f"no mistake rows for '{target}'")
         self.save_all(kept)
 
-    def to_dataframe(
-        self, records: Sequence[MistakeRecord] | None = None
-    ) -> pd.DataFrame:
-        """Return a DataFrame of the given records (all of them by default)."""
-        if records is None:
-            records = self.load_all()
-        return pd.DataFrame(
-            [self._record_to_row(r) for r in records], columns=_MISTAKE_COLUMNS
-        )
-
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -285,48 +305,25 @@ class MistakeStore:
         """Create an empty CSV with headers if it doesn't exist yet."""
         if not self._path.exists():
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame(columns=_MISTAKE_COLUMNS).to_csv(
-                self._path, index=False
-            )
+            _write_rows(self._path, _MISTAKE_COLUMNS, [])
 
     @staticmethod
-    def _row_to_dict(row: pd.Series[object]) -> dict[str, object]:
+    def _row_to_dict(row: Mapping[str, str | None]) -> dict[str, object]:
         """Convert a raw CSV row (all strings) into types Pydantic can coerce."""
-
-        def _nullable_str(val: object) -> str | None:
-            if pd.isna(val) or str(val).strip() == "":
-                return None
-            return str(val).strip()
-
-        def _nullable_float(val: object) -> float | None:
-            # None rather than raising here: score/max_score are required,
-            # non-Optional fields, so passing None through to model_validate
-            # lets MistakeRecord's own validator reject it with a normal
-            # ValidationError — the same "N invalid row(s)" path every other
-            # malformed field already goes through. float(str(val)) on a
-            # blank cell would otherwise silently produce NaN, which passes
-            # both the non-negative and score<=max_score checks (nan < 0 and
-            # nan > max_score are both False).
-            if pd.isna(val) or str(val).strip() == "":
-                return None
-            return float(str(val))
-
         return {
-            "paper_id": str(row["paper_id"]).strip(),
-            "question_id": str(row["question_id"]).strip(),
-            "topic_id": _nullable_str(row["topic_id"]),
-            "topic_name": _nullable_str(row["topic_name"]),
-            "score": _nullable_float(row["score"]),
-            "max_score": _nullable_float(row["max_score"]),
-            "comment": _nullable_str(row["comment"]) or "",
-            "timestamp": datetime.datetime.fromisoformat(
-                str(row["timestamp"]).strip()
-            ),
+            "paper_id": _cell(row, "paper_id"),
+            "question_id": _cell(row, "question_id"),
+            "topic_id": _cell(row, "topic_id") or None,
+            "topic_name": _cell(row, "topic_name") or None,
+            "score": _nullable_float(_cell(row, "score")),
+            "max_score": _nullable_float(_cell(row, "max_score")),
+            "comment": _cell(row, "comment"),
+            "timestamp": datetime.datetime.fromisoformat(_cell(row, "timestamp")),
         }
 
     @staticmethod
-    def _record_to_row(record: MistakeRecord) -> dict[str, object]:
-        """Serialize a MistakeRecord to a flat dict for DataFrame construction."""
+    def _record_to_row(record: MistakeRecord) -> dict[str, Any]:
+        """Serialize a MistakeRecord to a flat dict of CSV cells."""
         return {
             "paper_id": record.paper_id,
             "question_id": record.question_id,

@@ -40,13 +40,11 @@
     "paper_types": [
       {
         "digit": "1",
-        "name": "Reading",
-        "score": 80
+        "name": "Reading"
       },
       {
         "digit": "2",
-        "name": "Directed Writing & Composition",
-        "score": 80
+        "name": "Directed Writing & Composition"
       }
     ]
   },
@@ -102,25 +100,21 @@
       {
         "digit": "1",
         "name": "Further Pure Mathematics 1",
-        "score": 75,
         "grading": "math"
       },
       {
         "digit": "2",
         "name": "Further Pure Mathematics 2",
-        "score": 75,
         "grading": "math"
       },
       {
         "digit": "3",
         "name": "Further Mechanics",
-        "score": 50,
         "grading": "math"
       },
       {
         "digit": "4",
         "name": "Further Probability & Statistics",
-        "score": 50,
         "grading": "math"
       }
     ]
@@ -151,13 +145,11 @@
     "paper_types": [
       {
         "digit": "1",
-        "name": "AS Theory",
-        "score": 75
+        "name": "AS Theory"
       },
       {
         "digit": "2",
-        "name": "AS Programming",
-        "score": 75
+        "name": "AS Programming"
       }
     ]
   },
@@ -214,19 +206,16 @@
       {
         "digit": "1",
         "name": "AS Multiple Choice",
-        "score": 40,
         "grading": "mcq"
       },
       {
         "digit": "2",
         "name": "AS Structured",
-        "score": 60,
         "grading": "math"
       },
       {
         "digit": "3",
         "name": "AS Practical",
-        "score": 40,
         "grading": "math"
       }
     ]
@@ -253,37 +242,31 @@
       {
         "digit": "1",
         "name": "Pure Mathematics 1",
-        "score": 75,
         "grading": "math"
       },
       {
         "digit": "2",
         "name": "Pure Mathematics 2",
-        "score": 75,
         "grading": "math"
       },
       {
         "digit": "3",
         "name": "Pure Mathematics 3",
-        "score": 75,
         "grading": "math"
       },
       {
         "digit": "4",
         "name": "Mechanics",
-        "score": 50,
         "grading": "math"
       },
       {
         "digit": "5",
         "name": "Probability & Statistics 1",
-        "score": 50,
         "grading": "math"
       },
       {
         "digit": "6",
         "name": "Probability & Statistics 2",
-        "score": 50,
         "grading": "math"
       }
     ]

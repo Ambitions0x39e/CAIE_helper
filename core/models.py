@@ -13,23 +13,6 @@ class PaperType(StrEnum):
     MCQ = "mcq"
 
 
-SUBJECT_PAPER_TYPES: dict[str, PaperType] = {
-    "9709": PaperType.MATH,
-    "9231": PaperType.MATH,
-    # MCQ (Paper 1) subjects
-    "9702": PaperType.MCQ,  # Physics
-    "9701": PaperType.MCQ,  # Chemistry
-    "9700": PaperType.MCQ,  # Biology
-    "9696": PaperType.MCQ,  # Geography
-}
-
-
-def detect_paper_type(paper_id: str) -> PaperType | None:
-    """Resolve a paper_id (e.g. '9231_w22_qp_41') to its PaperType, or None."""
-    subject = paper_id.split("_")[0] if "_" in paper_id else paper_id[:4]
-    return SUBJECT_PAPER_TYPES.get(subject)
-
-
 class MistakeRecord(BaseModel):
     """One question a grading run did not award full marks for.
 
