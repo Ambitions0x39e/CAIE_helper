@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 
 import flet as ft
 
@@ -158,6 +158,30 @@ def warning_banner(message: str, details: list[str] | None = None) -> ft.Contain
     )
 
 
+def info_banner(message: str, details: list[str] | None = None) -> ft.Container:
+    """中性通报：只是告诉你现在是什么情况，没有要你做的事。
+
+    跟 warning 分开是因为它们的**下一步**不同：warning 有个待办（去填、去改），
+    info 没有。同一条「识别了 13/13 题」在全中时是 info，差一题就是 warning。
+    """
+    controls: list[ft.Control] = [
+        ft.Row([
+            ft.Icon(ft.CupertinoIcons.INFO_CIRCLE_FILL, color=theme.PRIMARY),
+            ft.Text(message, weight=ft.FontWeight.BOLD),
+        ]),
+    ]
+    for d in details or []:
+        controls.append(ft.Text(d, size=theme.CAPTION, color=theme.MUTED))
+    return ft.Container(
+        content=ft.Column(controls),
+        bgcolor=theme.PRIMARY_TINT,
+        border_radius=theme.CARD_RADIUS,
+        border=ft.Border.all(1, theme.HAIRLINE),
+        shadow=theme.row_shadow(),
+        padding=theme.SPACE_LG,
+    )
+
+
 #: 颜色槽位收的东西：一个定值，或者一个「问的时候才算」的取值器。
 Tint = "ft.ColorValue | Callable[[], ft.ColorValue | None] | None"
 
@@ -254,6 +278,8 @@ def segmented_strip(
     on_select: Callable[[int], None],
     *,
     selected: int = 0,
+    disabled: Collection[int] = (),
+    cell_width: int | None = None,
 ) -> ft.Container:
     """站点导航条那种分段选择器：选中的一段铺 ``PRIMARY_TINT``，其余透明。
 
@@ -273,12 +299,19 @@ def segmented_strip(
     这一条自己管自己的选中状态：点哪一段就自己重画哪一段，再把序号交给
     ``on_select``。**画完不刷屏** —— 调用方接着要换内容，两件事合成一次
     ``page.update()`` 才是一个来回。
+    ``disabled`` 里的下标是**够不着的段**：涂成 HAIRLINE、不接点击、也不接
+    悬停，指针停上去连光标都不变手型。给的是「这里现在去不了」，不是「这里
+    可以点但会失败」。
+
+    ``cell_width`` 给每一段一个固定宽度。默认按文字长度各自撑开；两条并排的
+    条要看起来对称时，两边传同一个值。
     """
     cells: list[ft.Container] = []
     texts: list[ft.Text] = []
     #: splits[i] 夹在 cells[i] 和 cells[i+1] 之间。
     splits: list[ft.Container] = []
     current = [selected]
+    blocked = frozenset(disabled)
 
     def _paint() -> None:
         for i, cell in enumerate(cells):
@@ -287,7 +320,10 @@ def segmented_strip(
             cell.shadow = (
                 theme.row_shadow() if active else theme.row_shadow(opacity=0)
             )
-            texts[i].color = theme.PRIMARY if active else theme.MUTED
+            if i in blocked:
+                texts[i].color = theme.HAIRLINE
+            else:
+                texts[i].color = theme.PRIMARY if active else theme.MUTED
             texts[i].weight = (
                 ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL
             )
@@ -330,15 +366,18 @@ def segmented_strip(
         cell = ft.Container(
             text,
             height=_SEGMENT_H,
+            width=cell_width,
             padding=ft.Padding.symmetric(horizontal=theme.SPACE_MD),
             alignment=ft.Alignment.CENTER,
             border_radius=PILL_RADIUS,
             animate=ft.Animation(theme.DURATION_INSTANT, theme.CURVE_IN),
-            on_click=_make_click(i),
+            on_click=None if i in blocked else _make_click(i),
         )
         cells.append(cell)
         texts.append(text)
-        track.append(hoverable(
+        # 够不着的段不包 hoverable：那层 GestureDetector 自带 CLICK 光标，包上
+        # 就等于在告诉指针这里能点。
+        track.append(cell if i in blocked else hoverable(
             cell,
             tinted=[text],
             hover_bgcolor=_hover_bg(i),

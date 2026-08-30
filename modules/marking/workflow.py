@@ -245,6 +245,7 @@ def grade_paper(
     syllabus_info: SyllabusInfo | None = None,
     paper_id: str | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
+    on_result: Callable[[QuestionResult], None] | None = None,
     max_workers: int = _MAX_CONCURRENT_QUESTIONS,
 ) -> GradeOutcome:
     """Grade every question concurrently, rendering its pages or clips.
@@ -257,9 +258,12 @@ def grade_paper(
     does not stop the others — unlike a plain sequential loop, where one
     failure would abort every question queued behind it.
 
-    ``on_progress`` calls are serialised (never invoked concurrently from two
-    threads), so a caller that pushes them straight into a UI update doesn't
-    need its own locking.
+    ``on_progress`` and ``on_result`` calls are serialised (never invoked
+    concurrently from two threads), so a caller that pushes them straight into
+    a UI update doesn't need its own locking. ``on_result`` fires the moment a
+    question comes back, which is what lets a caller show results filling in
+    one at a time instead of waiting for the whole paper; questions finish out
+    of order, so it is not called in ``question_ids`` order.
 
     ``syllabus_info`` + ``paper_id`` are resolved once per run into the topic
     list every question is graded against; either being absent simply means
@@ -312,6 +316,8 @@ def grade_paper(
         with progress_lock:
             if result is not None:
                 results_by_qid[qid] = result
+                if on_result is not None:
+                    on_result(result)
             if failure is not None:
                 outcome.failures.append(failure)
             done += 1

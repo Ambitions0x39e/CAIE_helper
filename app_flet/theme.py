@@ -114,6 +114,21 @@ ACCENT_STRONG = ft.Colors.AMBER_800
 CARD_PURPLE = ft.Colors.PURPLE
 CARD_TEAL = ft.Colors.TEAL
 
+# ── 分数档配色 ────────────────────────────────────────────────────
+# 批改结果每题一格，底色报告这题的得分档。是一档独立色阶，不参与 SUCCESS /
+# DANGER 那套语义体系 —— 同 CARD_PURPLE / CARD_TEAL，只在这一处用。
+#
+# 四个都是浅色，格子里的字必须用 TEXT_PRIMARY：配白字实测对比度 1.7～3.6:1，
+# 全部不到正文要求的 4.5:1；配黑字 5.8～12:1，全部够。
+#: 满分
+SCORE_FULL = "#A9CFA9"
+#: 扣了分但不是零分
+SCORE_PARTIAL = "#D9A3A3"
+#: 零分
+SCORE_ZERO = "#cc6b6b"
+#: 还没批到这题。中性灰，跟三档有色的分开——「没有结果」不是一种结果。
+SCORE_PENDING = HAIRLINE_FAINT
+
 
 # ── 圆角 ──────────────────────────────────────────────────────────
 #: 卡片/面板统一圆角，取代原先 6/8/12 三档并存的写法。按钮走下面独立的

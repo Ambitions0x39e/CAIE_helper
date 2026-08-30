@@ -80,8 +80,9 @@ def build_download_tab(
     )
 
     # 高度是算出来的，就得跟着窗口走：不接 on_resize 的话，最大化之后内容区
-    # 还停在开窗时那个高度，下面留一大块白。page.on_resize 全仓没别人用
-    # （其它页都是建页时读 page.width 决定布局），这里独占。
+    # 还停在开窗时那个高度，下面留一大块白。批改页出于同样的理由也挂
+    # page.on_resize —— 每切一次 tab 整页都会重建，所以这个槽位里总是当前
+    # tab 的那一个，两边不会打架。
     def _on_page_resize(_: ft.ControlEvent) -> None:
         # on_resize fires continuously while the window is dragged. Pushing a
         # full page.update() on every one of those events — each re-diffing a
