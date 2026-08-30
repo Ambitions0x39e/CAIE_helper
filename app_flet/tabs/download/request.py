@@ -8,7 +8,12 @@ import flet as ft
 from pydantic import ValidationError
 
 from app_flet import theme
-from app_flet.components.widgets import error_banner, warning_banner
+from app_flet.components.widgets import (
+    error_banner,
+    skeleton,
+    swap_slot,
+    warning_banner,
+)
 from app_flet.tabs.download.session_picker import build_session_picker
 from core.config_store import ConfigStore
 from modules.downloader import (
@@ -109,13 +114,20 @@ def build_request_tab(
     )
 
     progress_ring = ft.ProgressRing(visible=False, width=20, height=20)
-    status_text = ft.Text("", size=12, color=theme.MUTED)
-    # 自己不滚也不 expand：由外层那个 scroll=AUTO 的列统一滚，
+    status_text = ft.Text(
+        "", size=theme.CAPTION, color=theme.MUTED, style=theme.caption_style(),
+    )
+    # 结果区三态：空 → 骨架屏 → 结果列表。考季查询回来的是「一堆形状相似、
+    # 条数未知的行」，形状能预告，所以等待用骨架屏而不是进度圈。
+    #
+    # 里面挂的 Column 自己不滚也不 expand：由外层那个 scroll=AUTO 的列统一滚，
     # 免得短列表也占满整屏、长列表套两层滚动条。
-    result_list = ft.Column(spacing=0, visible=False)
+    result_list, show_result = swap_slot(
+        page, ft.Column(spacing=0), theme.DURATION_FAST,
+    )
     error_area = ft.Column(visible=False, spacing=4)
 
-    # 查询和批量下载共用一把锁：两边都会改 rows / result_list.controls /
+    # 查询和批量下载共用一把锁：两边都会改 rows / 结果区 /
     # last_result / rendered_head / total_files，双击或者查询没完就点下载
     # 都会让两个后台线程同时改同一份没上锁的状态。
     busy = [False]
@@ -161,13 +173,18 @@ def build_request_tab(
         """qp / gt：黑字 + 勾选框，右端灰字状态，整行铺满窗口宽度。"""
         checkbox = ft.Checkbox(
             label=entry.paper_id,
-            label_style=ft.TextStyle(size=14),
+            label_style=theme.numeric_style(size=theme.SUBHEAD),
             value=False,  # 默认全不选
             visual_density=ft.VisualDensity.COMPACT,
             splash_radius=_LEAF_ICON_SIZE,
             on_change=_on_check,  # type: ignore[arg-type]
         )
-        note = ft.Text(_row_note(entry), size=12, color=theme.MUTED)
+        note = ft.Text(
+            _row_note(entry),
+            size=theme.CAPTION,
+            color=theme.MUTED,
+            style=theme.caption_style(),
+        )
         rows.append((checkbox, note, entry))
         return ft.Row(
             [checkbox, ft.Container(expand=True), note],
@@ -181,9 +198,19 @@ def build_request_tab(
         return ft.Row(
             [
                 ft.Container(width=_TREE_INDENT),
-                ft.Text(entry.paper_id, size=14, color=theme.MUTED),
+                ft.Text(
+                    entry.paper_id,
+                    size=theme.SUBHEAD,
+                    color=theme.MUTED,
+                    style=theme.numeric_style(),
+                ),
                 ft.Container(expand=True),
-                ft.Text(_row_note(entry), size=12, color=theme.MUTED),
+                ft.Text(
+                    _row_note(entry),
+                    size=theme.CAPTION,
+                    color=theme.MUTED,
+                    style=theme.caption_style(),
+                ),
             ],
             spacing=8,
             height=_ROW_H,
@@ -221,8 +248,7 @@ def build_request_tab(
         )
 
         busy[0] = True
-        progress_ring.visible = True
-        result_list.visible = False
+        show_result(skeleton())
         batch_bar.visible = False
         error_area.visible = False
         status_text.color = theme.MUTED
@@ -238,27 +264,27 @@ def build_request_tab(
                     store=state.store,
                 )
 
-                progress_ring.visible = False
                 rows.clear()
-                result_list.controls.clear()
                 error_area.controls.clear()
                 error_area.visible = False
 
                 if not result.success:
                     status_text.color = theme.DANGER
                     status_text.value = f"查询失败: {result.error}"
-                    page.update()
+                    show_result(ft.Column(spacing=0))
                     return
 
                 if not result.entries:
                     status_text.color = theme.MUTED
                     status_text.value = "这个考季没有查到任何文件"
-                    page.update()
+                    show_result(ft.Column(spacing=0))
                     return
 
                 last_result[0] = result
                 last_syllabus_id[0] = syllabus_id
-                _render_result(result)
+                show_result(_render_result(result))
+                _refresh_status()
+                page.update()
             finally:
                 busy[0] = False
 
@@ -306,7 +332,12 @@ def build_request_tab(
             _paper_digit(e.paper_id) for e in result.entries if e.kind == "qp"
         })
 
-    def _render_result(result: QueryResult) -> None:
+    def _render_result(result: QueryResult) -> ft.Control:
+        """把一次查询的结果排成一整块，交给调用方决定怎么放进结果区。
+
+        返回而不是自己塞进去：查询回来要淡入，窗口拉宽拉窄导致的重排不要 ——
+        重排只是同一份内容换个排法，淡一下会读成「又查了一次」。
+        """
         total_files[0] = len(result.entries)
         available = {e.paper_id for e in result.entries}
         # 已经作为子行挂在某个 QP 下面的 id（MS 和 insert），底下不再重复列一遍。
@@ -340,7 +371,7 @@ def build_request_tab(
                 ft.Divider(height=9),
             ]
             # QP 打头、对应的 MS 和 insert 作 ╰─ 子行挂在下面；子行不单独占行、
-            # 不占选择列，因为勾一个 QP 下的就是一整套（download_with_insert
+            # 不占选择列，因为勾一个 QP 下的就是一整套（download(insert=True)
             # 就是 QP+MS+in 一起下）。一套打包成一个内层 Column（spacing=0，
             # 贴紧成一个整体）；这些整体之间、以及整体和上面表头之间走外层
             # Column 的 SPACE_SM，跟其他内容的间距一致。
@@ -361,8 +392,9 @@ def build_request_tab(
                 col.append(ft.Column(unit, spacing=0))
             columns.append(ft.Column(col, spacing=theme.SPACE_SM, expand=True))
 
+        listed: list[ft.Control] = []
         if columns:
-            result_list.controls.append(
+            listed.append(
                 ft.Row(
                     columns,
                     spacing=_COL_SPACING,
@@ -377,17 +409,15 @@ def build_request_tab(
             if e.kind != "qp" and e.paper_id not in nested
         ]
         if leftovers:
-            result_list.controls.append(ft.Divider())
+            listed.append(ft.Divider())
             for entry in leftovers:
                 if entry.kind == "gt":
-                    result_list.controls.append(_selectable_row(entry))
+                    listed.append(_selectable_row(entry))
                 else:
-                    result_list.controls.append(_plain_row(entry))
+                    listed.append(_plain_row(entry))
 
-        result_list.visible = True
         batch_bar.visible = True
-        _refresh_status()
-        page.update()
+        return ft.Column(listed, spacing=0)
 
     def _reflow_on_resize() -> bool:
         """Re-lay the result columns when the window crosses a header cutoff.
@@ -410,8 +440,7 @@ def build_request_tab(
         # losing a careful selection to a window resize would be maddening.
         ticked = {e.paper_id for cb, _, e in rows if cb.value}
         rows.clear()
-        result_list.controls.clear()
-        _render_result(result)
+        result_list.content = _render_result(result)
         for cb, _, entry in rows:
             cb.value = entry.paper_id in ticked
         _refresh_status()
@@ -466,13 +495,8 @@ def build_request_tab(
                         errors.append(f"{entry.paper_id}: {msgs}")
                         continue
 
-                    # 这一列里显示了 insert 子行的，就走 QP+MS+in 那条；
-                    # 其余（含 gt）走 download()。
-                    dl = (
-                        downloader.download_with_insert(request)
-                        if entry.has_insert
-                        else downloader.download(request)
-                    )
+                    # 这一列里显示了 insert 子行的，才连 insert 一起下。
+                    dl = downloader.download(request, insert=entry.has_insert)
                     if dl.success:
                         succeeded += 1
                         if dl.insert_error:
@@ -502,8 +526,9 @@ def build_request_tab(
                         error_area.controls.append(
                             ft.Text(
                                 f"…另有 {len(errors) - 5} 条失败",
-                                size=12,
+                                size=theme.CAPTION,
                                 color=theme.DANGER,
+                                style=theme.caption_style(),
                             )
                         )
                     error_area.visible = True

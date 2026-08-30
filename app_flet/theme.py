@@ -144,6 +144,14 @@ SQUIRCLE_RADIUS_RATIO = 0.2237
 _BUTTON_HEIGHT = 40
 SQUIRCLE_RADIUS = round(_BUTTON_HEIGHT * SQUIRCLE_RADIUS_RATIO, 2)
 
+# ── 布局 ──────────────────────────────────────────────────────────
+#: 左侧 nav 按钮的边长。
+NAV_BUTTON_SIZE = 64
+#: nav rail 连同它右边那条 1px 分隔线占掉的宽度。``page.width`` 给的是整个
+#: 窗口，任何按窗口宽度算版面的地方都得先把这块减掉 —— 少减了，内容区就会
+#: 以为自己比实际宽 85px，右边缘溢出。
+NAV_CHROME_W = NAV_BUTTON_SIZE + 20 + 1
+
 # ── 间距 scale ────────────────────────────────────────────────────
 #: 卡片内部紧凑间隙（比如 metric_card 标签→数值）
 SPACE_XS = 4
@@ -168,9 +176,8 @@ SUBHEAD = 14
 BODY = 13
 #: 提示/次要信息，配 theme.MUTED 颜色使用
 CAPTION = 12
-#: 仅例外场景（目前只有 mcq.py，本轮范围外）
+#: 比 CAPTION 再小一档，给挤在表格/表单里的辅助文字。
 MICRO = 11
-
 # ── 时长 scale ────────────────────────────────────────────────────
 #: 交互态：容器的 hover / 选中底色切换。0 = 当帧变色，跟按钮那套 ControlState
 #: 色表对齐。这一档是跟着指针走的，任何时长都会被读成延迟而不是过渡，跟下面
@@ -232,6 +239,62 @@ def field_label_style() -> ft.TextStyle:
     将来做深色模式，这个函数是那批标签唯一要改的地方。
     """
     return ft.TextStyle(color=TEXT_PRIMARY)
+
+
+# ── 字距与行高 ────────────────────────────────────────────────────
+# 字号有六档，字距和行高只能按**用途**分五组，不能一档一套：字距的观感是相对
+# 于字号的，一个固定值必然在大字端或小字端有一头是错的，而按字号分组又分不出
+# 「24 的页面标题」和「24 的指标数值」——那两个要的字距方向正好相反。
+#
+# 中西文分治做不到：``letter_spacing`` 是整个 ``TextStyle`` 一刀切的，汉字和
+# 拉丁字母吃同一个值。所以负字距那档取得很浅（见 title_style），而
+# ``numeric_style`` 只给字符构成能确定不含中文的位置用。
+#
+# 每个函数只填 ``letter_spacing`` 和 ``height`` 两项。Flutter 的 ``TextStyle``
+# 默认 ``inherit=True``，控件自己的 ``size`` / ``color`` / ``weight`` 又在
+# 合并之后才 copyWith 上去 —— 所以接一个 style 只覆盖这两项，字体和字号照旧。
+# 每次返回新对象，理由同 field_label_style()。
+
+
+def title_style() -> ft.TextStyle:
+    """页面标题（TITLE 档，以及设置子页那种 20 的页头）。
+
+    负值取得浅：汉字是等宽方块、自带内建留白，收紧过头笔画会粘连。这里只求
+    让标题读成一整块，不求收紧。
+    """
+    return ft.TextStyle(letter_spacing=-0.3, height=1.2)
+
+
+def section_style() -> ft.TextStyle:
+    """区块标题（SECTION 档）。字距归零，行高比标题松一档。"""
+    return ft.TextStyle(letter_spacing=0, height=1.3)
+
+
+def body_style() -> ft.TextStyle:
+    """正文（BODY / SUBHEAD 档）。
+
+    也是主题 ``text_theme`` 的底 —— ``ft.Text`` 不写 ``theme_style`` 时一律
+    落在 ``body_medium`` 上，跟 ``size`` 无关，所以正文这档铺在主题里就够，
+    调用点不必逐个接。
+    """
+    return ft.TextStyle(letter_spacing=0, height=1.5)
+
+
+def caption_style() -> ft.TextStyle:
+    """提示（CAPTION / MICRO 档）。小字拉开一点才不糊成一条。"""
+    return ft.TextStyle(letter_spacing=0.2, height=1.5)
+
+
+def numeric_style(size: float | None = None) -> ft.TextStyle:
+    """纯数字 / ID：指标卡的数值、表格的 paper_id 列、百分比。
+
+    数字拉开明显更好认，所以这档给到 +0.5 —— 只用在字符构成可以确定不含中文
+    的位置，汉字吃这个值会散架。
+
+    ``size`` 只给那些没有独立字号属性的槽位用（``Checkbox.label_style``
+    这类），``ft.Text`` 走它自己的 ``size``。
+    """
+    return ft.TextStyle(letter_spacing=0.5, height=1.2, size=size)
 
 
 def card_shadow() -> ft.BoxShadow:

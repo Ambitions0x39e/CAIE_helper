@@ -43,7 +43,10 @@ _CELLS_PER_ROW = 6
 def build_check_step(ctx: MarkTabContext) -> list[ft.Control]:
     state = ctx.state
     controls: list[ft.Control] = [
-        ft.Text("核对题目", size=theme.SECTION, weight=ft.FontWeight.BOLD),
+        ft.Text(
+            "核对题目", size=theme.SECTION, weight=ft.FontWeight.BOLD,
+            style=theme.section_style(),
+        ),
     ]
 
     # Persistent failure banner — a grade that stalls/errors on one question
@@ -71,6 +74,7 @@ def build_check_step(ctx: MarkTabContext) -> list[ft.Control]:
     controls.append(ft.Row([
         ft.Text(
             "勾选要批改的题，并确认每题的页码。", size=theme.BODY,
+            style=theme.body_style(),
         ),
         ft.Container(expand=True),
         ft.TextButton("全选", on_click=lambda _: _select_all(ctx, True)),
@@ -100,13 +104,14 @@ def build_check_step(ctx: MarkTabContext) -> list[ft.Control]:
     missing = [q for q in selected if q not in assignments]
     if not selected:
         controls.append(ft.Text(
-            "请至少勾选一个题目进行批改。",
-            color=theme.WARNING, size=theme.CAPTION,
+            "请至少勾选一个题目进行批改。", color=theme.WARNING,
+            size=theme.CAPTION, style=theme.caption_style(),
         ))
     elif missing:
         controls.append(ft.Text(
             f"请为以下题目指定页码: {', '.join(missing)}",
             color=theme.WARNING, size=theme.CAPTION,
+            style=theme.caption_style(),
         ))
 
     can_grade = (
@@ -318,7 +323,7 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
             outcome = grade_paper(
                 config=grade_cfg,
                 paper_config=pc,
-                paper_type=PaperType(state.paper_type or "math"),
+                paper_type=state.paper_type or PaperType.MATH,
                 # The path, not the bytes: the native renderer opens the file
                 # itself, so a 35MB scan never crosses the Python↔Dart RPC.
                 pdf_source=state.answer_pdf_path,  # type: ignore[arg-type]

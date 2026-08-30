@@ -123,11 +123,11 @@ def _resolve_skip_pages(source_stem: str) -> set[int]:
     Falls back to the JSON's own "default" entry when the stem doesn't match
     the expected "<subject>_<season><year>_qp_<component>" pattern.
     """
-    from core.config_store import get_paper_page_config
+    from core.config_store import qp_skip_pages
 
     parsed = _parse_paper_filename(source_stem)
     subject_id, component = (parsed[0], parsed[3]) if parsed else ("", "")
-    return get_paper_page_config(subject_id, component).qp_skip_pages
+    return qp_skip_pages(subject_id, component)
 
 
 def _build_page_batches(
