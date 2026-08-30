@@ -30,19 +30,17 @@ from app_flet.tabs.download.request import build_request_tab
 # 哪一项，具名之后改对应那一项就行。导航栏在左侧一列，不占这里的垂直空间。
 #: 页头 Container：上下 padding 各 12 + Material 按钮 40。
 _HEADER_H = 64
-#: 页内标题 Container：top padding 20 + 24pt 文字行盒约 32。
-_TITLE_H = 52
-#: 标题→分段条。24 是其它 tab 里标题到第一个控件的距离（管理页那条 Column 用
-#: 的是 Flet 默认 spacing 10 + 一个 4 的间隔块 + 10），下载页跟着对齐 —— 两边
-#: 的起手都是 padding 20 加同一个 24pt 标题，所以间隙一致就等于分段条和
-#: 「数据库 / 列表」切换器落在同一条水平线上。
-_TITLE_GAP = 24
-#: 分段条→内容。分段条选的就是下面显示谁，两者贴紧才读得出这层从属关系。
-#: Column 的 spacing 一个值管两个间隙，所以这一档取小的，标题那档差出来的部分
-#: 由标题自己的 bottom padding 补齐。
+#: 页内标题那一行：上边距 20 + 24pt 文字的行盒约 32。
+_TITLE_BLOCK_H = theme.SPACE_XL + 32
+#: 标题→分段条→内容，两处都是同一个间隙。管理页和批改页的页头是同一个构造
+#: （padding top 20 + section_title + Column spacing + 分段条，内容再隔一个
+#: 同样的间隙），三个 tab 的分段条和内容起点因此落在同一条水平线上。改这里
+#: 之前先看那两处。
 _STACK_GAP = theme.SPACE_MD
+#: 分段条到内容那一档间隙由子页自己的 top padding 带（三个子页都是
+#: _STACK_GAP），所以不在这里再加一份 —— 外层 Column 的 spacing 是 0。
 _TAB_CHROME_H = (
-    _HEADER_H + _TITLE_H + _TITLE_GAP + SEGMENTED_STRIP_H + _STACK_GAP
+    _HEADER_H + _TITLE_BLOCK_H + _STACK_GAP + SEGMENTED_STRIP_H
 )
 _TAB_MIN_H = 320
 _FALLBACK_PAGE_H = 800
@@ -106,30 +104,26 @@ def build_download_tab(
 
     page.on_resize = _on_page_resize  # type: ignore[assignment]
 
-    return ft.Container(
+    # 页头和管理页 / 批改页是同一个构造：标题和分段条装在一条 spacing 为
+    # _STACK_GAP 的 Column 里，外面 padding top 20、bottom 0，内容再隔同一个
+    # 间隙。左边距 20 跟每个子页自己带的那份对齐，三层落在同一条左边线上。
+    header = ft.Container(
         ft.Column(
             [
-                ft.Container(
-                    section_title("下载试卷"),
-                    # top=20 to sit level with every other tab's title. The
-                    # other tabs get it from a plain `padding=20` on their
-                    # outer Container; this one can't — the sub-pages carry
-                    # their own — so the title carries its own padding and has
-                    # to match that 20 by hand.
-                    padding=ft.Padding(
-                        left=theme.SPACE_XL, right=theme.SPACE_XL,
-                        top=theme.SPACE_XL, bottom=_TITLE_GAP - _STACK_GAP,
-                    ),
-                ),
-                # Same 20 as the title and as each sub-page's own padding, so
-                # the three stack on one left edge.
-                ft.Container(
-                    strip,
-                    padding=ft.Padding.symmetric(horizontal=theme.SPACE_XL),
-                ),
-                body,
+                section_title("下载试卷"),
+                # 分段条自己按文字长度撑开，装在一条居中的 Row 里才落在页面
+                # 中线上；标题仍然靠左。
+                ft.Row([strip], alignment=ft.MainAxisAlignment.CENTER),
             ],
             spacing=_STACK_GAP,
         ),
+        padding=ft.Padding(
+            left=theme.SPACE_XL, right=theme.SPACE_XL,
+            top=theme.SPACE_XL, bottom=0,
+        ),
+    )
+
+    return ft.Container(
+        ft.Column([header, body], spacing=0),
         padding=0,
     )

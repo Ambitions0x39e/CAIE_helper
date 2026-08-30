@@ -1,4 +1,4 @@
-"""错题本 — browse every question a grading run took marks off, and export.
+"""【错题】— browse every question a grading run took marks off, and export.
 
 Two views over the same rows: by paper (the default — one collapsible group
 per paper, matching how they were graded) and by topic (the same, grouped by
@@ -6,16 +6,10 @@ topic, with a chip filter for "which topic do I keep losing marks on").
 Every decision about the rows themselves — grouping, filtering, CSV — lives
 in ``modules.marking.mistakes``; this module only builds controls.
 
-A standalone tab rather than a section of 统计: that tab is
-aggregate-trend-shaped and this is a browse-select-export flow.
-
-Styling follows the app's design language (docs/superpowers/specs/
-2026-08-10-ui-design-language-design.md): white cards on the muted page
-background, distinguished by soft shadow and a 10px radius; the shared
-``data_table`` for anything tabular, so columns line up with the rest of the
-app instead of being hand-spaced ``Row``s; ``theme`` tokens for every size
-and gap; CupertinoIcons. Groups collapse by default and build their table on
-first expand, the same as 统计's syllabus panels.
+行的样式来自 :mod:`app_flet.tabs.manage.organize` 的 ``finder_*`` —— 一行是
+一道题而不是一张卷，列自然不一样，共用的是外观。分组是重点：一张卷一组，组里
+是它的题。Groups collapse by default and build their table on first expand,
+the same as 总览's syllabus panels.
 """
 from __future__ import annotations
 
@@ -26,8 +20,16 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from app_flet import theme
-from app_flet.components.widgets import data_table, push_track, segmented_strip
-from core.config_store import ConfigStore
+from app_flet.components.widgets import push_track, segmented_strip
+from app_flet.tabs.manage.organize import (
+    FINDER_ROW_PAD,
+    finder_header,
+    finder_label,
+    finder_list,
+    finder_row,
+    finder_text,
+)
+from app_flet.tabs.manage.paper_icon import syllabus_names
 from core.models import MistakeRecord
 from core.storage import CSVStore, MistakeStore
 from modules.marking.answer_sheet import build_answer_sheet
@@ -68,10 +70,8 @@ _EXPORT_ANSWERS_FILENAME = "mistakes-answers.pdf"
 # window edge and drags every other column with it. Everything else gets a
 # fixed width so that "how much is left" is arithmetic rather than a guess.
 
-#: DataTable's own horizontal margin (24 each side) plus its checkbox column.
-_TABLE_CHROME = 48 + 48
-#: DataTable's default gap between columns; ``data_table`` doesn't override it.
-_COL_SPACING = 56
+#: 勾选框那一格的宽。
+_CHECKBOX_W = 40
 
 #: What each column gets when there is room. The comment's ideal is also its
 #: cap — past ~420px it reads as a wall of text, not a column. Topic is wider
@@ -84,22 +84,31 @@ _IDEAL: dict[str, int] = {
 _MIN: dict[str, int] = {
     "question": 56, "paper": 96, "topic": 140, "score": 48, "comment": 90,
 }
-#: Row height. The default is sized for plain text and clips the dropdown.
-_ROW_HEIGHT = 52.0
+#: 行高。默认那档是按一行纯文本算的，这里一格里塞了下拉框，还有两行的评语。
+_ROW_H = 52
 #: Who gives up room first. The comment is elided anyway, the score never
 #: needs more than four glyphs.
 _SHRINK_ORDER = ("comment", "topic", "paper", "question", "score")
+_KEYS = ("question", "paper", "topic", "score", "comment")
+_LABELS = {
+    "question": "题号", "paper": "试卷", "topic": "Topic",
+    "score": "得分", "comment": "评语",
+}
 
 
 def _usable_width(page: ft.Page, columns: int) -> int:
-    """Room left for cell content once every fixed cost is paid."""
+    """一行里留给内容的宽 —— 每一项固定开销都减掉之后剩下的。
+
+    间隙数按 ``columns`` 算而不是 ``columns - 1``：勾选框和第一格之间也有一道。
+    """
     return (
         int(page.width or 1024)
         - theme.NAV_CHROME_W
-        - theme.SPACE_XL * 2            # page padding
-        - theme.SPACE_LG * 2            # card padding
-        - _TABLE_CHROME
-        - _COL_SPACING * (columns - 1)
+        - theme.SPACE_XL * 2            # 页面边距
+        - theme.SPACE_LG * 2            # 卡片内边距
+        - FINDER_ROW_PAD * 2            # 行内边距
+        - _CHECKBOX_W
+        - theme.SPACE_MD * columns      # 每格之间的间隙
     )
 
 
@@ -115,10 +124,7 @@ def _column_widths(
     id moves into the 题号 cell's tooltip.
     """
     for with_paper in ([True, False] if show_paper else [False]):
-        keys = [
-            k for k in ("question", "paper", "topic", "score", "comment")
-            if k != "paper" or with_paper
-        ]
+        keys = [k for k in _KEYS if k != "paper" or with_paper]
         avail = _usable_width(page, len(keys))
         widths = {k: _IDEAL[k] for k in keys}
         over = sum(widths.values()) - avail
@@ -177,91 +183,43 @@ def _card(*controls: ft.Control) -> ft.Container:
     )
 
 
-def _cell(
-    text: str,
-    width: int,
-    *,
-    size: int = theme.BODY,
-    color: str | None = None,
-    lines: int = 1,
-    tooltip: str | None = None,
-    style: ft.TextStyle | None = None,
-) -> ft.DataCell:
-    """A width-pinned cell; anything longer is elided with the full text on
-    hover, so one long comment can't widen the table.
-
-    ``style`` 是字距档：题号 / 试卷 / 得分那几列是纯 ASCII，走
-    ``theme.numeric_style()``；评语是中文，走提示那档。
-    """
-    return ft.DataCell(ft.Container(
-        ft.Text(
-            text,
-            size=size,
-            color=color,
-            max_lines=lines,
-            overflow=ft.TextOverflow.ELLIPSIS,
-            tooltip=tooltip or text or None,
-            style=style,
-        ),
-        width=width,
-    ))
-
-
-def _columns(*labels: str) -> list[ft.DataColumn]:
-    return [
-        ft.DataColumn(label=ft.Text(
-            label, size=theme.CAPTION, weight=ft.FontWeight.W_600,
-            style=theme.caption_style(),
-        ))
-        for label in labels
-    ]
-
-
 def _event_flag(data: object) -> bool:
     """Flet sends selection state as a bool or as "true"/"false"."""
     return data if isinstance(data, bool) else str(data).strip().lower() == "true"
 
 
-def build_mistakes_tab(
+def build_mistakes(
     page: ft.Page,
     state: AppState,
     show_snack: Callable[[str, str], None],
     export_picker: ft.FilePicker,
-) -> ft.Container:
-    """Build the 错题本 tab.
+) -> ft.Control:
+    """Build the 错题 section.
 
-    ``state`` is unused today but kept for symmetry with every other
-    ``build_*_tab``.
+    ``state`` is unused today but kept for symmetry with the other sections.
     """
-    del state  # every other tab takes it; nothing here needs it yet
+    del state  # every other section takes it; nothing here needs it yet
 
     store = MistakeStore()
     try:
         records = store.load_all()
     except ValueError as exc:
-        return _page_shell(
-            ft.Text(f"错题记录读取失败: {exc}", color=theme.DANGER,
-                    size=theme.BODY),
+        return ft.Text(
+            f"错题记录读取失败: {exc}", color=theme.DANGER, size=theme.BODY,
         )
 
     if not records:
-        return _page_shell(
+        return _card(
+            ft.Row([
+                ft.Icon(ft.CupertinoIcons.BOOK, color=theme.MUTED),
+                ft.Text("还没有错题记录", size=theme.SUBHEAD,
+                        weight=ft.FontWeight.W_600),
+            ], spacing=theme.SPACE_SM),
             ft.Text(
-                "错题本", size=theme.TITLE, weight=ft.FontWeight.BOLD,
-                style=theme.title_style(),
-            ),
-            _card(
-                ft.Row([
-                    ft.Icon(ft.CupertinoIcons.BOOK, color=theme.MUTED),
-                    ft.Text("还没有错题记录", size=theme.SUBHEAD,
-                            weight=ft.FontWeight.W_600),
-                ], spacing=theme.SPACE_SM),
-                ft.Text(
-                    "批改一份「从已下载试卷」选出的卷子并点「确认并记录分数」后，"
-                    "没拿满分的题会自动记到这里。",
-                    size=theme.CAPTION, color=theme.MUTED,
-                    style=theme.caption_style(),
-                ),
+                "批改一份「从已下载试卷」选出的卷子并点「确认并记录分数」后，"
+                "没拿满分的题会自动记到这里。",
+                size=theme.CAPTION, color=theme.MUTED,
+                style=theme.caption_style(),
             ),
         )
 
@@ -269,12 +227,8 @@ def build_mistakes_tab(
     # and rows are not unique on their own (a re-grade repeats paper+question).
     selected: set[int] = set()
     active_topics: set[str] = set()
-    #: syllabus code → 学科名，给 by-topic 那层分组的标题用。读一次就够——
-    #: 配置是手改 JSON 的，不会在一次浏览里变。
-    syllabus_names: dict[str, str] = {
-        code: str(entry.get("name", ""))
-        for code, entry in ConfigStore().load_syllabus_config().items()
-    }
+    #: syllabus code → 学科名，给 by-topic 那层分组的标题用。
+    names = syllabus_names()
     view = _BY_PAPER
     content_area, show_view = push_track(
         page, len(_VIEWS), ft.Column(spacing=theme.SPACE_MD),
@@ -307,17 +261,11 @@ def build_mistakes_tab(
             # No syllabus for this subject (or a component it doesn't map,
             # like a practical paper) — nothing to choose from, so say why
             # instead of showing an empty dropdown.
-            return ft.Container(
-                ft.Text(
-                    _topic_text(record),
-                    size=theme.CAPTION,
-                    color=theme.MUTED,
-                    max_lines=2,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                    tooltip="该科目未导入大纲，或这张卷不在大纲的 component 映射里",
-                    style=theme.caption_style(),
-                ),
-                width=width,
+            return finder_text(
+                _topic_text(record), width,
+                size=theme.CAPTION, color=theme.MUTED, lines=2,
+                tooltip="该科目未导入大纲，或这张卷不在大纲的 component 映射里",
+                style=theme.caption_style(),
             )
 
         options = [ft.dropdown.Option(key="", text=UNCLASSIFIED)]
@@ -372,74 +320,100 @@ def build_mistakes_tab(
 
     def _table(indices: Sequence[int], *, show_paper: bool) -> ft.Control:
         widths, paper_col = _column_widths(page, show_paper=show_paper)
-        rows: list[ft.DataRow] = []
+        keys = [k for k in _KEYS if k != "paper" or paper_col]
+        boxes: dict[int, ft.Checkbox] = {}
+        repaints: dict[int, Callable[[], None]] = {}
+        rows: list[ft.Control] = []
+
+        def _set(idx: int, picked: bool) -> None:
+            if picked:
+                selected.add(idx)
+            else:
+                selected.discard(idx)
+            boxes[idx].value = picked
+            repaints[idx]()
+            _refresh_count()
 
         for idx in indices:
             record = records[idx]
-            cells = [_cell(
-                record.question_id,
-                widths["question"],
-                style=theme.numeric_style(),
-                # When the window was too narrow for a 试卷 column, this is
-                # the only place left to read the paper id.
-                tooltip=None if paper_col else record.paper_id,
-            )]
+            box = ft.Checkbox(value=idx in selected)
+            boxes[idx] = box
+            cells: list[ft.Control] = [
+                ft.Container(box, width=_CHECKBOX_W),
+                finder_text(
+                    record.question_id, widths["question"],
+                    style=theme.numeric_style(),
+                    # When the window was too narrow for a 试卷 column, this
+                    # is the only place left to read the paper id.
+                    tooltip=None if paper_col else record.paper_id,
+                ),
+            ]
             if paper_col:
-                cells.append(_cell(
+                cells.append(finder_text(
                     record.paper_id, widths["paper"], size=theme.CAPTION,
                     style=theme.numeric_style(),
                 ))
             cells.extend([
-                ft.DataCell(_topic_picker(idx, widths["topic"])),
-                _cell(
+                _topic_picker(idx, widths["topic"]),
+                finder_text(
                     _score_text(record), widths["score"],
                     style=theme.numeric_style(),
                 ),
-                _cell(
+                finder_text(
                     record.comment, widths["comment"],
                     size=theme.CAPTION, color=theme.MUTED, lines=2,
                     style=theme.caption_style(),
                 ),
             ])
-            rows.append(ft.DataRow(cells=cells, selected=idx in selected))
 
-        for row, idx in zip(rows, indices, strict=True):
-            def _on_select(
-                e: ft.Event[ft.DataRow], row: ft.DataRow = row, idx: int = idx,
+            def _on_row(
+                _: ft.Event[ft.Container], idx: int = idx,
             ) -> None:
-                picked = _event_flag(e.data)
-                row.selected = picked
-                if picked:
-                    selected.add(idx)
-                else:
-                    selected.discard(idx)
-                _refresh_count()
+                _set(idx, idx not in selected)
 
-            row.on_select_change = _on_select
+            def _on_box(
+                e: ft.Event[ft.Checkbox], idx: int = idx,
+            ) -> None:
+                _set(idx, _event_flag(e.data))
 
-        def _on_select_all(e: ft.Event[ft.DataTable]) -> None:
+            def _is_picked(idx: int = idx) -> bool:
+                return idx in selected
+
+            row, repaint = finder_row(
+                cells,
+                on_click=_on_row,
+                height=_ROW_H,
+                selected=_is_picked,
+            )
+            repaints[idx] = repaint
+            box.on_change = _on_box
+            rows.append(row)
+
+        def _on_select_all(e: ft.Event[ft.Checkbox]) -> None:
             picked = _event_flag(e.data)
-            for row, idx in zip(rows, indices, strict=True):
-                row.selected = picked
+            for idx in indices:
                 if picked:
                     selected.add(idx)
                 else:
                     selected.discard(idx)
+                boxes[idx].value = picked
+                repaints[idx]()
             _refresh_count()
 
-        labels = (
-            ("题号", "试卷", "Topic", "得分", "评语") if paper_col
-            else ("题号", "Topic", "得分", "评语")
+        header = finder_header(
+            [
+                ft.Container(
+                    ft.Checkbox(
+                        value=all(i in selected for i in indices),
+                        on_change=_on_select_all,
+                    ),
+                    width=_CHECKBOX_W,
+                ),
+                *(finder_label(_LABELS[k], widths[k]) for k in keys),
+            ],
+            height=_ROW_H,
         )
-        return data_table(
-            _columns(*labels),
-            rows,
-            show_checkbox_column=True,
-            on_select_all=_on_select_all,
-            # The topic column holds a dropdown; the default row height is
-            # sized for plain text and clips it.
-            row_height=_ROW_HEIGHT,
-        )
+        return finder_list(header, rows)
 
     def _group_tile(
         title: str,
@@ -452,7 +426,7 @@ def build_mistakes_tab(
     ) -> ft.Control:
         """A collapsed group whose table is built the first time it opens.
 
-        Same lazy pattern as 统计's syllabus panels: with a term's worth of
+        Same lazy pattern as 总览's syllabus panels: with a term's worth of
         papers in the store, building every table up front is work the user
         never asked for.
 
@@ -530,7 +504,7 @@ def build_mistakes_tab(
     def _syllabus_label(syl: str) -> str:
         if not syl:
             return UNCLASSIFIED
-        name = syllabus_names.get(syl)
+        name = names.get(syl)
         return f"{syl} — {name}" if name else syl
 
     def _topic_chip(key: str, label: str) -> ft.Chip:
@@ -789,51 +763,38 @@ def build_mistakes_tab(
         view = _VIEWS[index]
         _rebuild_content()
 
-    view_selector = segmented_strip(
-        ["按卷", "按 topic"], _on_view_change, selected=_VIEWS.index(view),
+    toolbar = ft.Row(
+        [
+            segmented_strip(
+                ["按卷", "按 topic"], _on_view_change,
+                selected=_VIEWS.index(view),
+            ),
+            ft.Container(expand=True),
+            count_text,
+            ft.TextButton(
+                "导出 CSV",
+                icon=ft.CupertinoIcons.ARROW_DOWN_DOC,
+                on_click=_on_export_click,
+            ),
+            ft.TextButton(
+                "导出答案",
+                icon=ft.CupertinoIcons.CHECKMARK_SEAL,
+                tooltip="把所选题目的 mark scheme 排成一份答案 —— "
+                        "用批改时已解析的结果，不会重新解析",
+                on_click=_on_export_answers_click,
+            ),
+            ft.Button(
+                "导出 PDF",
+                icon=ft.CupertinoIcons.DOC_ON_CLIPBOARD,
+                tooltip="把所选题目从原卷裁下来，一道大题一页（不含答题横线）；"
+                        "每题后面跟一页 mark scheme",
+                on_click=_on_export_pdf_click,
+                style=theme.filled_button(),
+            ),
+        ],
+        spacing=theme.SPACE_MD,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
     _rebuild_content()
 
-    return _page_shell(
-        ft.Row(
-            [
-                ft.Text("错题本", size=theme.TITLE,
-                        weight=ft.FontWeight.BOLD,
-                        style=theme.title_style()),
-                ft.Container(expand=True),
-                count_text,
-                ft.TextButton(
-                    "导出 CSV",
-                    icon=ft.CupertinoIcons.ARROW_DOWN_DOC,
-                    on_click=_on_export_click,
-                ),
-                ft.TextButton(
-                    "导出答案",
-                    icon=ft.CupertinoIcons.CHECKMARK_SEAL,
-                    tooltip="把所选题目的 mark scheme 排成一份答案 —— "
-                            "用批改时已解析的结果，不会重新解析",
-                    on_click=_on_export_answers_click,
-                ),
-                ft.Button(
-                    "导出 PDF",
-                    icon=ft.CupertinoIcons.DOC_ON_CLIPBOARD,
-                    tooltip="把所选题目从原卷裁下来，一道大题一页（不含答题横线）；"
-                            "每题后面跟一页 mark scheme",
-                    on_click=_on_export_pdf_click,
-                    style=theme.filled_button(),
-                ),
-            ],
-            spacing=theme.SPACE_MD,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        view_selector,
-        content_area,
-    )
-
-
-def _page_shell(*controls: ft.Control) -> ft.Container:
-    """Page padding + the standard vertical rhythm, no spacer hacks."""
-    return ft.Container(
-        ft.Column(list(controls), spacing=theme.SPACE_MD),
-        padding=theme.SPACE_XL,
-    )
+    return ft.Column([toolbar, content_area], spacing=theme.SPACE_MD)
