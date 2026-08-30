@@ -362,8 +362,8 @@ def test_qp_is_marked_when_the_session_lists_its_insert(
     """0500_s25_qp_11 + 0500_s25_in_11 in one listing → the QP carries the flag.
 
     This is what makes the UI hang the insert under its QP instead of dumping
-    it in the unsupported pile, and what picks download_with_insert over
-    download() for that row.
+    it in the unsupported pile, and what makes the download run with
+    insert=True for that row.
     """
     _patch_post(
         monkeypatch,

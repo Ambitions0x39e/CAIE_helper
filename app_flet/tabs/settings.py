@@ -6,8 +6,8 @@ swaps the tab's own content for the sub-page, with a back arrow + title row
 give a native slide-in transition and AppBar back button (including iOS
 edge-swipe-back), but it replaces the *entire* window, taking the left-hand
 nav_rail and header from main.py down with it. Embedding keeps the tab
-inside ``content_area`` like every other tab, at the cost of that native
-transition/gesture.
+inside ``content_area`` like every other tab; the slide-in is hand-rolled
+(``swap_slot``) and there is no edge-swipe-back.
 
 Each sub-page loads its own config fresh on open and saves independently,
 so no global routing is involved here — no ``page.views``, ``page.go``,
@@ -28,7 +28,7 @@ import flet as ft
 from pydantic import ValidationError
 
 from app_flet import theme
-from app_flet.components.widgets import hoverable, section_title
+from app_flet.components.widgets import hoverable, push_track, section_title
 from core.settings import GraderConfig, MailConfig
 from modules.marking.syllabus_parser import (
     delete_syllabus,
@@ -43,6 +43,11 @@ if TYPE_CHECKING:
 #: Drill-down rows' corner radius. Also the inset their dividers need, so the
 #: two can't drift apart.
 _MENU_ROW_RADIUS = 8
+
+#: 抽屉的两格：菜单在左、子页在右。序号就是它们在轨道上的先后，推拉的方向
+#: 由它决定。
+_MENU_PANE = 0
+_SUB_PANE = 1
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _APP_NAME = "CIE Helper"
@@ -80,15 +85,10 @@ _HAIRLINE = theme.HAIRLINE
 # phones and iPad as well as desktop, so the side-by-side form is a
 # wide-window affordance, not the only layout.
 _NARROW_WIDTH = 560
-#: main.py's nav_rail (84px) + its 1px VerticalDivider — this tab now renders
-#: inside content_area, to the right of both, so page.width overstates the
-#: room actually available here by that much (same gap analytics.py's chart
-#: width had to account for).
-_NAV_CHROME_W = 85
 
 
 def _is_narrow(page: ft.Page) -> bool:
-    return (page.width or 1024) - _NAV_CHROME_W < _NARROW_WIDTH
+    return (page.width or 1024) - theme.NAV_CHROME_W < _NARROW_WIDTH
 
 
 def _tf(
@@ -118,7 +118,8 @@ def _section(title: str) -> ft.Control:
     """A group heading ("Profile" / "Preferences" in the reference design)."""
     return ft.Container(
         ft.Text(
-            title, size=18, weight=ft.FontWeight.BOLD,
+            title, size=theme.SECTION, weight=ft.FontWeight.BOLD,
+            style=theme.section_style(),
         ),
         padding=ft.Padding.only(top=24, bottom=6),
     )
@@ -140,7 +141,12 @@ def _row(
         ft.Text(label, size=15),
     ]
     if description:
-        left.append(ft.Text(description, size=12, color=theme.MUTED))
+        left.append(ft.Text(
+            description,
+            size=theme.CAPTION,
+            color=theme.MUTED,
+            style=theme.caption_style(),
+        ))
 
     if narrow:
         if isinstance(control, ft.TextField):
@@ -206,7 +212,10 @@ def _sub_header(title: str, on_back: Callable[[], None]) -> ft.Row:
     return ft.Row(
         [
             ft.IconButton(ft.CupertinoIcons.BACK, on_click=lambda e: on_back()),
-            ft.Text(title, size=20, weight=ft.FontWeight.BOLD),
+            ft.Text(
+                title, size=20, weight=ft.FontWeight.BOLD,
+                style=theme.title_style(),
+            ),
         ],
         spacing=4,
     )
@@ -583,8 +592,9 @@ def _build_about_view(
                     ft.Text(
                         "下载完成后会自动安装。安装时应用会自动退出，"
                         "装好后会自己重新打开。",
-                        size=12,
+                        size=theme.CAPTION,
                         color=theme.MUTED,
+                        style=theme.caption_style(),
                     ),
                 ],
                 tight=True,
@@ -652,12 +662,14 @@ def _build_about_view(
                 size=20,
                 weight=ft.FontWeight.BOLD,
                 text_align=ft.TextAlign.CENTER,
+                style=theme.title_style(),
             ),
             ft.Text(
                 f"Version {version}" if version else "",
-                size=13,
+                size=theme.BODY,
                 color=theme.MUTED,
                 text_align=ft.TextAlign.CENTER,
+                style=theme.numeric_style(),
             ),
             ft.Container(height=20),
             _hairline(_MENU_ROW_RADIUS),
@@ -745,7 +757,8 @@ def _syllabus_body(
             ft.Text(
                 f"{topic.topic_id}  {topic.name}"
                 + (f"   [{topic.category}]" if topic.category else ""),
-                size=12, color=theme.MUTED, selectable=True, expand=True,
+                size=theme.CAPTION, color=theme.MUTED, selectable=True,
+                expand=True, style=theme.caption_style(),
             )
             for topic in info.topics.values()
         ],
@@ -763,7 +776,8 @@ def _syllabus_body(
                 "存储位置",
                 ft.Text(
                     str(syllabus_path(info.subject_id)),
-                    size=12, color=theme.MUTED, selectable=True,
+                    size=theme.CAPTION, color=theme.MUTED, selectable=True,
+                    style=theme.caption_style(),
                 ),
             ),
             _row(
@@ -837,7 +851,12 @@ def _menu_row(
                 ft.Column(
                     [
                         ft.Text(title, size=15),
-                        ft.Text(subtitle, size=12, color=theme.MUTED),
+                        ft.Text(
+                            subtitle,
+                            size=theme.CAPTION,
+                            color=theme.MUTED,
+                            style=theme.caption_style(),
+                        ),
                     ],
                     spacing=3,
                     expand=True,
@@ -860,34 +879,24 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
     # embedded in content_area (nav_rail visible) instead of pushing a
     # separate ft.View that would cover the whole window — see module
     # docstring.
-    content = ft.Column(expand=True)
-
+    # 菜单是第 0 格、子页是第 1 格 —— _menu_row 右边那个 CHEVRON_RIGHT 承诺
+    # 的就是「往右进去」，进去时菜单往左出、子页从右边推进来，两页同向。
     def show_menu() -> None:
-        content.controls.clear()
-        content.controls.append(menu)
-        page.update()
+        show(_MENU_PANE, menu)
 
     # Typed as the Container event rather than the looser ft.ControlEvent so
     # the handlers match Container.on_click exactly and need no type: ignore.
     def open_mail(_: ft.Event[ft.Container]) -> None:
-        content.controls.clear()
-        content.controls.append(_build_mail_view(page, state, show_menu))
-        page.update()
+        show(_SUB_PANE, _build_mail_view(page, state, show_menu))
 
     def open_grader(_: ft.Event[ft.Container]) -> None:
-        content.controls.clear()
-        content.controls.append(_build_grader_view(page, state, show_menu))
-        page.update()
+        show(_SUB_PANE, _build_grader_view(page, state, show_menu))
 
     def open_syllabus(_: ft.Event[ft.Container]) -> None:
-        content.controls.clear()
-        content.controls.append(_build_syllabus_view(page, state, show_menu))
-        page.update()
+        show(_SUB_PANE, _build_syllabus_view(page, state, show_menu))
 
     def open_about(_: ft.Event[ft.Container]) -> None:
-        content.controls.clear()
-        content.controls.append(_build_about_view(page, state, show_menu))
-        page.update()
+        show(_SUB_PANE, _build_about_view(page, state, show_menu))
 
     menu = ft.Column(
         [
@@ -916,10 +925,14 @@ def build_settings_tab(page: ft.Page, state: AppState) -> ft.Container:
         spacing=0,
         scroll=ft.ScrollMode.AUTO,
     )
-    content.controls.append(menu)
-
     # 20 on all four sides, same as every other tab, so this page's title
-    # lines up with the others'. No explicit bgcolor: this Container (and
-    # every sub-page's) inherits content_area's — i.e. page.bgcolor — same
-    # as the rest of the app.
-    return ft.Container(content, padding=20)
+    # lines up with the others'. It goes *inside* the track (hence via
+    # push_track) rather than around it: wrapped around, the clip edge
+    # retreats to the inside of the margin and a sliding sub-page would appear
+    # and vanish 20px short of the nav rail, with a dead white strip between.
+    # No explicit bgcolor: this Container (and every sub-page's) inherits
+    # content_area's — i.e. page.bgcolor — same as the rest of the app.
+    #
+    # fill 留默认的 False：这个 tab 挂在 content_area 那根滚动列里，高度无界。
+    body, show = push_track(page, 2, menu, padding=theme.SPACE_XL)
+    return body

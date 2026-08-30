@@ -152,7 +152,10 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
     totals = summarise_scores(results, overrides)
     done, total = ctx.grade_progress
     controls: list[ft.Control] = [
-        ft.Text("批改结果", size=theme.SECTION, weight=ft.FontWeight.BOLD),
+        ft.Text(
+            "批改结果", size=theme.SECTION, weight=ft.FontWeight.BOLD,
+            style=theme.section_style(),
+        ),
         ft.Row(
             [
                 metric_card(
@@ -178,6 +181,7 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
         controls.append(ft.Text(
             f"正在批改… {done}/{total}",
             size=theme.CAPTION, color=theme.MUTED,
+            style=theme.caption_style(),
         ))
     else:
         # 失败的题就落在这一步的格子里（写着「失败」的那些），横幅说明为什么。
@@ -186,6 +190,7 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
         controls.append(ft.Text(
             "点开任意一题看判分明细。",
             size=theme.CAPTION, color=theme.MUTED,
+            style=theme.caption_style(),
         ))
 
     controls.extend(_grid([
@@ -201,8 +206,8 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
         controls.append(success_banner("分数已记录"))
     elif not state.grading_in_progress:
         controls.append(ft.Text(
-            "检查结果，确认后记录分数。",
-            size=theme.CAPTION, color=theme.MUTED,
+            "检查结果，确认后记录分数。", size=theme.CAPTION,
+            color=theme.MUTED, style=theme.caption_style(),
         ))
         controls.append(ft.Button(
             "确认并记录分数",
@@ -244,12 +249,16 @@ def _score_cell(
     return ft.Container(
         ft.Column(
             [
-                ft.Text(qid, size=theme.SUBHEAD, weight=ft.FontWeight.W_600),
+                ft.Text(
+                    qid, size=theme.SUBHEAD, weight=ft.FontWeight.W_600,
+                    style=theme.body_style(),
+                ),
                 ft.Text(
                     value,
                     size=20,
                     weight=ft.FontWeight.BOLD,
                     color=value_color,
+                    style=theme.numeric_style(20),
                 ),
             ],
             spacing=theme.SPACE_XS,
@@ -365,6 +374,7 @@ def _detail_controls(ctx: MarkTabContext, qr: QuestionResult) -> list[ft.Control
                     ft.Text(
                         question,
                         size=theme.BODY, weight=ft.FontWeight.BOLD,
+                        style=theme.body_style(),
                     ),
                     bgcolor=_score_color(ov, max_marks),
                     border_radius=theme.CARD_RADIUS,
@@ -375,6 +385,7 @@ def _detail_controls(ctx: MarkTabContext, qr: QuestionResult) -> list[ft.Control
                 ft.Text(
                     f"{ov:g}/{max_marks}",
                     size=theme.SECTION, weight=ft.FontWeight.BOLD,
+                    style=theme.numeric_style(theme.SECTION),
                 ),
             ],
             spacing=theme.SPACE_SM,
@@ -394,6 +405,7 @@ def _detail_controls(ctx: MarkTabContext, qr: QuestionResult) -> list[ft.Control
                 ft.Text(
                     f"{m.code}: {m.reason}",
                     size=theme.BODY,
+                    style=theme.body_style(),
                     expand=True,  # wrap long reasons, don't overflow
                 ),
             ],
@@ -412,6 +424,7 @@ def _detail_controls(ctx: MarkTabContext, qr: QuestionResult) -> list[ft.Control
                     ft.Text(
                         qr.comment,
                         color=theme.MUTED, size=theme.CAPTION,
+                        style=theme.caption_style(),
                         expand=True,  # wrap long comments
                     ),
                 ],

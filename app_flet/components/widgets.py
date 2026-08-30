@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Collection, Sequence
 
 import flet as ft
@@ -67,13 +68,19 @@ def metric_card(label: str, value: str, color: str) -> ft.Container:
     return ft.Container(
         ft.Column(
             [
-                ft.Text(label, size=theme.CAPTION, color=theme.MUTED),
+                ft.Text(
+                    label,
+                    size=theme.CAPTION,
+                    color=theme.MUTED,
+                    style=theme.caption_style(),
+                ),
                 ft.Text(
                     value,
                     size=24,
                     weight=ft.FontWeight.BOLD,
                     color=color,
                     text_align=ft.TextAlign.CENTER,
+                    style=theme.numeric_style(),
                 ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -91,7 +98,12 @@ def metric_card(label: str, value: str, color: str) -> ft.Container:
 
 def status_badge(status: str) -> ft.Container:
     return ft.Container(
-        ft.Text(status, size=12, color=theme.ON_FILLED),
+        ft.Text(
+            status,
+            size=theme.CAPTION,
+            color=theme.ON_FILLED,
+            style=theme.caption_style(),
+        ),
         bgcolor=theme.SUCCESS if status == "Completed" else theme.WARNING,
         border_radius=12,
         padding=ft.Padding(left=8, right=8, top=2, bottom=2),
@@ -103,58 +115,74 @@ def section_title(text: str) -> ft.Text:
         text,
         size=theme.TITLE,
         weight=ft.FontWeight.BOLD,
+        style=theme.title_style(),
+    )
+
+
+def _banner(
+    message: str,
+    details: list[str] | None,
+    *,
+    icon: ft.IconValue,
+    icon_color: str,
+    bgcolor: str,
+    bold: bool,
+) -> ft.Container:
+    controls: list[ft.Control] = [
+        ft.Row([
+            ft.Icon(icon, color=icon_color),
+            ft.Text(
+                message,
+                weight=ft.FontWeight.BOLD if bold else None,
+            ),
+        ]),
+    ]
+    controls.extend(
+        ft.Text(
+            d,
+            size=theme.CAPTION,
+            color=theme.MUTED,
+            style=theme.caption_style(),
+        )
+        for d in details or []
+    )
+    return ft.Container(
+        content=ft.Column(controls),
+        bgcolor=bgcolor,
+        border_radius=theme.CARD_RADIUS,
+        border=ft.Border.all(1, theme.HAIRLINE),
+        shadow=theme.row_shadow(),
+        padding=theme.SPACE_LG,
     )
 
 
 def success_banner(message: str, details: list[str] | None = None) -> ft.Container:
-    controls: list[ft.Control] = [
-        ft.Row([
-            ft.Icon(ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL, color=theme.SUCCESS),
-            ft.Text(message, weight=ft.FontWeight.BOLD),
-        ]),
-    ]
-    for d in details or []:
-        controls.append(ft.Text(d, size=12, color=theme.MUTED))
-    return ft.Container(
-        content=ft.Column(controls),
+    return _banner(
+        message, details,
+        icon=ft.CupertinoIcons.CHECKMARK_CIRCLE_FILL,
+        icon_color=theme.SUCCESS,
         bgcolor=theme.SUCCESS_TINT,
-        border_radius=theme.CARD_RADIUS,
-        border=ft.Border.all(1, theme.HAIRLINE),
-        shadow=theme.row_shadow(),
-        padding=theme.SPACE_LG,
+        bold=True,
     )
 
 
 def error_banner(message: str) -> ft.Container:
-    return ft.Container(
-        content=ft.Row([
-            ft.Icon(ft.CupertinoIcons.XMARK_CIRCLE_FILL, color=theme.DANGER),
-            ft.Text(message),
-        ]),
+    return _banner(
+        message, None,
+        icon=ft.CupertinoIcons.XMARK_CIRCLE_FILL,
+        icon_color=theme.DANGER,
         bgcolor=theme.DANGER_TINT,
-        border_radius=theme.CARD_RADIUS,
-        border=ft.Border.all(1, theme.HAIRLINE),
-        shadow=theme.row_shadow(),
-        padding=theme.SPACE_LG,
+        bold=False,
     )
 
 
 def warning_banner(message: str, details: list[str] | None = None) -> ft.Container:
-    controls: list[ft.Control] = [
-        ft.Row([
-            ft.Icon(ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL, color=theme.WARNING),
-            ft.Text(message, weight=ft.FontWeight.BOLD),
-        ]),
-    ]
-    for d in details or []:
-        controls.append(ft.Text(d, size=12, color=theme.MUTED))
-    return ft.Container(
-        content=ft.Column(controls),
+    return _banner(
+        message, details,
+        icon=ft.CupertinoIcons.EXCLAMATIONMARK_CIRCLE_FILL,
+        icon_color=theme.WARNING,
         bgcolor=theme.WARNING_TINT,
-        border_radius=theme.CARD_RADIUS,
-        border=ft.Border.all(1, theme.HAIRLINE),
-        shadow=theme.row_shadow(),
-        padding=theme.SPACE_LG,
+        bold=True,
     )
 
 
@@ -164,26 +192,13 @@ def info_banner(message: str, details: list[str] | None = None) -> ft.Container:
     跟 warning 分开是因为它们的**下一步**不同：warning 有个待办（去填、去改），
     info 没有。同一条「识别了 13/13 题」在全中时是 info，差一题就是 warning。
     """
-    controls: list[ft.Control] = [
-        ft.Row([
-            ft.Icon(ft.CupertinoIcons.INFO_CIRCLE_FILL, color=theme.PRIMARY),
-            ft.Text(message, weight=ft.FontWeight.BOLD),
-        ]),
-    ]
-    for d in details or []:
-        controls.append(ft.Text(d, size=theme.CAPTION, color=theme.MUTED))
-    return ft.Container(
-        content=ft.Column(controls),
+    return _banner(
+        message, details,
+        icon=ft.CupertinoIcons.INFO_CIRCLE_FILL,
+        icon_color=theme.PRIMARY,
         bgcolor=theme.PRIMARY_TINT,
-        border_radius=theme.CARD_RADIUS,
-        border=ft.Border.all(1, theme.HAIRLINE),
-        shadow=theme.row_shadow(),
-        padding=theme.SPACE_LG,
+        bold=True,
     )
-
-
-#: 颜色槽位收的东西：一个定值，或者一个「问的时候才算」的取值器。
-Tint = "ft.ColorValue | Callable[[], ft.ColorValue | None] | None"
 
 
 def _tint(source: ft.ColorValue | Callable[[], ft.ColorValue | None] | None) -> (
@@ -287,6 +302,11 @@ def segmented_strip(
     ``indicator`` 槽位只收 ``UnderlineTabIndicator``，而 ``overlay_color``
     走的是 InkWell 的状态机 —— Flutter 的 TabBar 不把 ``selected`` 交给
     InkWell，所以「选中态铺底」这个状态在那条路上根本不存在。
+
+    也不用 ``ft.SegmentedButton``：它的选中和按下反馈是 Material 的涟漪，跟
+    这套 Linear 风 + squircle 的交互态是两套语言。全 app 的分段选择都走这个
+    函数，不要再引入前两者。**它只把序号报给 ``on_select``**，值由调用方按
+    自己那张表查 —— 见 manage.py 的 ``_VIEWS``。
 
     形制是一整颗胶囊：外框一圈发丝边 + 最浅的 tint 底，里面每段之间一道竖直
     分隔线，选中的那段浮起来成一块白色的滑块（``SURFACE`` + ``row_shadow()``，
@@ -405,11 +425,212 @@ def segmented_strip(
     )
 
 
-def loading_row(label: str) -> ft.Row:
-    return ft.Row(
-        [
-            ft.ProgressRing(width=20, height=20),
-            ft.Text(label, size=theme.CAPTION, color=theme.MUTED),
-        ],
-        spacing=theme.SPACE_SM,
+
+#: 淡出占整段过渡的比例，剩下的归淡入。旧的走得快、新的进得慢 —— 视线是跟着
+#: 新内容走的，给它更多时间落位。
+_FADE_OUT_SHARE = 0.3
+
+
+def swap_slot(
+    page: ft.Page,
+    content: ft.Control,
+    duration: int = theme.DURATION_BASE,
+) -> tuple[ft.Container, Callable[..., None]]:
+    """一块会自己换内容的区域：淡出 → 换掉 → 淡进来。返回 (控件, 换的函数)。
+
+    只淡，不动。要横向推拉（旧的往一侧出、新的从另一侧进）用 push_track ——
+    一个容器只有一个 ``offset``，做不出两页各走各的方向。
+
+    **这件事不能交给 ``ft.AnimatedSwitcher``。** 它把新旧两份同时挂进一个
+    Stack 里交叉淡开，而那个 Stack 居中对齐、高度取两份里较高的一份 —— 两份
+    高度不一样时（换 tab 就是），新内容会先悬在半空，等旧的卸载完再弹回顶部。
+    Flet 没有暴露 ``layoutBuilder`` 或 ``alignment``，改不掉。这里同一时刻只
+    有一份内容在场，高度是在完全透明的那一刻变的。
+
+    不存在「必须先渲染一帧」的竞态：``animate_opacity`` 补的是「已经画出来的
+    那个值」到新值之间的差，而这个容器是**常驻**的，改的是它自己已经画出来的
+    值。新建一个控件再改它的属性则不然 —— 那种写法会静默失效，不报错，只是
+    不动。
+    """
+    out_ms = int(duration * _FADE_OUT_SHARE)
+    in_ms = duration - out_ms
+    slot = ft.Container(
+        content,
+        animate_opacity=ft.Animation(out_ms, theme.CURVE_OUT),
+    )
+    #: 淡出还没走完就又点了一次时，只让最后那次算数 —— 否则先发的那次会在
+    #: 后发的那次之后落地，屏幕上留下的是用户更早点的那个。
+    latest = [0]
+
+    def show(content: ft.Control) -> None:
+        token = latest[0] = latest[0] + 1
+        slot.animate_opacity = ft.Animation(out_ms, theme.CURVE_OUT)
+        slot.opacity = 0
+        page.update()
+
+        async def _swap() -> None:
+            # 等的是淡出这段动画本身的时长，不是「等一帧」—— 时长是已知的，
+            # 睡够了它一定播完了。
+            await asyncio.sleep(out_ms / 1000)
+            if token != latest[0]:
+                return
+            slot.content = content
+            slot.animate_opacity = ft.Animation(in_ms, theme.CURVE_IN)
+            slot.opacity = 1
+            page.update()
+
+        page.run_task(_swap)
+
+    return slot, show
+
+
+def _park(index: int, current: int) -> ft.Offset:
+    """一格停在哪，只看它和当前那格的先后：靠前的在左边一格，当前那格在原位，
+    靠后的在右边一格。"""
+    if index < current:
+        return ft.Offset(-1, 0)
+    if index > current:
+        return ft.Offset(1, 0)
+    return ft.Offset(0, 0)
+
+
+def push_track(
+    page: ft.Page,
+    panes: int,
+    content: ft.Control,
+    duration: int = theme.DURATION_BASE,
+    *,
+    start: int = 0,
+    padding: ft.PaddingValue | None = None,
+    fill: bool = False,
+) -> tuple[ft.Container, Callable[[int, ft.Control], None]]:
+    """并排 N 格的推拉轨道：换到第 ``index`` 格，旧的往一侧出去、新的从另一侧
+    进来，**两者同向**。返回 (控件, 换的函数)。
+
+    这是 swap_slot 做不到的那一半。一个容器只有一个 ``offset``，新内容进场的
+    那一侧必然就是旧内容退场的那一侧 —— 往前走时旧页朝着新页来的方向退，读
+    起来是两页对着走。这里每一格是**独立且常驻**的容器，各有各的 offset。
+
+    每格停在哪只看它和当前那格的先后：靠前的在左边一格（-1），当前那格在原位
+    （0），靠后的在右边一格（+1）。切换时全体重算，于是退场那格往左走、进场
+    那格从右边推过来 —— 同一个方向。落点只在 -1 / 0 / +1 之间取，每格都是从
+    **自己上一次画出来的位置**动到新位置，所以不需要任何瞬移，也就没有「必须
+    先渲染一帧」的竞态。
+
+    不在场的几格是透明的：三格以上时中间那格会横穿整个视口，不透明就是一道
+    闪。
+
+    **外面那层的 ``bgcolor`` 是裁剪的开关，不是装饰，别删。** Flet 把
+    ``bgcolor`` / ``border`` / ``border_radius`` 合成一个 ``BoxDecoration``
+    交给 Flutter 的 Container，而 Container 只在**有** decoration 时才插那层
+    ClipPath —— 三者一个都不设的话，``clip_behavior`` 是一句空话，不报错也不
+    裁，滑出去的那一格照样画到左边的导航栏上。取的是页面底色，所以看不出来。
+
+    ``ft.Stack`` 自己的 ``clip_behavior`` 顶不上：Flutter 的 Stack 只在**布局**
+    溢出时才裁，而 ``offset`` 是画的时候平移的，布局上每一格都严丝合缝。
+
+    ``padding`` 是页面自己的边距，交给这里而不是在外面套一层：套在外面，裁剪
+    边界就退到边距内侧，页面会在离导航栏还有一段的地方凭空出现和消失，中间留
+    一条什么都不发生的白边。
+
+    ``start`` 是开局停在第几格。记着上次选了哪个视图的地方要传它 —— 默认从
+    第 0 格开局，再 ``show`` 到别处就等于一进页面先推一下。
+
+    ``fill=True`` 让每格撑满轨道的盒子，给**定高**的视口用（下载页那块算出来
+    的高度）—— 松约束下格子会缩到内容的固有高度，子页的 expand 和内部滚动就
+    不成立了。高度无界的地方（settings 挂在滚动列里）必须留 False，撑满会向
+    无穷大要尺寸。
+    """
+    track: list[ft.Container] = [
+        ft.Container(
+            content if i == start else ft.Column(),
+            padding=padding,
+            offset=_park(i, start),
+            opacity=1.0 if i == start else 0.0,
+            animate_offset=ft.Animation(duration, theme.CURVE_PAGE),
+            animate_opacity=ft.Animation(duration, theme.CURVE_PAGE),
+        )
+        for i in range(panes)
+    ]
+    current = [start]
+    latest = [0]
+
+    def show(index: int, content: ft.Control) -> None:
+        track[index].content = content
+        if index == current[0]:
+            page.update()
+            return
+        current[0] = index
+        token = latest[0] = latest[0] + 1
+        for i, pane in enumerate(track):
+            pane.offset = _park(i, index)
+            pane.opacity = 1.0 if i == index else 0.0
+        page.update()
+
+        async def _drop() -> None:
+            # 推完把不在场的几格清空：Stack 的高度取最高的一格，留着内容会让
+            # 整块一直按最高的那一页撑着。清掉的是格子，不是调用方手里的控件
+            # 对象 —— 表单填到一半的状态在调用方那边，挂回来不丢。
+            await asyncio.sleep(duration / 1000)
+            if token != latest[0]:
+                return
+            for i, pane in enumerate(track):
+                if i != index:
+                    pane.content = ft.Column()
+            page.update()
+
+        page.run_task(_drop)
+
+    # Stack 收 list[Control]；上面那份保持 list[Container]，改属性时才有类型。
+    controls: list[ft.Control] = list(track)
+    stack = ft.Stack(
+        controls,
+        # 顶对齐：两格高度不一样时，矮的那格必须待在顶上。居中对齐正是
+        # AnimatedSwitcher 让内容先悬在半空的那个毛病。
+        alignment=ft.Alignment.TOP_LEFT,
+        fit=ft.StackFit.EXPAND if fill else ft.StackFit.LOOSE,
+    )
+    return ft.Container(
+        stack,
+        bgcolor=theme.PAGE_BG,  # 见 docstring：这是裁剪的开关
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+    ), show
+
+
+#: 骨架条的高度：一行正文的行盒。
+_SKELETON_BAR_H = 18
+#: 逐行占宽的份数（满格 100）。长短不一才像一段真内容 —— 一摞等长的灰条读起来
+#: 是个进度条。``expand`` 只收整数 flex，所以这里是份数不是比例。
+_SKELETON_WIDTHS = (96, 82, 94, 70, 88, 76)
+
+
+def skeleton(rows: int = 6) -> ft.Shimmer:
+    """等待态：结果是「一堆形状相似、条数未知的东西」时用这个。
+
+    行数是假的。骨架屏预告的是**形状**，不是数量 —— 给的行数只要够撑起一块
+    有份量的轮廓就行，真结果回来时整块被换掉。
+
+    单个结果、或者有明确阶段的长任务不要用它：那些用进度条 + 文字阶段，
+    同样的屏幕面积里信息量更大。
+    """
+    bars: list[ft.Control] = []
+    for i in range(rows):
+        share = _SKELETON_WIDTHS[i % len(_SKELETON_WIDTHS)]
+        bars.append(ft.Row([
+            ft.Container(
+                height=_SKELETON_BAR_H,
+                border_radius=theme.CARD_RADIUS,
+                # 底色只定形状 —— Shimmer 是一层 shader mask，画出来的颜色
+                # 全部来自 base / highlight。
+                bgcolor=theme.HAIRLINE,
+                expand=share,
+            ),
+            # 补满这一行剩下的份数，否则唯一的 flex 子控件会一路撑到头，
+            # 每根条都一样长。
+            ft.Container(expand=100 - share),
+        ], spacing=0))
+    return ft.Shimmer(
+        content=ft.Column(bars, spacing=theme.SPACE_MD),
+        base_color=theme.HAIRLINE,
+        highlight_color=theme.SURFACE,
     )

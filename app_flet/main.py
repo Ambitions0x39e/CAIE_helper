@@ -11,7 +11,7 @@ from flet_pdf_render import PdfRenderer
 
 from app_flet import theme
 from app_flet.components.dialogs import show_score_dialog
-from app_flet.components.widgets import hoverable
+from app_flet.components.widgets import hoverable, swap_slot
 from app_flet.state import AppState
 from app_flet.tabs.analytics import build_analytics_tab
 from app_flet.tabs.download import build_download_tab
@@ -66,11 +66,17 @@ def main(page: ft.Page) -> None:
     else:  # Linux / Android
         _zh_font = "Noto Sans CJK SC"
 
+    # 行高和字距铺在这里就等于铺给了全 app：ft.Text 不写 theme_style 时一律
+    # 落在 body_medium 上，跟它自己的 size 无关。所以这一层给的是正文那档，
+    # 偏离正文的用途（标题、提示、纯数字）在调用点接 theme 的对应 *_style()。
     def _zh_style(**kw: object) -> ft.TextStyle:
+        metrics = theme.body_style()
         return ft.TextStyle(
             font_family=_zh_font,
             font_family_fallback=_zh_fallback,
             color=theme.TEXT_PRIMARY,
+            letter_spacing=metrics.letter_spacing,
+            height=metrics.height,
             **kw,  # type: ignore[arg-type]
         )
 
@@ -126,7 +132,12 @@ def main(page: ft.Page) -> None:
         page.update()
 
     # ── Content area ────────────────────────────────────────────────
-    content_area = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
+    # The slot owns which tab is up; the Column around it owns scrolling.
+    # Handing the slot a whole new tab is what makes the change a transition
+    # rather than a flash — clearing and refilling the Column would destroy
+    # the outgoing tree, leaving Flutter nothing to tween from.
+    tab_body, show_tab = swap_slot(page, build_download_tab(page, state, show_snack))
+    content_area = ft.Column([tab_body], scroll=ft.ScrollMode.AUTO, expand=True)
     selected_index = 0
 
     def refresh_current_tab() -> None:
@@ -140,41 +151,27 @@ def main(page: ft.Page) -> None:
         # across to Flutter and laying it out does not — and until that lands
         # the click has produced nothing on screen. This update carries a few
         # colours, so it paints immediately; the old tab stays up meanwhile,
-        # which is why the rail is repainted before the content is cleared.
+        # which is why the rail is repainted before the content is swapped.
         _apply_nav_selection()
         page.update()
-        content_area.controls.clear()
         if idx == 0:
-            content_area.controls.append(
-                build_download_tab(page, state, show_snack)
-            )
+            show_tab(build_download_tab(page, state, show_snack))
         elif idx == 1:
-            content_area.controls.append(
-                build_manage_tab(
-                    page, state, show_snack, refresh_cb=refresh_current_tab,
-                )
-            )
+            show_tab(build_manage_tab(
+                page, state, show_snack, refresh_cb=refresh_current_tab,
+            ))
         elif idx == 2:
-            content_area.controls.append(
-                build_analytics_tab(page, state)
-            )
+            show_tab(build_analytics_tab(page, state))
         elif idx == 3:
-            content_area.controls.append(
-                build_mark_tab(
-                    page, state, show_snack, ms_picker, answer_picker,
-                )
-            )
+            show_tab(build_mark_tab(
+                page, state, show_snack, ms_picker, answer_picker,
+            ))
         elif idx == 4:
-            content_area.controls.append(
-                build_mistakes_tab(
-                    page, state, show_snack, mistake_export_picker,
-                )
-            )
+            show_tab(build_mistakes_tab(
+                page, state, show_snack, mistake_export_picker,
+            ))
         elif idx == 5:
-            content_area.controls.append(
-                build_settings_tab(page, state)
-            )
-        page.update()
+            show_tab(build_settings_tab(page, state))
 
     # ── Side navigation ─────────────────────────────────────────────
     # A hand-rolled rail rather than ft.NavigationRail: the destinations have
@@ -182,7 +179,7 @@ def main(page: ft.Page) -> None:
     # rail spreads / groups them on its own terms.
     #: 每个入口是一个圆角正方形：图标+文字打包成一组，整组在方形里居中。
     #: 拆成上 2/3/下 1/3 两条带会让图标和文字分别对齐，组合起来反而不居中。
-    _NAV_BUTTON_SIZE = 64
+    _NAV_BUTTON_SIZE = theme.NAV_BUTTON_SIZE
     _NAV_RADIUS = round(_NAV_BUTTON_SIZE * theme.SQUIRCLE_RADIUS_RATIO, 2)
     nav_icons: list[ft.Icon] = []
     nav_labels: list[ft.Text] = []
@@ -192,7 +189,12 @@ def main(page: ft.Page) -> None:
         idx: int, icon: ft.IconData, label: str,
     ) -> ft.GestureDetector:
         icon_ctl = ft.Icon(icon, size=26)
-        label_ctl = ft.Text(label, size=12, no_wrap=True)
+        label_ctl = ft.Text(
+            label,
+            size=theme.CAPTION,
+            no_wrap=True,
+            style=theme.caption_style(),
+        )
         button = ft.Container(
             ft.Column(
                 [icon_ctl, label_ctl],
@@ -272,6 +274,7 @@ def main(page: ft.Page) -> None:
                     "CIE Helper",
                     size=20,
                     weight=ft.FontWeight.BOLD,
+                    style=theme.title_style(),
                 ),
                 ft.Container(expand=True),
                 ft.Button(
@@ -293,9 +296,6 @@ def main(page: ft.Page) -> None:
     )
 
     # ── Layout ──────────────────────────────────────────────────────
-    # Initial tab
-    content_area.controls.append(build_download_tab(page, state, show_snack))
-
     page.add(
         ft.SafeArea(
             ft.Column(

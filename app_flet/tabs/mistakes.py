@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from app_flet import theme
-from app_flet.components.widgets import data_table
+from app_flet.components.widgets import data_table, push_track, segmented_strip
 from core.models import MistakeRecord
 from core.storage import CSVStore, MistakeStore
 from modules.marking.answer_sheet import build_answer_sheet
@@ -51,8 +51,10 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger("cie_helper.mistakes")
 
+#: 两个视图在分段条上的先后。序号即推拉的方向。
 _BY_PAPER = "paper"
 _BY_TOPIC = "topic"
+_VIEWS = (_BY_PAPER, _BY_TOPIC)
 _EXPORT_FILENAME = "mistakes.csv"
 _EXPORT_PDF_FILENAME = "mistakes.pdf"
 _EXPORT_ANSWERS_FILENAME = "mistakes-answers.pdf"
@@ -64,10 +66,6 @@ _EXPORT_ANSWERS_FILENAME = "mistakes-answers.pdf"
 # window edge and drags every other column with it. Everything else gets a
 # fixed width so that "how much is left" is arithmetic rather than a guess.
 
-#: main.py's nav rail (64 + 20 padding) plus its 1px divider. ``page.width``
-#: is the whole window, so this comes off first — same constant, same reason,
-#: as analytics.py's ``_NAV_CHROME_W``.
-_NAV_CHROME_W = 85
 #: DataTable's own horizontal margin (24 each side) plus its checkbox column.
 _TABLE_CHROME = 48 + 48
 #: DataTable's default gap between columns; ``data_table`` doesn't override it.
@@ -95,7 +93,7 @@ def _usable_width(page: ft.Page, columns: int) -> int:
     """Room left for cell content once every fixed cost is paid."""
     return (
         int(page.width or 1024)
-        - _NAV_CHROME_W
+        - theme.NAV_CHROME_W
         - theme.SPACE_XL * 2            # page padding
         - theme.SPACE_LG * 2            # card padding
         - _TABLE_CHROME
@@ -185,9 +183,14 @@ def _cell(
     color: str | None = None,
     lines: int = 1,
     tooltip: str | None = None,
+    style: ft.TextStyle | None = None,
 ) -> ft.DataCell:
     """A width-pinned cell; anything longer is elided with the full text on
-    hover, so one long comment can't widen the table."""
+    hover, so one long comment can't widen the table.
+
+    ``style`` 是字距档：题号 / 试卷 / 得分那几列是纯 ASCII，走
+    ``theme.numeric_style()``；评语是中文，走提示那档。
+    """
     return ft.DataCell(ft.Container(
         ft.Text(
             text,
@@ -196,6 +199,7 @@ def _cell(
             max_lines=lines,
             overflow=ft.TextOverflow.ELLIPSIS,
             tooltip=tooltip or text or None,
+            style=style,
         ),
         width=width,
     ))
@@ -205,6 +209,7 @@ def _columns(*labels: str) -> list[ft.DataColumn]:
     return [
         ft.DataColumn(label=ft.Text(
             label, size=theme.CAPTION, weight=ft.FontWeight.W_600,
+            style=theme.caption_style(),
         ))
         for label in labels
     ]
@@ -239,7 +244,10 @@ def build_mistakes_tab(
 
     if not records:
         return _page_shell(
-            ft.Text("错题本", size=theme.TITLE, weight=ft.FontWeight.BOLD),
+            ft.Text(
+                "错题本", size=theme.TITLE, weight=ft.FontWeight.BOLD,
+                style=theme.title_style(),
+            ),
             _card(
                 ft.Row([
                     ft.Icon(ft.CupertinoIcons.BOOK, color=theme.MUTED),
@@ -250,6 +258,7 @@ def build_mistakes_tab(
                     "批改一份「从已下载试卷」选出的卷子并点「确认并记录分数」后，"
                     "没拿满分的题会自动记到这里。",
                     size=theme.CAPTION, color=theme.MUTED,
+                    style=theme.caption_style(),
                 ),
             ),
         )
@@ -259,8 +268,13 @@ def build_mistakes_tab(
     selected: set[int] = set()
     active_topics: set[str] = set()
     view = _BY_PAPER
-    content_area = ft.Column(spacing=theme.SPACE_MD)
-    count_text = ft.Text("", size=theme.CAPTION, color=theme.MUTED)
+    content_area, show_view = push_track(
+        page, len(_VIEWS), ft.Column(spacing=theme.SPACE_MD),
+    )
+    count_text = ft.Text(
+        "", size=theme.CAPTION, color=theme.MUTED,
+        style=theme.caption_style(),
+    )
 
     def _refresh_count() -> None:
         """Only the counter changes on a tick — rebuilding the views instead
@@ -293,6 +307,7 @@ def build_mistakes_tab(
                     max_lines=2,
                     overflow=ft.TextOverflow.ELLIPSIS,
                     tooltip="该科目未导入大纲，或这张卷不在大纲的 component 映射里",
+                    style=theme.caption_style(),
                 ),
                 width=width,
             )
@@ -356,6 +371,7 @@ def build_mistakes_tab(
             cells = [_cell(
                 record.question_id,
                 widths["question"],
+                style=theme.numeric_style(),
                 # When the window was too narrow for a 试卷 column, this is
                 # the only place left to read the paper id.
                 tooltip=None if paper_col else record.paper_id,
@@ -363,13 +379,18 @@ def build_mistakes_tab(
             if paper_col:
                 cells.append(_cell(
                     record.paper_id, widths["paper"], size=theme.CAPTION,
+                    style=theme.numeric_style(),
                 ))
             cells.extend([
                 ft.DataCell(_topic_picker(idx, widths["topic"])),
-                _cell(_score_text(record), widths["score"]),
+                _cell(
+                    _score_text(record), widths["score"],
+                    style=theme.numeric_style(),
+                ),
                 _cell(
                     record.comment, widths["comment"],
                     size=theme.CAPTION, color=theme.MUTED, lines=2,
+                    style=theme.caption_style(),
                 ),
             ])
             rows.append(ft.DataRow(cells=cells, selected=idx in selected))
@@ -441,7 +462,10 @@ def build_mistakes_tab(
                     ft.Icon(icon, color=theme.PRIMARY, size=18),
                     ft.Text(title, size=theme.SUBHEAD,
                             weight=ft.FontWeight.W_600),
-                    ft.Text(subtitle, size=theme.CAPTION, color=theme.MUTED),
+                    ft.Text(
+                        subtitle, size=theme.CAPTION, color=theme.MUTED,
+                        style=theme.caption_style(),
+                    ),
                 ],
                 spacing=theme.SPACE_SM,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -486,7 +510,9 @@ def build_mistakes_tab(
             _rebuild_content()
 
         return ft.Chip(
-            label=ft.Text(key, size=theme.CAPTION),
+            label=ft.Text(
+                key, size=theme.CAPTION, style=theme.caption_style(),
+            ),
             selected=key in active_topics,
             show_checkmark=True,
             bgcolor=theme.SURFACE,
@@ -507,7 +533,10 @@ def build_mistakes_tab(
                 ft.Icon(ft.CupertinoIcons.TAG, color=theme.PRIMARY, size=18),
                 ft.Text("按 topic 过滤", size=theme.SUBHEAD,
                         weight=ft.FontWeight.W_600),
-                ft.Text("不选＝全部", size=theme.CAPTION, color=theme.MUTED),
+                ft.Text(
+                    "不选＝全部", size=theme.CAPTION, color=theme.MUTED,
+                    style=theme.caption_style(),
+                ),
             ], spacing=theme.SPACE_SM,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Row(
@@ -646,35 +675,35 @@ def build_mistakes_tab(
 
     # ── Shell ─────────────────────────────────────────────────────
 
-    view_selector = ft.SegmentedButton(
-        segments=[
-            ft.Segment(value=_BY_PAPER, label=ft.Text("按卷")),
-            ft.Segment(value=_BY_TOPIC, label=ft.Text("按 topic")),
-        ],
-        selected=[view],
-        allow_multiple_selection=False,
-    )
-
     def _rebuild_content() -> None:
-        nonlocal view
-        view = (
-            view_selector.selected[0] if view_selector.selected else _BY_PAPER
-        )
-        content_area.controls.clear()
-        content_area.controls.extend(
-            _paper_view() if view == _BY_PAPER else _topic_view()
-        )
+        # 每次给一个**新的** Column：换的是格子里挂的是谁，原地 clear +
+        # extend 会把旧树销毁掉，Flutter 侧就没有可供补间的东西。
+        #
+        # 序号没变时 push_track 只换内容不推 —— 改 topic 标签、点 topic 过滤
+        # 芯片走的都是这条，同一个视图重排一遍，推一下会读成换了页。
+        show_view(_VIEWS.index(view), ft.Column(
+            _paper_view() if view == _BY_PAPER else _topic_view(),
+            spacing=theme.SPACE_MD,
+        ))
         count_text.value = f"已选 {len(selected)} / {len(records)} 题"
         page.update()
 
-    view_selector.on_change = lambda _: _rebuild_content()
+    def _on_view_change(index: int) -> None:
+        nonlocal view
+        view = _VIEWS[index]
+        _rebuild_content()
+
+    view_selector = segmented_strip(
+        ["按卷", "按 topic"], _on_view_change, selected=_VIEWS.index(view),
+    )
     _rebuild_content()
 
     return _page_shell(
         ft.Row(
             [
                 ft.Text("错题本", size=theme.TITLE,
-                        weight=ft.FontWeight.BOLD),
+                        weight=ft.FontWeight.BOLD,
+                        style=theme.title_style()),
                 ft.Container(expand=True),
                 count_text,
                 ft.TextButton(

@@ -69,7 +69,7 @@ def build_mark_tab(
         content.controls.clear()
         content.controls.append(section_title("AI 批改"))
 
-        if state.paper_type == PaperType.MCQ.value:
+        if state.paper_type is PaperType.MCQ:
             # MCQ 不分步：它的批改/展示逻辑还没重做（见 specs 的排除项），
             # 分步得等那次重做一起给，现在切开只会把一个待改的流程切成三段。
             content.controls.extend(_mcq_body(ctx))

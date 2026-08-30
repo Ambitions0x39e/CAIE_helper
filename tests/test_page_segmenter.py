@@ -26,7 +26,6 @@ from modules.marking.page_segmenter import (
     _SegWord,
     match_scanned,
     scan_document,
-    segment_questions,
     segment_questions_report,
     validate_regions,
 )
@@ -800,7 +799,7 @@ class TestSegmentQuestions:
         )
         pdf_bytes = _make_pdf_bytes([page0, page1])
 
-        regions = segment_questions(
+        regions, _ = segment_questions_report(
             pdf_bytes, ["Q1a", "Q1b", "Q2"], skip_pages=set()
         )
 
@@ -814,14 +813,16 @@ class TestSegmentQuestions:
         page1 = _make_cie_page(main_q="Q1")
         pdf_bytes = _make_pdf_bytes([page0, page1])
 
-        regions = segment_questions(pdf_bytes, ["Q1"])
+        regions, _ = segment_questions_report(pdf_bytes, ["Q1"])
 
         assert len(regions) == 1
         assert regions[0].clips[0].page_idx == 1
 
     def test_empty_page_returns_empty(self) -> None:
         pdf_bytes = _make_pdf_bytes([[]])
-        regions = segment_questions(pdf_bytes, ["Q1", "Q2"], skip_pages=set())
+        regions, _ = segment_questions_report(
+            pdf_bytes, ["Q1", "Q2"], skip_pages=set()
+        )
         assert regions == []
 
 
