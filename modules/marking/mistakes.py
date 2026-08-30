@@ -54,6 +54,17 @@ def topic_key(record: MistakeRecord) -> str:
     return f"{subject_id_of(record.paper_id)}{_KEY_SEP}{name}"
 
 
+def split_topic_key(key: str) -> tuple[str, str]:
+    """Undo :func:`topic_key`: ``"9701 · Equilibria"`` → ``("9701", "Equilibria")``.
+
+    A key without the separator is read as a bare topic name under no
+    syllabus — the pair is still (syllabus, topic), so callers that group by
+    the first element don't need a special case.
+    """
+    subject, sep, name = key.partition(_KEY_SEP)
+    return (subject, name) if sep else ("", subject)
+
+
 def mistakes_from_results(
     results: Iterable[QuestionResult],
     *,

@@ -36,6 +36,8 @@ class MarkTabContext:
     show_snack: Callable[[str, str], None]
     ms_picker: ft.FilePicker
     answer_picker: ft.FilePicker
+    #: 当前这一步的内容列。每次 ``rebuild`` 换一根新的 —— section 想在重建之外
+    #: 临时插控件（进度条之类）就往这里 append，位置才落在推拉轨道的格子内侧。
     content: ft.Column
 
     #: Rebuilds the whole tab; assigned once the section builders are known.
