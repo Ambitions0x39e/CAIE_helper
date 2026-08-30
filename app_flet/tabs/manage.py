@@ -6,13 +6,24 @@ import flet as ft
 
 from app_flet import theme
 from app_flet.components.dialogs import show_delete_dialog
-from app_flet.components.widgets import data_table, section_title, status_badge
+from app_flet.components.widgets import (
+    data_table,
+    push_track,
+    section_title,
+    segmented_strip,
+    status_badge,
+)
 from core.models import PaperRecord
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import PaperManager
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
+
+#: 两个视图在分段条上的先后。序号即推拉的方向，也是 state.manage_view 存的值。
+_DATABASE = "Database"
+_LIST = "List"
+_VIEWS = (_DATABASE, _LIST)
 
 
 def build_manage_tab(
@@ -30,18 +41,9 @@ def build_manage_tab(
 
     manager = PaperManager(store=state.store)
 
-    view_selector = ft.SegmentedButton(
-        segments=[
-            ft.Segment(value="Database", label=ft.Text("数据库")),
-            ft.Segment(value="List", label=ft.Text("列表")),
-        ],
-        selected=[state.manage_view],
-        allow_multiple_selection=False,
-    )
-    content_area = ft.Column()
-    hide_toggle = ft.Switch(
-        label="隐藏已完成",
-        value=state.hide_completed,
+    view_index = _VIEWS.index(state.manage_view) if state.manage_view in _VIEWS else 0
+    content_area, show_view = push_track(
+        page, len(_VIEWS), ft.Column(), start=view_index,
     )
 
     def _build_database_view() -> list[ft.Control]:
@@ -66,18 +68,22 @@ def build_manage_tab(
             rows.append(
                 ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Text(r.paper_id)),
+                        ft.DataCell(
+                            ft.Text(r.paper_id, style=theme.numeric_style())
+                        ),
                         ft.DataCell(status_badge(r.status)),
                         ft.DataCell(
                             ft.Text(
                                 f"{r.score_raw}/{r.score_total}"
                                 if r.score_raw is not None
                                 else "—",
+                                style=theme.numeric_style(),
                             )
                         ),
                         ft.DataCell(
                             ft.Text(
                                 f"{pct:.1f}%" if pct is not None else "—",
+                                style=theme.numeric_style(),
                             )
                         ),
                         ft.DataCell(
@@ -114,12 +120,19 @@ def build_manage_tab(
         ]
 
     def _build_list_view() -> list[ft.Control]:
+        # 开关每次重建。旧视图在过渡期间还挂在客户端上，复用同一个控件对象
+        # 会让它同时出现在新旧两棵树里 —— 状态存在 state 里，重建不丢。
+        hide_toggle = ft.Switch(
+            label="隐藏已完成",
+            value=state.hide_completed,
+            on_change=on_hide_toggle,
+        )
         filtered = records
-        if hide_toggle.value:
+        if state.hide_completed:
             filtered = [r for r in records if r.status == "Pending"]
 
         if not filtered:
-            return [ft.Text("没有匹配的记录。", color=theme.MUTED)]
+            return [hide_toggle, ft.Text("没有匹配的记录。", color=theme.MUTED)]
 
         cards: list[ft.Control] = [hide_toggle]
         for record in filtered:
@@ -195,16 +208,18 @@ def build_manage_tab(
                                         ft.Text(
                                             record.paper_id,
                                             weight=ft.FontWeight.BOLD,
+                                            style=theme.numeric_style(),
                                         ),
                                     ], spacing=4),
                                     ft.Text(
                                         score_text,
-                                        size=13,
+                                        size=theme.BODY,
                                     ),
                                     ft.Text(
                                         timestamp_text,
-                                        size=11,
+                                        size=theme.MICRO,
                                         color=theme.MUTED,
+                                        style=theme.caption_style(),
                                     ),
                                 ],
                                 spacing=2,
@@ -245,24 +260,28 @@ def build_manage_tab(
             show_snack(f"发送失败: {result.error}", theme.DANGER)  # type: ignore[operator]
 
     def _rebuild_content() -> None:
-        content_area.controls.clear()
-        selected = view_selector.selected[0] if view_selector.selected else "Database"
-        state.manage_view = selected
-        if selected == "Database":
-            content_area.controls.extend(_build_database_view())
-        else:
-            content_area.controls.extend(_build_list_view())
-        page.update()
+        index = _VIEWS.index(state.manage_view)
+        # 每次给一个**新的** Column：换的是格子里挂的是谁，原地 clear +
+        # extend 会把旧树销毁掉，Flutter 侧就没有可供补间的东西。
+        #
+        # 序号没变时 push_track 只换内容不推 —— 勾「隐藏已完成」走的就是这条，
+        # 同一个视图重新过滤一遍，推一下会读成换了页。
+        show_view(index, ft.Column(
+            _build_database_view() if state.manage_view == _DATABASE
+            else _build_list_view()
+        ))
 
-    def on_view_change(_: ft.ControlEvent) -> None:
+    def on_view_change(index: int) -> None:
+        state.manage_view = _VIEWS[index]
         _rebuild_content()
 
-    def on_hide_toggle(_: ft.ControlEvent) -> None:
-        state.hide_completed = hide_toggle.value or False
+    def on_hide_toggle(e: ft.Event[ft.Switch]) -> None:
+        state.hide_completed = e.control.value or False
         _rebuild_content()
 
-    view_selector.on_change = on_view_change  # type: ignore[assignment]
-    hide_toggle.on_change = on_hide_toggle  # type: ignore[assignment]
+    view_selector = segmented_strip(
+        ["数据库", "列表"], on_view_change, selected=view_index,
+    )
 
     # Initial build
     _rebuild_content()

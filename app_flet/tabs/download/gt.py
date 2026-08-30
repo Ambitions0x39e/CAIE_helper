@@ -22,7 +22,9 @@ from app_flet import theme
 from app_flet.components.widgets import (
     data_table,
     error_banner,
+    skeleton,
     success_banner,
+    swap_slot,
 )
 from app_flet.tabs.download.session_picker import build_session_picker
 from core.gt_parser import GTParser
@@ -38,14 +40,18 @@ def build_by_gt_tab(
     # 和「按考季查询」同一套下拉框：选的本来就是同一件事（哪科哪一场），
     # 而且卷号由代码拼，用户不会再把 _gt 的格式打错。
     picker = build_session_picker()
-    result_area = ft.Column(visible=False, spacing=8)
+    # 结果区三态：空 → 骨架屏 → 分数线表。分数线是「一堆形状相似、条数未知
+    # 的行」，形状能预告，所以等待用骨架屏而不是进度圈。
+    result_area, show_result = swap_slot(page, ft.Column(), theme.DURATION_FAST)
     progress_ring = ft.ProgressRing(visible=False, width=20, height=20)
-    status_text = ft.Text("", size=12, color=theme.MUTED)
+    status_text = ft.Text(
+        "", size=theme.CAPTION, color=theme.MUTED, style=theme.caption_style(),
+    )
     error_area = ft.Column(visible=False, spacing=4)
 
     # (表格行, 这个 option 要下的完整卷号)
     rows: list[tuple[ft.DataRow, list[str]]] = []
-    # 查询分数线和批量下载共用一把锁：两边都会改 rows / result_area /
+    # 查询分数线和批量下载共用一把锁：两边都会改 rows / 结果区 /
     # error_area，没锁的话双击或者一个没完就点另一个会撞车。
     busy = [False]
 
@@ -184,10 +190,19 @@ def build_by_gt_tab(
             papers = _papers_for(doc, opt)
             row = ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(opt.option)),
-                    ft.DataCell(ft.Text(str(opt.max_weighted))),
+                    ft.DataCell(
+                        ft.Text(opt.option, style=theme.numeric_style())
+                    ),
+                    ft.DataCell(
+                        ft.Text(
+                            str(opt.max_weighted), style=theme.numeric_style(),
+                        )
+                    ),
                     *[
-                        ft.DataCell(ft.Text(str(opt.thresholds.get(g, "–"))))
+                        ft.DataCell(ft.Text(
+                            str(opt.thresholds.get(g, "–")),
+                            style=theme.numeric_style(),
+                        ))
                         for g in grades
                     ],
                     # 每个 component 单独一段：本地已有的标绿，一眼看出这套卷
@@ -209,6 +224,7 @@ def build_by_gt_tab(
                                 tooltip=pid + (
                                     "（本地已有）" if pid in downloaded else ""
                                 ),
+                                style=theme.numeric_style(),
                             )
                             for component, pid in zip(
                                 opt.components, papers, strict=True,
@@ -234,15 +250,22 @@ def build_by_gt_tab(
                     f"卷号 = {prefix}<卷子列的号>，例如 {prefix}"
                     f"{doc.options[0].components[0]}。"
                     "勾选 option 即选中它的整套卷子；",
-                    size=12, color=theme.MUTED,
+                    size=theme.CAPTION, color=theme.MUTED,
+                    style=theme.caption_style(),
                 ),
                 ft.Text(
                     "绿色",
-                    size=12,
+                    size=theme.CAPTION,
                     color=theme.SUCCESS,
                     weight=ft.FontWeight.BOLD,
+                    style=theme.caption_style(),
                 ),
-                ft.Text("＝本地已有。", size=12, color=theme.MUTED),
+                ft.Text(
+                    "＝本地已有。",
+                    size=theme.CAPTION,
+                    color=theme.MUTED,
+                    style=theme.caption_style(),
+                ),
             ], spacing=0, wrap=True),
             data_table(
                 columns=[
@@ -278,8 +301,7 @@ def build_by_gt_tab(
             return
 
         busy[0] = True
-        progress_ring.visible = True
-        result_area.visible = False
+        show_result(skeleton())
         batch_bar.visible = False
         error_area.visible = False
         rows.clear()
@@ -289,32 +311,24 @@ def build_by_gt_tab(
             try:
                 dl = PaperDownloader(store=state.store).download(request)
 
-                progress_ring.visible = False
-                result_area.controls.clear()
-
                 if not dl.success:
-                    result_area.controls.append(
-                        error_banner(f"下载失败: {dl.error}")
-                    )
-                    result_area.visible = True
-                    page.update()
+                    show_result(error_banner(f"下载失败: {dl.error}"))
                     return
 
-                result_area.controls.append(
+                found: list[ft.Control] = [
                     success_banner(
                         f"已下载: {dl.paper_id}", [f"PDF → {dl.qp_path}"],
                     )
-                )
+                ]
                 doc = _parse(dl.qp_path, pid)
                 if isinstance(doc, str):
-                    result_area.controls.append(error_banner(doc))
+                    found.append(error_banner(doc))
                 else:
-                    result_area.controls.extend(_render_options(doc))
+                    found.extend(_render_options(doc))
                     batch_bar.visible = True
                     _refresh_status()
 
-                result_area.visible = True
-                page.update()
+                show_result(ft.Column(found, spacing=8))
             finally:
                 busy[0] = False
 

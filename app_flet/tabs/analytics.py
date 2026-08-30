@@ -9,13 +9,19 @@ import pandas as pd
 from flet import canvas as cv
 
 from app_flet import theme
-from app_flet.components.widgets import metric_card, section_title
+from app_flet.components.widgets import (
+    metric_card,
+    section_title,
+    segmented_strip,
+)
 from core.config_store import ConfigStore
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
 
 _MIN_FOR_TREND = 2
+#: 坐标轴刻度字号。比 MICRO 还小一档，它只是给曲线定标，不参与阅读。
+_AXIS_LABEL_SIZE = 10
 _CHART_HEIGHT = 350
 _CHART_LEFT_PAD = 40
 _CHART_RIGHT_PAD = 20
@@ -42,6 +48,17 @@ _LAYOUT_SPACING = 16
 _CHART_MIN_WIDTH = 320
 
 
+def _axis_label_style() -> ft.TextStyle:
+    """坐标轴刻度：纯数字，跟表格里的数值走同一档字距。
+
+    颜色是构造后补上的 —— theme 的字距档只管字距和行高两项，不带配色。
+    每次返回新对象，同 theme 里那几个工厂。
+    """
+    style = theme.numeric_style(size=_AXIS_LABEL_SIZE)
+    style.color = theme.MUTED
+    return style
+
+
 def _extract_syllabus_id(paper_id: str) -> str:
     return paper_id[:4]
 
@@ -58,9 +75,10 @@ def _trend_chart(
     if len(df) < _MIN_FOR_TREND:
         return ft.Text(
             "至少需要 2 次成绩才能绘制趋势图",
-            size=12,
+            size=theme.CAPTION,
             color=theme.MUTED,
             italic=True,
+            style=theme.caption_style(),
         )
 
     plot_w = width - _CHART_LEFT_PAD - _CHART_RIGHT_PAD
@@ -102,7 +120,7 @@ def _trend_chart(
         ))
         shapes.append(cv.Text(
             0, gy, f"{pct}%",
-            style=ft.TextStyle(size=10, color=theme.MUTED),
+            style=_axis_label_style(),
             alignment=ft.Alignment.CENTER_LEFT,
         ))
 
@@ -110,7 +128,7 @@ def _trend_chart(
     for i, attempt in enumerate(attempts):
         shapes.append(cv.Text(
             _x(i), _CHART_TOP_PAD + plot_h + 6, str(attempt),
-            style=ft.TextStyle(size=10, color=theme.MUTED),
+            style=_axis_label_style(),
             alignment=ft.Alignment.TOP_CENTER,
         ))
 
@@ -151,25 +169,34 @@ def _score_table(df: pd.DataFrame) -> ft.DataTable:
                 ft.DataCell(
                     ft.Text(
                         str(row["paper_id"]),
+                        style=theme.numeric_style(),
                     ),
                 ),
                 ft.DataCell(
                     ft.Text(
                         str(row["score_raw"]),
+                        style=theme.numeric_style(),
                     ),
                 ),
                 ft.DataCell(
                     ft.Text(
                         str(row["score_total"]),
+                        style=theme.numeric_style(),
                     ),
                 ),
                 ft.DataCell(
                     ft.Text(
                         f"{row['percentage']:.1f}%",
+                        style=theme.numeric_style(),
                     ),
                 ),
                 ft.DataCell(
-                    ft.Text(ts, color=theme.MUTED, size=12),
+                    ft.Text(
+                        ts,
+                        color=theme.MUTED,
+                        size=theme.CAPTION,
+                        style=theme.caption_style(),
+                    ),
                 ),
             ])
         )
@@ -251,6 +278,7 @@ def _build_syllabus_section(
         title = ft.Text(
             type_title, size=16,
             weight=ft.FontWeight.BOLD,
+            style=theme.section_style(),
         )
 
         # Flexible layout, decided from the live window width each rebuild:
@@ -291,26 +319,20 @@ def _build_syllabus_section(
                 ),
             ])
 
-    def _on_type_change(e: ft.ControlEvent) -> None:
-        selected = e.control.selected  # type: ignore[attr-defined]
-        if selected:
-            selected_digit[0] = next(iter(selected))
-            _rebuild_type_content()
-            page.update()
+    def _on_type_change(index: int) -> None:
+        selected_digit[0] = pt_digits[index]
+        _rebuild_type_content()
+        page.update()
 
     header_controls: list[ft.Control] = [syl_metrics]
     if pt_digits:
-        type_selector = ft.SegmentedButton(
-            segments=[
-                ft.Segment(
-                    value=digit,
-                    label=ft.Text(f"Paper {digit}"),
-                )
-                for digit in pt_digits
-            ],
-            selected=[selected_digit[0]] if selected_digit[0] else [],
-            allow_multiple_selection=False,
-            on_change=_on_type_change,  # type: ignore[arg-type]
+        type_selector = segmented_strip(
+            [f"Paper {digit}" for digit in pt_digits],
+            _on_type_change,
+            selected=(
+                pt_digits.index(selected_digit[0])
+                if selected_digit[0] in pt_digits else 0
+            ),
         )
         # Scroll horizontally so several paper types don't overflow on a phone.
         header_controls.append(

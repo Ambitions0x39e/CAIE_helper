@@ -103,7 +103,10 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
 
     controls: list[ft.Control] = [
         ft.Divider(),
-        ft.Text("批改结果", size=18, weight=ft.FontWeight.BOLD),
+        ft.Text(
+            "批改结果", size=theme.SECTION, weight=ft.FontWeight.BOLD,
+            style=theme.section_style(),
+        ),
     ]
 
     overrides = state.score_overrides
@@ -160,7 +163,8 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
                         ),
                         ft.Text(
                             qr.comment,
-                            color=theme.MUTED, size=12,
+                            color=theme.MUTED, size=theme.CAPTION,
+                            style=theme.caption_style(),
                             expand=True,  # wrap long comments
                         ),
                     ],
@@ -203,7 +207,8 @@ def build_results(ctx: MarkTabContext) -> list[ft.Control]:
         controls.append(success_banner("分数已记录"))
     else:
         controls.append(ft.Text(
-            "检查上方结果，确认后记录分数。", size=12, color=theme.MUTED,
+            "检查上方结果，确认后记录分数。", size=theme.CAPTION,
+            color=theme.MUTED, style=theme.caption_style(),
         ))
         controls.append(ft.Button(
             "确认并记录分数",
