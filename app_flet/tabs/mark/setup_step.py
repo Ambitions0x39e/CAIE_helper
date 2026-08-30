@@ -83,7 +83,8 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         section_title("AI 批改"),
         ft.Divider(),
         ft.Text(
-            "Step 1 — 选择试卷与答卷", size=18,
+            "Step 1 — 选择试卷与答卷", size=theme.SECTION,
+            style=theme.section_style(),
             weight=ft.FontWeight.BOLD,
         ),
     ]
@@ -131,7 +132,10 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
                 icon=ft.CupertinoIcons.CLOUD_UPLOAD,
                 on_click=_async_click(_on_ms_upload_click, ctx),
             ),
-            ft.Text(upload_label, size=12, color=theme.MUTED),
+            ft.Text(
+                upload_label, size=theme.CAPTION, color=theme.MUTED,
+                style=theme.caption_style(),
+            ),
         ]))
 
     # Start page (MATH only)
@@ -143,7 +147,10 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
             hint_text="自动",
             keyboard_type=ft.KeyboardType.NUMBER,
             width=200,
-            helper=ft.Text("默认留空，自动检测", size=11, color=theme.MUTED),
+            helper=ft.Text(
+                "默认留空，自动检测", size=theme.MICRO, color=theme.MUTED,
+                style=theme.caption_style(),
+            ),
             on_change=lambda e: _on_start_page_change(ctx, e),
         ))
 
@@ -161,12 +168,16 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
             icon=ft.CupertinoIcons.CLOUD_UPLOAD,
             on_click=_async_click(_on_answer_pick_click, ctx),
         ),
-        ft.Text(answer_label, size=12, color=theme.MUTED),
+        ft.Text(
+            answer_label, size=theme.CAPTION, color=theme.MUTED,
+            style=theme.caption_style(),
+        ),
     ]))
     if is_mcq:
         controls.append(ft.Text(
             "上传在 GoodNotes 中批注过的试卷（圈出/写出每题答案）。",
-            size=12, color=theme.MUTED,
+            size=theme.CAPTION, color=theme.MUTED,
+            style=theme.caption_style(),
         ))
 
     # Warning if MATH but no grader configured
@@ -203,7 +214,10 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
         parse_row.append(ft.Container(
             ft.Row([
                 ft.Icon(ft.CupertinoIcons.CLOCK, color=theme.ACCENT_STRONG, size=16),
-                ft.Text("此结果来自缓存", size=12),
+                ft.Text(
+                    "此结果来自缓存", size=theme.CAPTION,
+                    style=theme.caption_style(),
+                ),
                 ft.TextButton(
                     "重新解析",
                     disabled=not can_parse,
@@ -238,6 +252,7 @@ def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
                 ))
                 q_controls.append(ft.Text(
                     qcfg.mark_scheme, size=theme.CAPTION, color=theme.MUTED,
+                    style=theme.caption_style(),
                 ))
             body = ft.Column(q_controls, spacing=4)
         controls.append(ft.ExpansionTile(
@@ -299,21 +314,27 @@ def _build_paper_selector(ctx: MarkTabContext) -> list[ft.Control]:
 
 def _syllabus_status(ctx: MarkTabContext) -> ft.Text:
     if ctx.syllabus_parsing:
-        return ft.Text("正在解析大纲…", size=12, color=theme.MUTED)
+        return ft.Text(
+            "正在解析大纲…", size=theme.CAPTION, color=theme.MUTED,
+            style=theme.caption_style(),
+        )
     if ctx.syllabus_error:
         return ft.Text(
-            f"大纲解析失败: {ctx.syllabus_error}", size=12, color=theme.DANGER,
+            f"大纲解析失败: {ctx.syllabus_error}", size=theme.CAPTION,
+            color=theme.DANGER, style=theme.caption_style(),
         )
     info = ctx.syllabus_info
     if info is None:
         return ft.Text(
             "未选择（不影响批改，仅用于给错题打 topic 标签）",
-            size=12, color=theme.MUTED,
+            size=theme.CAPTION, color=theme.MUTED,
+            style=theme.caption_style(),
         )
     return ft.Text(
         f"{info.subject_id}: 已识别 {len(info.topics)} 个 topic，"
         f"{len(info.component_topics)} 个 component",
-        size=12, color=theme.MUTED,
+        size=theme.CAPTION, color=theme.MUTED,
+        style=theme.caption_style(),
     )
 
 
@@ -564,10 +585,14 @@ def start_analysis(ctx: MarkTabContext, *, force: bool) -> None:
 
     progress_bar = ft.ProgressBar(visible=True)
     progress_text = ft.Text(
-        "正在解析 Mark Scheme…", size=12, color=theme.MUTED,
+        "正在解析 Mark Scheme…", size=theme.CAPTION, color=theme.MUTED,
+        style=theme.caption_style(),
     )
     scan_text = (
-        ft.Text("正在解析答卷…", size=12, color=theme.MUTED)
+        ft.Text(
+            "正在解析答卷…", size=theme.CAPTION, color=theme.MUTED,
+            style=theme.caption_style(),
+        )
         if scan_path else None
     )
     ctx.parse_bar = progress_bar

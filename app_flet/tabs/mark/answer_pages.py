@@ -17,7 +17,10 @@ def build_answer_pages(ctx: MarkTabContext) -> list[ft.Control]:
     state = ctx.state
     controls: list[ft.Control] = [
         ft.Divider(),
-        ft.Text("答卷分页", size=18, weight=ft.FontWeight.BOLD),
+        ft.Text(
+            "答卷分页", size=theme.SECTION, weight=ft.FontWeight.BOLD,
+            style=theme.section_style(),
+        ),
     ]
 
     matched_count = len(state.auto_pages)
@@ -52,7 +55,8 @@ def build_answer_pages(ctx: MarkTabContext) -> list[ft.Control]:
         controls.append(ft.Text(
             f"未自动识别：{preview}。"
             "请在下方为这些题手动输入页码（例如 2 或 2,3）。",
-            color=theme.WARNING, size=12,
+            color=theme.WARNING, size=theme.CAPTION,
+            style=theme.caption_style(),
         ))
 
     controls.append(ft.Text(

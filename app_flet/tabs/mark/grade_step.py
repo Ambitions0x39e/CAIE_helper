@@ -29,7 +29,10 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     state = ctx.state
     controls: list[ft.Control] = [
         ft.Divider(),
-        ft.Text("Step 2 — 批改", size=18, weight=ft.FontWeight.BOLD),
+        ft.Text(
+            "Step 2 — 批改", size=theme.SECTION, weight=ft.FontWeight.BOLD,
+            style=theme.section_style(),
+        ),
     ]
 
     # Persistent failure banner — a grade that stalls/errors on one question
@@ -112,12 +115,14 @@ def build_grade_step(ctx: MarkTabContext) -> list[ft.Control]:
     missing = [q for q in selected if q not in assignments]
     if not selected:
         controls.append(ft.Text(
-            "请至少勾选一个题目进行批改。", color=theme.WARNING, size=12,
+            "请至少勾选一个题目进行批改。", color=theme.WARNING,
+            size=theme.CAPTION, style=theme.caption_style(),
         ))
     elif missing:
         controls.append(ft.Text(
             f"请为以下题目指定页码: {', '.join(missing)}",
-            color=theme.WARNING, size=12,
+            color=theme.WARNING, size=theme.CAPTION,
+            style=theme.caption_style(),
         ))
 
     can_grade = (
@@ -204,7 +209,10 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
 
     state.grading_error = None  # clear any prior failure banner
     progress_bar = ft.ProgressBar(value=0, visible=True)
-    progress_text = ft.Text("正在批改…", size=12, color=theme.MUTED)
+    progress_text = ft.Text(
+        "正在批改…", size=theme.CAPTION, color=theme.MUTED,
+        style=theme.caption_style(),
+    )
     ctx.content.controls.extend([
         ft.Divider(), progress_bar, progress_text,
     ])

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from app_flet import theme
 from app_flet.components.widgets import (
     SEGMENTED_STRIP_H,
+    push_track,
     section_title,
     segmented_strip,
 )
@@ -62,18 +63,24 @@ def build_download_tab(
     # 回调返回「是否真的重排了」，没变化就不刷 UI。
     resize_hooks: list[Callable[[], bool]] = []
 
-    # 三个子页只建一次，切换换的是 body 里挂的是谁 —— 重建会丢掉用户填了一半
+    # 三个子页只建一次，切换换的是槽位里挂的是谁 —— 重建会丢掉用户填了一半
     # 的表单和查询结果。
     views = [
         build_request_tab(page, state, show_snack, resize_hooks),
         build_by_id_tab(page, state, show_snack),
         build_by_gt_tab(page, state, show_snack),
     ]
-    body = ft.Container(views[0], height=_tab_height())
+    # 三格的先后跟分段条上的先后一致，推拉的方向就直接由它得出：往右边那一段
+    # 切，旧的往左出、新的从右边推进来。
+    #
+    # fill=True：这块视口是定高的，松约束下格子会缩到内容的固有高度，子页的
+    # expand + 内部滚动就不成立了（见 _TAB_CHROME_H）。
+    track, show_view = push_track(page, len(views), views[0], fill=True)
+    # 高度留在最外面这一层：它是视口的尺寸，不跟着内容走。
+    body = ft.Container(track, height=_tab_height())
 
     def _show(index: int) -> None:
-        body.content = views[index]
-        page.update()
+        show_view(index, views[index])
 
     strip = segmented_strip(
         ["按考季查询", "按 ID 下载", "分数线"], _show,

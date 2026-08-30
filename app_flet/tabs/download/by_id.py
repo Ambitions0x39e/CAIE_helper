@@ -7,7 +7,12 @@ import flet as ft
 from pydantic import ValidationError
 
 from app_flet import theme
-from app_flet.components.widgets import error_banner, success_banner
+from app_flet.components.widgets import (
+    error_banner,
+    segmented_strip,
+    success_banner,
+    swap_slot,
+)
 from modules.downloader import (
     DownloadRequest,
     DownloadSource,
@@ -17,6 +22,9 @@ from modules.mailer import GoodNotesMailer, MailRequest
 
 if TYPE_CHECKING:
     from app_flet.state import AppState
+
+#: 两个下载源在分段条上的先后。分段条只报序号，值查这张表。
+_SOURCES: tuple[DownloadSource, ...] = ("CIEFrank", "PapaCambridge")
 
 
 def build_by_id_tab(
@@ -33,19 +41,20 @@ def build_by_id_tab(
         expand=True,
     )
 
-    source_selector = ft.SegmentedButton(
-        segments=[
-            ft.Segment(value="CIEFrank", label=ft.Text("CIEFrank")),
-            ft.Segment(value="PapaCambridge", label=ft.Text("PapaCambridge")),
-        ],
-        selected=["CIEFrank"],
-        allow_multiple_selection=False,
-    )
+    #: 当前选中的下载源 —— 分段条自己管选中态，只把序号报出来。
+    source = [_SOURCES[0]]
 
-    result_area = ft.Column(visible=False)
+    def _on_source(index: int) -> None:
+        source[0] = _SOURCES[index]
+
+    source_selector = segmented_strip(list(_SOURCES), _on_source)
+
+    # 结果区三态（空 / 成功 / 失败）走换槽位：空态就是一个空 Column。
+    # 单个结果没什么形状可预告，等待仍旧交给进度圈。
+    result_area, show_result = swap_slot(page, ft.Column(), theme.DURATION_FAST)
     progress_ring = ft.ProgressRing(visible=False, width=20, height=20)
     gn_section = ft.Column(visible=False)
-    #: 挡住下载没完时的重复点击 —— 后台线程和一次新点击都会改 result_area /
+    #: 挡住下载没完时的重复点击 —— 后台线程和一次新点击都会改结果区 /
     #: state.last_downloaded_id，没锁的话两次下载会踩到同一份状态。
     busy = [False]
 
@@ -57,9 +66,10 @@ def build_by_id_tab(
                 ft.Row([
                     ft.Text(
                         f"准备发送: {state.last_downloaded_id}",
-                        size=12,
+                        size=theme.CAPTION,
                         color=theme.MUTED,
                         expand=True,
+                        style=theme.caption_style(),
                     ),
                     ft.Button(
                         "发送到 GoodNotes",
@@ -82,10 +92,8 @@ def build_by_id_tab(
             show_snack("请输入 Paper ID")  # type: ignore[operator]
             return
 
-        src: DownloadSource = source_selector.selected[0]  # type: ignore[assignment]
-
         try:
-            request = DownloadRequest(paper_id=pid.strip(), source=src)
+            request = DownloadRequest(paper_id=pid.strip(), source=source[0])
         except ValidationError as exc:
             msgs = "; ".join(
                 e["msg"].removeprefix("Value error, ") for e in exc.errors()
@@ -95,8 +103,7 @@ def build_by_id_tab(
 
         busy[0] = True
         progress_ring.visible = True
-        result_area.visible = False
-        page.update()
+        show_result(ft.Column())
 
         def _work() -> None:
             try:
@@ -104,23 +111,17 @@ def build_by_id_tab(
                 dl = downloader.download(request)
 
                 progress_ring.visible = False
-                result_area.controls.clear()
 
                 if dl.success:
-                    result_area.controls.append(
-                        success_banner(
-                            f"已下载: {dl.paper_id}",
-                            [f"QP → {dl.qp_path}", f"MS → {dl.ms_path}"],
-                        )
-                    )
+                    show_result(success_banner(
+                        f"已下载: {dl.paper_id}",
+                        [f"QP → {dl.qp_path}", f"MS → {dl.ms_path}"],
+                    ))
                     state.last_downloaded_id = dl.paper_id
                     state.last_downloaded_qp = dl.qp_path
                 else:
-                    result_area.controls.append(
-                        error_banner(f"下载失败: {dl.error}")
-                    )
+                    show_result(error_banner(f"下载失败: {dl.error}"))
 
-                result_area.visible = True
                 _refresh_gn_section()
                 page.update()
             finally:
@@ -137,15 +138,10 @@ def build_by_id_tab(
         downloader = PaperDownloader(store=state.store)
         dl = downloader.record_only(pid.strip())
 
-        result_area.controls.clear()
         if dl.success:
-            result_area.controls.append(
-                success_banner(f"已记录 (无PDF): {dl.paper_id}")
-            )
+            show_result(success_banner(f"已记录 (无PDF): {dl.paper_id}"))
         else:
-            result_area.controls.append(error_banner(f"记录失败: {dl.error}"))
-        result_area.visible = True
-        page.update()
+            show_result(error_banner(f"记录失败: {dl.error}"))
 
     def on_send_gn(_: ft.ControlEvent) -> None:
         if not state.last_downloaded_id or not state.mail_config:
