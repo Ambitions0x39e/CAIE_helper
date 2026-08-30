@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from app_flet import theme
-from app_flet.components.widgets import section_title
 from app_flet.tabs.mark.context import MarkTabContext
 from app_flet.tabs.mark.mcq import answer_sheet_table
 from core.config_store import grading_type_for_paper
@@ -80,10 +79,8 @@ def _async_click(
 def build_setup_step(ctx: MarkTabContext) -> list[ft.Control]:
     state = ctx.state
     controls: list[ft.Control] = [
-        section_title("AI 批改"),
-        ft.Divider(),
         ft.Text(
-            "Step 1 — 选择试卷与答卷", size=18,
+            "选择试卷与答卷", size=theme.SECTION,
             weight=ft.FontWeight.BOLD,
         ),
     ]
@@ -692,6 +689,11 @@ def _commit(
     state.auto_clips.clear()
     ctx.grade_questions = []
     ctx.grade_questions_seeded = False
+    ctx.grading_queue = []
+    # 换了卷子，进度从头算：上一份卷子走到过第几步与这一份无关。
+    ctx.reached_step = 0
+    ctx.view_step = 0
+    ctx.detail_question = None
 
     if pt == PaperType.MCQ:
         state.mcq_qp_path = answer_path
@@ -714,6 +716,7 @@ def _commit(
         state.answer_total_pages = 0
         state.unmatched_questions = list(pc.questions.keys())
         state.auto_pages_done = True
+        _advance_to_check(ctx)
         return
 
     # Cheap half of segmentation: the question ids only became known when
@@ -725,6 +728,17 @@ def _commit(
     state.auto_clips = auto_clips
     state.unmatched_questions = report.unmatched
     state.auto_pages_done = True
+    _advance_to_check(ctx)
+
+
+def _advance_to_check(ctx: MarkTabContext) -> None:
+    """解析完就把人带到「核对」。
+
+    停在「选卷」等用户自己点下一步，等于让他把刚做完的事再确认一遍 —— 解析
+    成功本身就是「这一步完了」。
+    """
+    ctx.reached_step = 1
+    ctx.view_step = 1
 
 
 def _summary(

@@ -1,7 +1,7 @@
 """Shared state for the Mark tab's sections.
 
-The sections live in separate modules (``setup_step`` / ``answer_pages`` /
-``grade_step`` / ``results`` / ``mcq``) and reach each other's state through
+The sections live in separate modules (``setup_step`` / ``grade_step`` /
+``results`` / ``mcq``) and reach each other's state through
 plain attributes on this object, which each section takes as its first
 argument.
 """
@@ -41,6 +41,13 @@ class MarkTabContext:
     #: Rebuilds the whole tab; assigned once the section builders are known.
     #: Every handler calls it after mutating state.
     rebuild: Callable[[], None] = _noop
+
+    # ── 三步骨架 ───────────────────────────────────────────────────
+    #: 正在**看**第几步：0 选卷 / 1 核对 / 2 结果。
+    view_step: int = 0
+    #: 流程真正**走到**第几步。跟 view_step 是两件事——往回翻看不改变进度。
+    #: 导航条据此把够不着的步骤灰掉，【回到当前步骤】跳的也是它。
+    reached_step: int = 0
 
     # ── Step 1 — what to analyse ───────────────────────────────────
     ms_source: str = "downloaded"
@@ -93,6 +100,21 @@ class MarkTabContext:
     thinking: bool = False
     grade_questions: list[str] = field(default_factory=list)
     grade_questions_seeded: bool = False
+    #: 这一轮送去批改的题号，卷子顺序。结果区照它铺格子——还没回来的画成待批
+    #: 的灰格，所以它必须在第一题回来之前就定下来。
+    grading_queue: list[str] = field(default_factory=list)
+    #: (已完成, 总数)，只用来画进度条。
+    grade_progress: tuple[int, int] = (0, 0)
+
+    # ── Step 3 — 结果详情浮层 ──────────────────────────────────────
+    #: 浮在内容之上的详情面板。它是 ``build_mark_tab`` 的 Stack 的第二层，
+    #: **不在** ``content`` 里 —— 所以 ``rebuild()`` 清空 content 时它不受影响，
+    #: 也不会跟着内容一起滚。建一次，之后只换 ``detail_body`` 里的内容。
+    detail_panel: ft.Container | None = None
+    #: 面板的内容区，``results.refresh_detail_panel`` 往里填。
+    detail_body: ft.Column | None = None
+    #: 面板正在显示哪一题；``None`` = 面板收着。格子的选中边框也读它。
+    detail_question: str | None = None
 
     # ── Live widgets that get read back on rebuild ─────────────────
     page_inputs: dict[str, ft.TextField] = field(default_factory=dict)
@@ -124,26 +146,6 @@ class MarkTabContext:
             val = (tf.value or "").strip()
             if val:
                 self.state.auto_pages[qid] = val
-
-    def responsive_grid(
-        self,
-        cells: list[ft.Control],
-        cell_width: int,
-        spacing: int = 8,
-    ) -> list[ft.Control]:
-        """Chunk fixed-width cells into as many columns as the screen fits.
-
-        Deterministic, unlike ``Row(wrap=True)`` — which collapsed the
-        nested-Row page inputs into a single overlapping column on iPad. The
-        column count tracks ``page.width``, so it adapts from phone (2 cols)
-        to iPad Pro (5-7).
-        """
-        avail = int(self.page.width or 1024) - 40  # tab padding, 20/side
-        cols = max(1, (avail + spacing) // (cell_width + spacing))
-        return [
-            ft.Row(cells[i : i + cols], spacing=spacing)
-            for i in range(0, len(cells), cols)
-        ]
 
     def ms_path(self) -> str | None:
         """Path of the mark scheme to parse, per the current source choice."""
