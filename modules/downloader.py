@@ -75,8 +75,7 @@ class DownloadRequest(BaseModel):
     def insert_id(self) -> str:
         """``9701_s25_qp_31`` → ``9701_s25_in_31``; empty for non-QP ids.
 
-        Only ``download_with_insert`` looks at this — plain ``download()``
-        never asks for an insert.
+        Only read when ``download`` is called with ``insert=True``.
         """
         return self._insert_id
 
@@ -112,8 +111,8 @@ class DownloadResult(BaseModel):
     qp_path: str | None = None
     ms_path: str | None = None
     error: str | None = None
-    #: Only ``download_with_insert`` ever fills these two in; ``download()``
-    #: leaves them None, so its callers can keep ignoring them.
+    #: Only a ``download(..., insert=True)`` ever fills these two in; without
+    #: it they stay None, so callers that never ask can keep ignoring them.
     #: ``insert_path=None`` + ``insert_error=None`` means "this paper has no
     #: insert", which is the normal case — most papers don't.
     insert_path: str | None = None
@@ -135,23 +134,43 @@ class PaperDownloader:
         self._store = store or CSVStore()
         self._pdfs_dir: Path = app_settings.pdfs_dir
 
-    def download(self, request: DownloadRequest) -> DownloadResult:
-        """
-        Main entry point. Downloads QP (and MS if applicable), saves to disk,
-        and appends a new PaperRecord to the store.
-        GT files skip the MS download and store registration.
+    def download(
+        self, request: DownloadRequest, *, insert: bool = False
+    ) -> DownloadResult:
+        """Download a paper's QP, its MS, and optionally its insert.
 
-        Returns a DownloadResult — never raises on network errors,
-        validation errors from the request model will propagate normally.
+        Saves each PDF to disk and appends a new PaperRecord to the store.
+        GT files skip the MS download and the store registration entirely.
+
+        ``insert=True`` also fetches the paper's ``_in_`` companion, and only
+        the screens that offer inserts pass it. The insert is optional, and
+        that shapes the failure handling: a 404 means "this paper has no
+        insert" (true for most papers), so the result still comes back
+        ``success=True`` with ``insert_path=None``. Any other insert failure
+        also keeps ``success=True`` — QP+MS are already on disk and
+        registered — but reports itself in ``insert_error`` for the UI to
+        show as a warning. A QP or MS failure still fails the whole call.
+
+        The insert path is returned, not persisted: PaperRecord has no column
+        for it, and adding one would migrate every existing data.csv.
+
+        Returns a DownloadResult — never raises on network errors;
+        validation errors from the request model propagate normally.
         """
+        def failed(error: str) -> DownloadResult:
+            return DownloadResult(
+                success=False, paper_id=request.paper_id, error=error
+            )
+
+        if insert and not request.ms_id:
+            return failed(
+                f"{request.paper_id} 不是 QP 试卷，无法配对下载 MS/insert"
+            )
+
         try:
             qp_path = self._fetch_pdf(request.qp_url, request.paper_id)
         except _DownloadError as exc:
-            return DownloadResult(
-                success=False,
-                paper_id=request.paper_id,
-                error=str(exc),
-            )
+            return failed(str(exc))
 
         # GT files: just download, don't fetch MS or register in store
         if request.is_gt:
@@ -165,85 +184,19 @@ class PaperDownloader:
         try:
             ms_path = self._fetch_pdf(request.ms_url, request.ms_id)
         except _DownloadError as exc:
-            return DownloadResult(
-                success=False,
-                paper_id=request.paper_id,
-                error=str(exc),
-            )
-
-        record = PaperRecord(
-            paper_id=request.paper_id,
-            status="Pending",
-            qp_path=str(qp_path),
-            ms_path=str(ms_path),
-        )
-
-        try:
-            self._store.append(record)
-        except ValueError as exc:
-            # paper_id already exists in store
-            return DownloadResult(
-                success=False,
-                paper_id=request.paper_id,
-                error=str(exc),
-            )
-
-        return DownloadResult(
-            success=True,
-            paper_id=request.paper_id,
-            qp_path=str(qp_path),
-            ms_path=str(ms_path),
-        )
-
-    def download_with_insert(self, request: DownloadRequest) -> DownloadResult:
-        """
-        QP + MS + the paper's insert (``_in_``) when it has one.
-
-        Deliberately a separate entry point rather than a flag on
-        ``download()``: the plain-download callers have no way to reach the
-        insert fetch, so "which screens pull inserts" is settled by which
-        method they call, not by a convention about a parameter.
-
-        QP-only ids: GT files and anything else without a ``_qp_`` component
-        are rejected outright — pairing is the whole premise here.
-
-        The insert is optional, and that shapes the failure handling: a 404
-        means "this paper has no insert" (true for most papers), so the result
-        still comes back ``success=True`` with ``insert_path=None``. Any other
-        insert failure also keeps ``success=True`` — QP+MS are already on disk
-        and registered — but reports itself in ``insert_error`` for the UI to
-        show as a warning. A QP or MS failure still fails the whole call.
-
-        The insert path is returned, not persisted: PaperRecord has no column
-        for it, and adding one would migrate every existing data.csv.
-        """
-        if not request.ms_id:
-            return DownloadResult(
-                success=False,
-                paper_id=request.paper_id,
-                error=(
-                    f"{request.paper_id} 不是 QP 试卷，无法配对下载 MS/insert"
-                ),
-            )
-
-        try:
-            qp_path = self._fetch_pdf(request.qp_url, request.paper_id)
-            ms_path = self._fetch_pdf(request.ms_url, request.ms_id)
-        except _DownloadError as exc:
-            return DownloadResult(
-                success=False,
-                paper_id=request.paper_id,
-                error=str(exc),
-            )
+            return failed(str(exc))
 
         insert_path: Path | None = None
         insert_error: str | None = None
-        try:
-            insert_path = self._fetch_pdf(request.insert_url, request.insert_id)
-        except _DownloadError as exc:
-            # 404 == 这份卷子没有 insert，是常态，不算错。
-            if not exc.missing:
-                insert_error = str(exc)
+        if insert:
+            try:
+                insert_path = self._fetch_pdf(
+                    request.insert_url, request.insert_id
+                )
+            except _DownloadError as exc:
+                # 404 == 这份卷子没有 insert，是常态，不算错。
+                if not exc.missing:
+                    insert_error = str(exc)
 
         record = PaperRecord(
             paper_id=request.paper_id,
@@ -256,11 +209,7 @@ class PaperDownloader:
             self._store.append(record)
         except ValueError as exc:
             # paper_id already exists in store
-            return DownloadResult(
-                success=False,
-                paper_id=request.paper_id,
-                error=str(exc),
-            )
+            return failed(str(exc))
 
         return DownloadResult(
             success=True,
@@ -355,8 +304,8 @@ class _DownloadError(Exception):
     def __init__(self, message: str, *, missing: bool = False) -> None:
         super().__init__(message)
         #: True only for a 404 — "the server has no such file", as opposed to
-        #: "the fetch broke". ``download_with_insert`` needs the distinction
-        #: because a missing insert is normal; every other caller just reads
+        #: "the fetch broke". The insert fetch needs the distinction because
+        #: a missing insert is normal; every other caller just reads
         #: the message.
         self.missing = missing
 
@@ -401,7 +350,7 @@ class QueryEntry(BaseModel):
     already_downloaded: bool = False
     #: This session also lists the paper's insert (``_in_``). Only ever True on
     #: a ``qp`` entry — it's what tells the UI to hang the insert under the QP
-    #: and to download it via ``download_with_insert``.
+    #: and to download it via ``download(..., insert=True)``.
     has_insert: bool = False
 
 

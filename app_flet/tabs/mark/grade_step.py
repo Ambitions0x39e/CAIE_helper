@@ -228,7 +228,7 @@ def _on_grade_click(ctx: MarkTabContext) -> None:
             outcome = grade_paper(
                 config=grade_cfg,
                 paper_config=pc,
-                paper_type=PaperType(state.paper_type or "math"),
+                paper_type=state.paper_type or PaperType.MATH,
                 # The path, not the bytes: the native renderer opens the file
                 # itself, so a 35MB scan never crosses the Python↔Dart RPC.
                 pdf_source=state.answer_pdf_path,  # type: ignore[arg-type]

@@ -128,12 +128,6 @@ class QuestionResult(BaseModel):
     topic: str | None = None
 
 
-class GradingReport(BaseModel):
-    results: list[QuestionResult]
-    total_score: int
-    total_max: int
-
-
 
 def grade_question(
     config: GraderConfig,

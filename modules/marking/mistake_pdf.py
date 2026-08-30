@@ -85,9 +85,6 @@ class Band:
     def height(self) -> float:
         return self.y_bottom - self.y_top
 
-    def with_column(self, left: float, right: float) -> Band:
-        return Band(self.page_idx, self.y_top, self.y_bottom, left, right)
-
     def from_top(self, y_top: float) -> Band:
         return Band(
             self.page_idx, y_top, self.y_bottom, self.x_left, self.x_right
@@ -1052,24 +1049,3 @@ def _answers_for(
             f"{paper_id}: mark scheme 里没有 {', '.join(absent)} 的答案"
         )
     return out
-
-
-def qp_paths_by_paper(
-    records: Iterable[MistakeRecord],
-    qp_path_of: Mapping[str, str],
-) -> tuple[dict[str, str], list[str]]:
-    """Split the papers into those whose QP is on disk and those that aren't.
-
-    A missing QP is reported rather than skipped silently — "half your
-    selection is in the file" is exactly the kind of thing that should be
-    said out loud.
-    """
-    found: dict[str, str] = {}
-    missing: list[str] = []
-    for paper_id in main_questions_by_paper(records):
-        path = qp_path_of.get(paper_id, "")
-        if path:
-            found[paper_id] = path
-        else:
-            missing.append(paper_id)
-    return found, missing

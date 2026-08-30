@@ -129,6 +129,14 @@ SQUIRCLE_RADIUS_RATIO = 0.2237
 _BUTTON_HEIGHT = 40
 SQUIRCLE_RADIUS = round(_BUTTON_HEIGHT * SQUIRCLE_RADIUS_RATIO, 2)
 
+# ── 布局 ──────────────────────────────────────────────────────────
+#: 左侧 nav 按钮的边长。
+NAV_BUTTON_SIZE = 64
+#: nav rail 连同它右边那条 1px 分隔线占掉的宽度。``page.width`` 给的是整个
+#: 窗口，任何按窗口宽度算版面的地方都得先把这块减掉 —— 少减了，内容区就会
+#: 以为自己比实际宽 85px，右边缘溢出。
+NAV_CHROME_W = NAV_BUTTON_SIZE + 20 + 1
+
 # ── 间距 scale ────────────────────────────────────────────────────
 #: 卡片内部紧凑间隙（比如 metric_card 标签→数值）
 SPACE_XS = 4
@@ -153,9 +161,8 @@ SUBHEAD = 14
 BODY = 13
 #: 提示/次要信息，配 theme.MUTED 颜色使用
 CAPTION = 12
-#: 仅例外场景（目前只有 mcq.py，本轮范围外）
+#: 比 CAPTION 再小一档，给挤在表格/表单里的辅助文字。
 MICRO = 11
-
 # ── 时长 scale ────────────────────────────────────────────────────
 #: 交互态：容器的 hover / 选中底色切换。0 = 当帧变色，跟按钮那套 ControlState
 #: 色表对齐。这一档是跟着指针走的，任何时长都会被读成延迟而不是过渡，跟下面

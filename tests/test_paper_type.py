@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from core.models import SUBJECT_PAPER_TYPES, PaperType
+from core.models import PaperType
 from core.settings import GraderConfig
 
 _GRADER_ENV_VARS = (
@@ -17,15 +17,6 @@ _GRADER_ENV_VARS = (
 
 def test_paper_type_enum() -> None:
     assert PaperType.MATH.value == "math"
-
-
-def test_subject_mapping() -> None:
-    assert SUBJECT_PAPER_TYPES["9709"] == PaperType.MATH
-    assert SUBJECT_PAPER_TYPES["9231"] == PaperType.MATH
-
-
-def test_subject_mapping_unknown_returns_none() -> None:
-    assert SUBJECT_PAPER_TYPES.get("9999") is None
 
 
 def test_grader_config_defaults(
