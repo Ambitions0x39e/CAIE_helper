@@ -1,9 +1,9 @@
 """Guard: importing individual `modules.*` submodules must stay lightweight.
 
-`modules/__init__.py` used to eagerly import every submodule, including the
-Streamlit-based visualizer and the pdfplumber-based renderer. That made
-`import modules.marking.page_segmenter` drag in streamlit + pdfplumber, which breaks
-on iOS (no wheels) and on any env where streamlit is optional.
+`modules/__init__.py` and `modules/marking/__init__.py` hold no imports, so
+`import modules.marking.page_segmenter` costs one parser and nothing else. An
+eager re-export added to either file would quietly make every `modules.*`
+import drag in every sibling's dependencies; these tests fail when it does.
 
 Each test runs in a fresh subprocess so sys.modules isn't polluted by pytest.
 """

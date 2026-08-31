@@ -11,10 +11,10 @@ reported, not re-read at the user's expense.
 **Base-14 fonts, nothing embedded.** Helvetica for the text and Symbol for
 the Greek and the operators — both are built into every PDF reader, so the
 sheet needs no font file on disk and no font shipped in the app. That
-matters twice over: ``[project.dependencies]`` has to stay pure Python for
-``flet build ipa``, which rules out the obvious PDF-writing libraries (they
-pull in Pillow), and a font resolved from the host would render differently
-on a machine that hasn't got it.
+matters twice over: the obvious PDF-writing libraries pull in Pillow, whose
+vendored dylibs break the universal macOS build (see ``pyproject.toml``), and
+a font resolved from the host would render differently on a machine that
+hasn't got it.
 
 Nothing here may import ``flet``/``app_flet`` — same rule as the rest of
 ``modules/marking``.

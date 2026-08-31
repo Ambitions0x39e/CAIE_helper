@@ -23,7 +23,7 @@ class RenderClip:
 class PdfRenderer(ft.Service):
     """Headless native PDF renderer backed by pdfrx (PDFium/PDFKit).
 
-    Replaces the pdfplumber-based rendering so the Mark tab works on iOS.
+    The app's single rendering path — nothing else rasterizes a PDF page.
     Add it to ``page.services`` once, then call :meth:`render_regions`.
     """
 
