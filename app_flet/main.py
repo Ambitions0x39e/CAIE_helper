@@ -13,11 +13,9 @@ from app_flet import theme
 from app_flet.components.dialogs import show_score_dialog
 from app_flet.components.widgets import hoverable, swap_slot
 from app_flet.state import AppState
-from app_flet.tabs.analytics import build_analytics_tab
 from app_flet.tabs.download import build_download_tab
 from app_flet.tabs.manage import build_manage_tab
 from app_flet.tabs.mark import build_mark_tab
-from app_flet.tabs.mistakes import build_mistakes_tab
 from app_flet.tabs.settings import build_settings_tab
 from core.settings import GraderConfig, MailConfig, app_settings
 
@@ -116,7 +114,7 @@ def main(page: ft.Page) -> None:
     # ── Shared services (created once, reused) ──────────────────────
     ms_picker = ft.FilePicker()
     answer_picker = ft.FilePicker()
-    # Save-dialog for the 错题本's CSV export. Created here, once, like the
+    # Save-dialog for 管理 › 错题's exports. Created here, once, like the
     # other pickers — building one per tab visit would stack up services.
     mistake_export_picker = ft.FilePicker()
     pdf_renderer = PdfRenderer()  # native pdfrx renderer
@@ -158,19 +156,15 @@ def main(page: ft.Page) -> None:
             show_tab(build_download_tab(page, state, show_snack))
         elif idx == 1:
             show_tab(build_manage_tab(
-                page, state, show_snack, refresh_cb=refresh_current_tab,
+                page, state, show_snack,
+                refresh_cb=refresh_current_tab,
+                export_picker=mistake_export_picker,
             ))
         elif idx == 2:
-            show_tab(build_analytics_tab(page, state))
-        elif idx == 3:
             show_tab(build_mark_tab(
                 page, state, show_snack, ms_picker, answer_picker,
             ))
-        elif idx == 4:
-            show_tab(build_mistakes_tab(
-                page, state, show_snack, mistake_export_picker,
-            ))
-        elif idx == 5:
+        elif idx == 3:
             show_tab(build_settings_tab(page, state))
 
     # ── Side navigation ─────────────────────────────────────────────
@@ -208,7 +202,11 @@ def main(page: ft.Page) -> None:
             alignment=ft.Alignment.CENTER,
             # Covers every property _apply_nav_selection() mutates on this
             # container — bgcolor, border, shadow — plus the hover wash.
-            animate=ft.Animation(theme.DURATION_INSTANT, theme.CURVE_IN),
+            #
+            # 这一档比交互态那档（DURATION_INSTANT）长：切 tab 时离开的那一格
+            # 和进来的那一格同时补间，读起来是高亮从一格挪到另一格，而不是两
+            # 处各自闪一下。悬停也走同一条补间，200ms 跟得上指针。
+            animate=ft.Animation(theme.DURATION_FAST, theme.CURVE_IN),
             on_click=lambda _: _switch_tab(idx),
         )
         nav_icons.append(icon_ctl)
@@ -246,12 +244,10 @@ def main(page: ft.Page) -> None:
 
     _main_nav = [
         _make_nav_button(0, ft.CupertinoIcons.TRAY_ARROW_DOWN, "下载"),
-        _make_nav_button(1, ft.CupertinoIcons.LIST_BULLET, "管理"),
-        _make_nav_button(2, ft.CupertinoIcons.CHART_BAR, "统计"),
-        _make_nav_button(3, ft.CupertinoIcons.PENCIL, "批改"),
-        _make_nav_button(4, ft.CupertinoIcons.BOOK, "错题本"),
+        _make_nav_button(1, ft.CupertinoIcons.SQUARE_GRID_2X2, "管理"),
+        _make_nav_button(2, ft.CupertinoIcons.PENCIL, "批改"),
     ]
-    _settings_nav = _make_nav_button(5, ft.CupertinoIcons.SETTINGS, "设置")
+    _settings_nav = _make_nav_button(3, ft.CupertinoIcons.SETTINGS, "设置")
     _apply_nav_selection()
 
     nav_rail = ft.Container(
