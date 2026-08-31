@@ -1,18 +1,14 @@
 """Unified PDF rendering, backed by the native pdfrx Flet extension.
 
-Replaces the pdfplumber-based rendering (`render_question_regions`,
-`render_pages`, `render_pdf_pages`) so the Mark tab works on iOS. pdfrx renders
-natively on every platform, so this is the single rendering path everywhere.
+pdfrx renders natively on every platform, so this is the single rendering path
+in the app — nothing here goes through pdfplumber, which is a dev-only dep.
 
 **The native side is handed a path, never the PDF's bytes.** Python and Dart
 are two sides of one process, so the file it needs is already on disk where it
-can reach it. The earlier bytes-based call shipped the whole document over the
-Flet RPC, which stalled the transport on a large answer export (a 35MB
-GoodNotes scan hung forever with no result) — that stall is what once forced an
-in-process pypdfium2 rasterizer and a pypdf sub-PDF trick into this module.
-Both are gone: with a path the payload is constant-size, so one universal
-renderer (pdfrx's PDFium) serves every platform and the app ships no second,
-architecture-specific copy of PDFium.
+can reach it. A bytes-based call ships the whole document over the Flet RPC,
+which stalls the transport on a large answer export — a 35MB GoodNotes scan
+hangs forever with no result. A path keeps the payload constant-size whatever
+the document weighs.
 
 The extension's `PdfRenderer` service is async and lives on the flet page;
 `NativeRenderer` bridges it to the synchronous, background-thread grading loop
@@ -56,7 +52,7 @@ def to_pdf_bytes(source: str | bytes | Path) -> bytes:
 
 
 def page_count(source: str | bytes | Path) -> int:
-    """Number of pages in the PDF (via pdfminer — iOS-safe, no pdfplumber)."""
+    """Number of pages in the PDF (via pdfminer, not pdfplumber)."""
     return len(_load_pages(to_pdf_bytes(source)))
 
 
@@ -95,7 +91,7 @@ def _as_local_path(source: str | bytes | Path) -> Iterator[str]:
 
 
 def full_page_clips(source: str | bytes | Path) -> list[PageClip]:
-    """One full-page clip per page (page sizes read via pdfminer — iOS-safe)."""
+    """One full-page clip per page (page sizes read via pdfminer)."""
     pages = _load_pages(to_pdf_bytes(source))
     return [
         PageClip(page_idx=i, y_top=0.0, y_bottom=p.height)

@@ -3,9 +3,8 @@
 Backed by **pdfminer.six**, not pdfplumber. pdfplumber's only irreplaceable
 feature here was ``extract_tables()``; everything else it does is pdfminer
 underneath (including the ``(cid:N)`` rendering the CID map below relies on).
-Dropping it makes this module iOS-safe — pdfplumber pulls in pypdfium2, which
-has no iOS wheel and would break ``flet build ipa`` — so grade thresholds can
-ship in the packaged app instead of hiding behind the ``gt`` extra.
+pdfplumber is a dev-only dependency, so a module that imports it cannot ship;
+running on pdfminer is what lets grade thresholds live in the packaged app.
 
 Table reconstruction (:func:`_extract_tables`) works off the ruling lines the
 PDFs actually draw, the same signal pdfplumber's default strategy uses: CIE

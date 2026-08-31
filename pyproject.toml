@@ -15,9 +15,9 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 
 dependencies = [
-    # Runtime deps packaged for iOS — keep this list pure Python / iOS-wheel-safe.
+    # Runtime deps, packaged into the Windows and macOS bundles.
     # NB: plain "flet" (not flet[all]) — the [all] extra drags in flet-cli ->
-    # watchdog, which has no iOS wheel and breaks `flet build ipa`.
+    # watchdog, which belongs in the dev group, not the shipped bundle.
     # NB2: UPPER BOUND IS LOAD-BEARING. `flet build` pip-installs this FRESH
     # into the bundle (ignoring uv.lock), while the Flutter client is generated
     # by flet-cli's pinned template. If pip grabs a flet newer than the
@@ -45,35 +45,29 @@ dependencies = [
     "requests>=2.32.0",
     "pdfminer.six>=20240706",  # segmentation + text extraction (was via pdfplumber)
     # Writes the 错题本's PDF export by cropping regions out of the original
-    # QP. Pure Python (no wheel, so iOS-safe like the rest of this list) and
-    # read+write, which pdfminer is not — pdfminer only parses.
+    # QP. Pure Python, and read+write — pdfminer only parses.
     "pypdf>=5.0.0",
     "python-dotenv>=1.0.0",
     "openai>=1.30.0",
-    # 2026-08-12: pypdfium2, pillow and pypdf all dropped together. They existed
-    # only to work around the render RPC: the service took the PDF's *bytes*, so
-    # a 35MB scan stalled the transport, and the fix was an in-process pypdfium2
-    # rasterizer (+ pillow to crop/encode) with pypdf shrinking the payload to
-    # the touched pages. The service now takes a **path** — Python and Dart share
-    # a process, so the payload is constant-size and the workaround is moot.
+    # ── NO DEPENDENCY HERE MAY VENDOR A `.dylib`. ────────────────────────
+    # It silently breaks the universal macOS build. serious_python lipo-merges
+    # the two per-arch site-packages trees for `*.so` but NOT `*.dylib`, so a
+    # vendored dylib stays arm64-only while everything else (pydantic-core, the
+    # app binary, Python.framework) comes out x86_64+arm64 — an app that looks
+    # universal and dies on Intel. Measured on pypdfium2
+    # (pypdfium2_raw/libpdfium.dylib) and pillow (18 files under PIL/.dylibs/):
+    # those 19 were the only non-fat binaries in the entire bundle.
     #
-    # Removing them is what makes `flet build macos` produce a genuinely
-    # universal app. serious_python lipo-merges the two per-arch site-packages
-    # trees for `*.so` but NOT `*.dylib`, so every .dylib was silently left
-    # arm64-only: pypdfium2_raw/libpdfium.dylib plus pillow's 18 vendored
-    # PIL/.dylibs/*. Those 19 files were the only non-fat binaries in the whole
-    # bundle — everything else (pydantic-core, the app binary,
-    # Python.framework) was already x86_64+arm64. They were also a second,
-    # redundant copy of PDFium: pdfrx already ships a universal one in
-    # Contents/Frameworks/PDFium.framework.
+    # This is also why rasterizing stays on the Dart side. pdfrx already ships a
+    # universal PDFium in Contents/Frameworks/PDFium.framework, so a Python
+    # rasterizer would be a second, arch-broken copy of the same engine.
 ]
 
 [project.optional-dependencies]
-# NB: the old `gt` extra (pdfplumber, for core/gt_parser.py) is gone —
-# gt_parser now rebuilds the threshold tables from pdfminer ruling lines, so
-# grade thresholds are iOS-safe and ship in the app instead of hiding behind
-# an extra. pdfplumber survives only as a dev dep, for the segmenter fidelity
-# check that compares the two engines.
+# NB: pdfplumber is a dev dep only, for the segmenter fidelity check that
+# compares the two engines. Nothing shipped may import it — gt_parser rebuilds
+# the threshold tables from pdfminer ruling lines so grade thresholds ship in
+# the app rather than hiding behind an extra.
 dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
@@ -192,7 +186,7 @@ dev = [
     "ruff>=0.15.8",
     "fpdf2>=2.8.0",
     "mypy>=1.10.0",
-    # flet build/run tooling — local only, NOT packaged for iOS (watchdog).
+    # flet build/run tooling — local only, never packaged (drags in watchdog).
     # Keep in the SAME minor as the runtime `flet` pin above (see NB2 there):
     # the cli's Flutter client and the bundled Python flet must match.
     "flet-cli>=0.86.4,<0.87",

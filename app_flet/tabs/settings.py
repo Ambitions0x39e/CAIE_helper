@@ -3,11 +3,10 @@
 Settings-app-style menu: tapping "SMTP / GoodNotes", "Grader API" or "关于"
 swaps the tab's own content for the sub-page, with a back arrow + title row
 (``_sub_header``) standing in for a real AppBar. A pushed ``ft.View`` would
-give a native slide-in transition and AppBar back button (including iOS
-edge-swipe-back), but it replaces the *entire* window, taking the left-hand
-nav_rail and header from main.py down with it. Embedding keeps the tab
-inside ``content_area`` like every other tab; the slide-in is hand-rolled
-(``swap_slot``) and there is no edge-swipe-back.
+give a native slide-in transition and AppBar back button, but it replaces the
+*entire* window, taking the left-hand nav_rail and header from main.py down
+with it. Embedding keeps the tab inside ``content_area`` like every other tab;
+the slide-in is hand-rolled (``swap_slot``).
 
 Each sub-page loads its own config fresh on open and saves independently,
 so no global routing is involved here — no ``page.views``, ``page.go``,
@@ -81,9 +80,9 @@ def _app_icon_bytes() -> bytes | None:
 _FIELD_WIDTH = 320
 _HAIRLINE = theme.HAIRLINE
 # Below this the label and a 320pt field cannot share a line without one of
-# them being squeezed to nothing, so the row stacks instead. The app ships to
-# phones and iPad as well as desktop, so the side-by-side form is a
-# wide-window affordance, not the only layout.
+# them being squeezed to nothing, so the row stacks instead. A desktop window
+# can be dragged this narrow, so the side-by-side form is a wide-window
+# affordance, not the only layout.
 _NARROW_WIDTH = 560
 
 
@@ -619,8 +618,8 @@ def _build_about_view(
         page.update()
 
     def on_update(_: ft.Event[ft.Container]) -> None:
-        # Platforms with no installer we know how to run (Linux, iOS, …) get
-        # the releases page in a browser — never an error, never a crash.
+        # Platforms with no installer we know how to run (Linux, …) get the
+        # releases page in a browser — never an error, never a crash.
         if platform_asset_suffix() is None:
             page.run_task(_launch_releases_page)
             return

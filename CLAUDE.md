@@ -59,7 +59,10 @@ uv run pytest
 
 ## Building the packaged app (Flet)
 
-The distributable app is built with `flet build <platform>` (`windows`, `macos`, `ipa`, `ios-simulator`, …). Two hard-won gotchas — see memory `reference_flet_build_windows.md` and `reference_flet_build_size.md`:
+The distributable app is built with `flet build windows` / `flet build macos` —
+those two are the shipping targets (see 平台范围 below). The gotchas here were all
+hit on Windows; see memory `reference_flet_build_windows.md` and
+`reference_flet_build_size.md`:
 
 ```bash
 # The bundled CPython comes from `requires-python`, NOT from a CLI flag — see
@@ -105,12 +108,25 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
 - **`uv sync --no-dev` does NOT shrink the app** — the `.venv` folder is copied wholesale regardless of what's installed; only `exclude` controls size.
 - **Keep `flet`, `flet-cli`, `flet-desktop` pinned in the same minor, in lockstep** (see memory `reference_flet_version_pin.md`), and keep the extension pubspec's `flet:` range covering that minor. The bundle's Python flet is pip-installed fresh from `[project.dependencies]` (uv.lock is ignored), while the Flutter client comes from flet-cli's template — if they diverge the packaged app opens to a permanent white screen (session never registers, `main()` never runs). 0.86 makes this stricter: its stream transports use a length-prefixed framing incompatible with pre-0.86 peers. Debug a white-screening package by running the exe with `--debug` (keeps Dart-side logs); the app sources are now editable in place at `build/windows/app/` (but they are `.pyc`).
 
+## 平台范围：桌面（Windows + macOS）
+
+**目标平台是桌面：Windows 和 macOS。** 不为 iOS/iPadOS 做任何权衡 —— 上架
+需要付费开发者账号，而这个 app 的用户量和收入撑不起来。移动端如果哪天真要
+做，那是整个 app 换一套技术方案的事，不是现在往代码里留钩子能省下的。
+
+具体意味着：布局按桌面窗口尺寸和鼠标交互设计（断点、间距、hover 态），
+触屏手势和小屏折叠都不用考虑；依赖要有 Windows 和 macOS 的 wheel，但不必有
+iOS 的。macOS 包只能在 Mac 上 `flet build macos` —— 交叉编译不存在。
+
+`extensions/flet_pdf_render`（pdfrx 原生渲染）不是移动端遗产 —— 它是桌面上
+**正在用的**渲染路径，`app_flet` 的整条批改流程都走它。
+
 ## Stack
 
 - **Python 3.13+** with `uv` as package manager
-- **Flet** for the UI (desktop/iOS app; `flet run app_flet`)
+- **Flet** for the UI (desktop app, Windows + macOS; `flet run app_flet`)
 - **Pydantic v2** for all validation, settings, and domain models (strict mode enabled on most models)
-- **pdfminer.six** for all PDF text/geometry extraction — segmentation *and* grade thresholds (both iOS-safe). **pdfplumber is dev-only now**, kept solely for the segmenter fidelity check that diffs the two engines; nothing shipped imports it, and the old `gt` extra is gone
+- **pdfminer.six** for all PDF text/geometry extraction — segmentation *and* grade thresholds. **pdfplumber is dev-only now**, kept solely for the segmenter fidelity check that diffs the two engines; nothing shipped imports it, and the old `gt` extra is gone
 - **requests** for downloading PDFs
 - **ruff** (E/F/I/UP/B/SIM) + **mypy strict** for linting/typing
 
@@ -130,7 +146,7 @@ deleted UI is recoverable from git history.
 
 ### `core/` — infrastructure layer
 - **`settings.py`** — `AppSettings` (paths: `~/.cie_helper/`) and `MailConfig` (SMTP from .env). Singleton `app_settings` imported by all modules.
-- **`storage.py`** — `CSVStore` loads/saves `PaperRecord` list from/to `~/.cie_helper/data.csv` via the stdlib `csv` module. Provides `load_all`, `save_all`, `append`, `update`, `delete`. `MistakeStore` is its append-only sibling for `mistakes.csv`. Both open with `newline=""` — without it the csv module's `
+- **`storage.py`** — `CSVStore` loads/saves `PaperRecord` list from/to `~/.cie_helper/data.csv` via the stdlib `csv` module. Provides `load_all`, `save_all`, `append`, `update`, `delete`. `MistakeStore` is its append-only sibling for `mistakes.csv`. Both open with `newline=""` — without it the csv module's `
 ` gets translated again on Windows and every row is followed by a blank line.
 - **`models.py`** — `PaperRecord` Pydantic model with computed `percentage` field and cross-field validators (scores required when Completed, raw ≤ total).
 - **`config_store.py`** — `ConfigStore` reads `data/syllabus_config.json` (syllabus names + paper type labels used by analytics); `grading_type_for_paper` resolves a paper_id to its grading path, and `qp_skip_pages` reads `data/paper_page_config.json`. Read-only: both files are edited by hand.
@@ -153,7 +169,7 @@ deleted UI is recoverable from git history.
 - **Validation at boundaries** — `DownloadRequest`, `MailRequest`, `ScoreUpdate`, `DeleteRequest` are Pydantic models that validate user input at the entry point.
 - **CSV as database** — file lives at `~/.cie_helper/data.csv`; no SQL database.
 - **`.env`** — SMTP credentials stored at repo root, loaded by `MailConfig`/pydantic-settings.
-- **No package re-exports** — `modules/__init__.py` and `modules/marking/__init__.py` are deliberately empty of imports, so `import modules.marking.page_segmenter` doesn't drag in siblings' platform-specific deps (several have no iOS wheel, which would break `flet build ipa`). `tests/test_modules_import.py` guards this in a subprocess. `core/__init__.py` is empty of imports for the same reason — `from core.models import PaperType` must not pull in `storage` and `settings` to reach an enum.
+- **No package re-exports** — `modules/__init__.py` and `modules/marking/__init__.py` are deliberately empty of imports, so `import modules.marking.page_segmenter` doesn't drag in siblings' heavy deps. `tests/test_modules_import.py` guards this in a subprocess. `core/__init__.py` is empty of imports for the same reason — `from core.models import PaperType` must not pull in `storage` and `settings` to reach an enum.
 
 ### Syllabus config
 - `data/syllabus_config.json` — JSON array of `{syllabus_id, name, paper_types[]}` entries. Read by the Analytics and Download tabs for syllabus/paper-type labels. **No in-app editor** since the Streamlit admin page was removed — edit the JSON by hand.

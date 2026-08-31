@@ -119,7 +119,7 @@ def main(page: ft.Page) -> None:
     # Save-dialog for the 错题本's CSV export. Created here, once, like the
     # other pickers — building one per tab visit would stack up services.
     mistake_export_picker = ft.FilePicker()
-    pdf_renderer = PdfRenderer()  # native pdfrx renderer (iOS-safe)
+    pdf_renderer = PdfRenderer()  # native pdfrx renderer
     page.services.extend(
         [ms_picker, answer_picker, mistake_export_picker, pdf_renderer]
     )

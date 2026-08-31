@@ -160,7 +160,7 @@ _ROW_TOLERANCE_PT = 4.0
 def _iter_page_cells(pdf_bytes: bytes) -> Iterator[list[_Cell]]:
     """Yield one list of positioned text lines per page.
 
-    pdfminer.six only (pure Python, iOS-safe — no pdfplumber, no PyMuPDF).
+    pdfminer.six only — no pdfplumber, no PyMuPDF.
     """
     for page in extract_pages(io.BytesIO(pdf_bytes)):
         cells: list[_Cell] = []

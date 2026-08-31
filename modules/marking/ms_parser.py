@@ -198,7 +198,7 @@ def _paper_info_from_text(text: str) -> tuple[str, int]:
 def _extract_paper_info(pdf_path: str | Path) -> tuple[str, int]:
     """Extract paper_id and total_marks from the cover page via text.
 
-    Uses pdfminer.six (pure Python, iOS-safe) on the first page only.
+    Uses pdfminer.six on the first page only.
     """
     text = extract_text(io.BytesIO(to_pdf_bytes(pdf_path)), page_numbers=[0]) or ""
     return _paper_info_from_text(text)
