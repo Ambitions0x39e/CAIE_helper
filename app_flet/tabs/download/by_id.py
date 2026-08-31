@@ -228,5 +228,11 @@ def build_by_id_tab(
             ],
             spacing=4,
         ),
-        padding=theme.SPACE_XL,
+        # top 比左右小一档：分段条选的就是下面显示谁，两者贴紧才读得出
+        # 这层从属关系。管理页和批改页的推拉轨道用的是同一组数，三个 tab 的
+        # 内容起点因此落在同一条水平线上。
+        padding=ft.Padding(
+            left=theme.SPACE_XL, right=theme.SPACE_XL,
+            top=theme.SPACE_MD, bottom=theme.SPACE_XL,
+        ),
     )

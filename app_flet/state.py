@@ -34,8 +34,9 @@ class AppState:
     last_downloaded_id: str | None = None
     last_downloaded_qp: str | None = None
 
-    # Manage tab
-    manage_view: str = "Database"
+    # Manage tab — 顶层三节（总览/整理/错题）和「整理」里的两种排布
+    manage_view: str = "overview"
+    organize_view: str = "icons"
     hide_completed: bool = True
 
     # Mark tab — shared
