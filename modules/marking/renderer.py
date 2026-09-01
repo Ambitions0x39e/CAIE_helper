@@ -99,6 +99,91 @@ def full_page_clips(source: str | bytes | Path) -> list[PageClip]:
     ]
 
 
+#: A slice thinner than this rasterizes to nothing useful, and asking PDFium
+#: for it raises ("Crop exceeds page dimensions" when the two insets meet).
+_MIN_SLICE_PT = 1.0
+
+
+class LocalRenderer:
+    """Sync, in-process renderer backed by pypdfium2 — no RPC, no event loop.
+
+    Same PDFium engine the native path reaches through Dart, so the pixels
+    match; it just runs on this side of the process. That makes it the whole
+    dependency of a grading run on the UI stack: construct one and
+    :func:`grade_paper` needs nothing else from the app.
+
+    **The clip is applied before rasterizing, not after.** ``render``'s ``crop``
+    takes an inset in points from each edge — verified against a banded page:
+    an 800pt page with ``crop=(0, 400, 0, 200)`` returns exactly the 200pt band
+    starting 200pt down. Rendering the full page and cropping the bitmap would
+    instead hold a whole page of pixels per clip, which on a large scan is the
+    memory the RPC-era workaround used to spend.
+
+    pypdfium2 and pillow are imported lazily because this module is also
+    imported by the Flet app, whose bundle does not carry them.
+    """
+
+    def render_regions(
+        self,
+        source: str | bytes | Path,
+        clips: list[PageClip],
+        dpi: int = 200,
+    ) -> list[bytes]:
+        """Render each clip (full-width vertical slice) to a PNG.
+
+        Degenerate clips are dropped rather than returned as broken images:
+        callers hand the whole list to the grader without pairing it back up
+        with `clips`, so a short list is safe and a zero-height PNG is not.
+        """
+        if not clips:
+            return []
+
+        import io
+
+        import pypdfium2 as pdfium
+
+        if not isinstance(source, bytes) and not Path(source).is_file():
+            raise FileNotFoundError(f"PDF 不存在或不可读：{source}")
+
+        scale = dpi / 72.0
+        out: list[bytes] = []
+        doc = pdfium.PdfDocument(source)
+        try:
+            for clip in clips:
+                page = doc[clip.page_idx]
+                _, height = page.get_size()
+                # Clamp into the page: a region running past the bottom edge
+                # would otherwise become a negative inset, which PDFium honours
+                # by rendering *outside* the page.
+                top = min(max(clip.y_top, 0.0), height)
+                bottom = min(max(clip.y_bottom, 0.0), height)
+                if bottom - top < _MIN_SLICE_PT:
+                    continue
+                bitmap = page.render(
+                    scale=scale, crop=(0, height - bottom, 0, top),
+                )
+                buf = io.BytesIO()
+                bitmap.to_pil().save(buf, format="PNG")
+                out.append(buf.getvalue())
+        finally:
+            doc.close()
+
+        _log.info("render_regions(local): %d image(s) from %d clip(s)",
+                  len(out), len(clips))
+        return out
+
+    def render_pages(
+        self,
+        source: str | bytes | Path,
+        page_numbers: list[int],
+        dpi: int = 200,
+    ) -> list[bytes]:
+        """Render whole pages (1-indexed page numbers) to PNGs."""
+        all_clips = full_page_clips(source)
+        selected = [all_clips[n - 1] for n in page_numbers]
+        return self.render_regions(source, selected, dpi)
+
+
 class NativeRenderer:
     """Sync-callable renderer bridging to the async pdfrx `PdfRenderer` service.
 
