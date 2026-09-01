@@ -165,6 +165,11 @@ plugins = ["pydantic.mypy"]
 module = [
     "requests", "requests.*",
     "pdfplumber", "pdfplumber.*",
+    # Ships no py.typed, so every attribute reads as Any. The renderer's
+    # geometry is pinned by tests/test_local_renderer.py instead — those assert
+    # on returned pixels, which is the part a type checker could not have
+    # caught anyway.
+    "pypdfium2", "pypdfium2.*",
 ]
 ignore_missing_imports = true
 
@@ -193,9 +198,14 @@ dev = [
     "flet-desktop>=0.86.4,<0.87",
     # Segmenter fidelity check compares pdfminer against pdfplumber.
     "pdfplumber>=0.11.0",
-    # v2 host. It stays in the dev group while `flet build` is still the
-    # packager: that command pip-installs [project.dependencies] fresh into the
-    # bundle, so anything listed there ships inside the Flet app. pywebview
-    # moves up to a runtime dependency when PyInstaller takes over.
+    # ── v2 stack. These three move up to [project.dependencies] in M4, when
+    # PyInstaller replaces `flet build` as the packager. They must NOT go there
+    # before then: `flet build` pip-installs [project.dependencies] fresh into
+    # the bundle, so listing them ships them inside the Flet app — and for
+    # pypdfium2 and pillow that reintroduces the vendored `.dylib` that the
+    # comment on [project.dependencies] exists to keep out. The Flet app is
+    # what still ships, and its macOS build has to stay universal.
     "pywebview>=6.2,<7",
+    "pypdfium2>=5.6",
+    "pillow>=11.0",
 ]
