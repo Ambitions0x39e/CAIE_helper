@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Download, LayoutGrid, Pencil, Settings } from 'lucide-react'
 import { BRIDGE_ABSENT, bridge } from './lib/bridge'
 import { DownloadTab } from './tabs/download'
 import { ManageTab } from './tabs/manage'
@@ -8,10 +9,10 @@ import { TokenSheet } from './dev/TokenSheet'
 import { PushTrack } from './ui/PushTrack'
 
 const TABS = [
-  { id: 'download', label: '下载' },
-  { id: 'manage', label: '管理' },
-  { id: 'mark', label: '批改' },
-  { id: 'settings', label: '设置' },
+  { id: 'download', label: '下载', Icon: Download },
+  { id: 'manage', label: '管理', Icon: LayoutGrid },
+  { id: 'mark', label: '批改', Icon: Pencil },
+  { id: 'settings', label: '设置', Icon: Settings },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -58,23 +59,30 @@ export default function App() {
     // The nav is fixed and the main column scrolls on its own. A page-level
     // scroll would carry the nav off the top — it is chrome, it stays put.
     <div className="flex h-screen overflow-hidden bg-chrome text-body text-ink">
-      <nav className="flex w-28 shrink-0 flex-col gap-0.5 border-r border-hairline p-2">
-        {TABS.map((t) => (
+      {/* One entry is one square: icon and label are a single group, centred
+          together. 设置 sits at the far end — it is the app's own settings,
+          not a fourth destination alongside the three. */}
+      <nav className="flex shrink-0 flex-col items-center gap-2 border-r border-hairline px-2.5 py-3">
+        {TABS.map((t, i) => (
           <button
             key={t.id}
             onClick={() => go(t.id)}
             aria-current={t.id === tab}
-            className={`rounded-ui px-2.5 py-1.5 text-left transition-colors ${
-              t.id === tab ? 'bg-raised font-medium' : 'text-muted hover:text-ink'
-            }`}
+            className={`flex size-16 flex-col items-center justify-center gap-1 rounded-[14px]
+                        border transition-colors ${
+                          t.id === tab
+                            ? 'border-hairline bg-panel font-medium text-accent'
+                            : 'border-transparent text-muted hover:text-ink'
+                        } ${i === TABS.length - 1 ? 'mt-auto' : ''}`}
             style={{ transitionDuration: 'var(--dur-fast)' }}
           >
-            {t.label}
+            <t.Icon className="size-6" aria-hidden />
+            <span className="text-caption">{t.label}</span>
           </button>
         ))}
         <button
           onClick={() => setSheet((v) => !v)}
-          className="mt-auto rounded-ui px-2.5 py-1.5 text-left text-micro text-faint hover:text-ink"
+          className="rounded-ui px-2 py-1 text-micro text-faint hover:text-ink"
         >
           tokens
         </button>

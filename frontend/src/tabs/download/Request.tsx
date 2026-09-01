@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
-import type { QueryEntry, SyllabusConfig } from '../../lib/types'
+import type { DownloadSource, QueryEntry, SyllabusConfig } from '../../lib/types'
 import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
 import { Skeleton } from '../../ui/Skeleton'
@@ -25,7 +25,7 @@ function Leaf({ text }: { text: string }) {
   )
 }
 
-export function Request() {
+export function Request({ source }: { source: DownloadSource }) {
   const [session, setSession] = useState<Session | null>(null)
   const [syllabuses, setSyllabuses] = useState<SyllabusConfig[]>([])
   const [entries, setEntries] = useState<QueryEntry[] | null>(null)
@@ -99,7 +99,7 @@ export function Request() {
       const a = await api()
       const result = await a.query_session(session.syllabus, session.year, session.season)
       if (!result.success) {
-        setFailure(`查询失败：${result.error}`)
+        setFailure(`查询失败: ${result.error}`)
         setStatus(null)
         return
       }
@@ -148,12 +148,12 @@ export function Request() {
         }
         setStatus(`下载中 ${i + 1}/${chosen.length} — ${entry.paper_id}`)
         // Only fetch the insert for rows that showed one.
-        const dl = await a.download_paper(entry.paper_id, 'CIEFrank', entry.has_insert)
+        const dl = await a.download_paper(entry.paper_id, source, entry.has_insert)
         if (dl.success) {
           ok++
           done.add(entry.paper_id)
           if (dl.insert_error) {
-            warned.push(`${entry.paper_id} 的 insert 没下到：${dl.insert_error}`)
+            warned.push(`${entry.paper_id} 的 insert 没下到: ${dl.insert_error}`)
           }
         } else {
           failed.push(`${entry.paper_id}: ${dl.error}`)
@@ -192,7 +192,7 @@ export function Request() {
       <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
         <SessionPicker onChange={setSession} />
         <Button tone="accent" onClick={runQuery} disabled={busy || !session}>
-          {busy && loading ? '查询中…' : '查询'}
+          查询
         </Button>
       </div>
 

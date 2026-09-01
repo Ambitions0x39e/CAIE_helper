@@ -4,12 +4,6 @@ import type { DownloadResult, DownloadSource, MailResult } from '../../lib/types
 import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
 import { Field } from '../../ui/Field'
-import { SegmentedStrip } from '../../ui/SegmentedStrip'
-
-const SOURCES = [
-  { id: 'CIEFrank', label: 'CIEFrank' },
-  { id: 'PapaCambridge', label: 'PapaCambridge' },
-] as const satisfies readonly { id: DownloadSource; label: string }[]
 
 /** What the result area is showing. `null` is the empty state. */
 type Outcome =
@@ -18,9 +12,8 @@ type Outcome =
   | { kind: 'failed'; error: string }
   | null
 
-export function ById() {
+export function ById({ source }: { source: DownloadSource }) {
   const [paperId, setPaperId] = useState('')
-  const [source, setSource] = useState<DownloadSource>('CIEFrank')
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<Outcome>(null)
   const [mailReady, setMailReady] = useState(false)
@@ -66,10 +59,10 @@ export function ById() {
 
   return (
     <div className="space-y-3">
-      <div className="max-w-md rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
+      <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
         <Field
           label="Paper ID"
-          hint="格式：<科目>_<考期>_qp_<试卷>"
+          hint="格式: <科目>_<考期>_qp_<试卷>"
           placeholder="9702_s23_qp_11"
           value={paperId}
           onChange={(e) => setPaperId(e.target.value)}
@@ -77,13 +70,8 @@ export function ById() {
         />
 
         <div className="flex items-center gap-2">
-          <span className="text-caption text-muted">来源</span>
-          <SegmentedStrip items={SOURCES} value={source} onChange={setSource} />
-        </div>
-
-        <div className="flex items-center gap-2">
           <Button tone="accent" onClick={download} disabled={busy || !paperId.trim()}>
-            {busy ? '下载中…' : '下载'}
+            下载
           </Button>
           <Button onClick={record} disabled={busy || !paperId.trim()}>
             仅记录
@@ -94,23 +82,22 @@ export function ById() {
       {outcome?.kind === 'downloaded' && (
         <Banner
           tone="ok"
-          title={`已下载：${outcome.result.paper_id}`}
+          title={`已下载: ${outcome.result.paper_id}`}
           details={[
             `QP → ${outcome.result.qp_path}`,
             `MS → ${outcome.result.ms_path}`,
-            ...(outcome.result.insert_error ? [`插页未取到：${outcome.result.insert_error}`] : []),
           ]}
         />
       )}
       {outcome?.kind === 'recorded' && (
-        <Banner tone="ok" title={`已记录（无 PDF）：${outcome.result.paper_id}`} />
+        <Banner tone="ok" title={`已记录 (无PDF): ${outcome.result.paper_id}`} />
       )}
       {outcome?.kind === 'failed' && <Banner tone="bad" title={outcome.error} />}
 
       {canSend && (
         <div className="flex items-center gap-2">
           <span className="text-caption text-muted">
-            准备发送：{outcome.result.paper_id}
+            准备发送: {outcome.result.paper_id}
           </span>
           <Button onClick={sendToGoodNotes}>发送到 GoodNotes</Button>
         </div>
@@ -118,7 +105,7 @@ export function ById() {
       {sent && (
         <Banner
           tone={sent.success ? 'ok' : 'bad'}
-          title={sent.success ? `已发送到 ${sent.recipient}` : `发送失败：${sent.error}`}
+          title={sent.success ? `已发送到 ${sent.recipient}` : `发送失败: ${sent.error}`}
         />
       )}
     </div>

@@ -8,24 +8,43 @@ import { TrendChart } from './TrendChart'
 /** A paper's marks over time need at least two points to be a line. */
 const MIN_FOR_TREND = 2
 
+/** The three ring sizes: the overall one, a card's, and the panel header's. */
+const DONUT_BIG = 168
+const DONUT_SMALL = 68
+const DONUT_PANEL = 96
+
+function pct(value: number): string {
+  return `${value.toFixed(1)}%`
+}
+
+/** A label and its number on one line — the card's and the summary's stats. */
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-caption text-muted">{label}</span>
+      <span className="text-subhead font-semibold tabular-nums">{value}</span>
+    </div>
+  )
+}
+
 function Legend({ t }: { t: ReturnType<typeof tally> }) {
+  const done = Math.round(t.earned + t.lost)
+  const earnedRate = done ? (t.earned / done) * 100 : 0
   const rows = [
-    { label: '拿到', value: t.earned, color: 'var(--ui-ok)' },
-    { label: '丢掉', value: t.lost, color: 'var(--ui-bad)' },
-    { label: '未完成', value: t.pending, color: 'var(--ui-hairline-strong)' },
+    { label: '得分', value: `${done} 张 · ${pct(earnedRate)}`, color: 'var(--ui-ok)' },
+    { label: '失分', value: pct(100 - earnedRate), color: 'var(--ui-bad)' },
+    { label: '未完成', value: `${t.pending} 张`, color: 'var(--ui-hairline-strong)' },
   ]
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       {rows.map((r) => (
         <div key={r.label} className="flex items-center gap-2 text-caption">
           <span
-            className="size-2 shrink-0 rounded-[2px]"
+            className="size-2.5 shrink-0 rounded-full"
             style={{ background: r.color }}
           />
-          <span className="text-muted">{r.label}</span>
-          <span className="ml-auto tabular-nums">
-            {r.value.toFixed(r.label === '未完成' ? 0 : 1)}
-          </span>
+          <span>{r.label}</span>
+          <span className="text-muted tabular-nums">{r.value}</span>
         </div>
       ))}
     </div>
@@ -46,65 +65,84 @@ export function Overview({
     [syllabuses],
   )
 
-  /** Papers bucketed by syllabus, biggest bucket first. */
+  /** Papers bucketed by syllabus, by code — the order the cards are read in
+   * should not shuffle when one subject overtakes another. */
   const bySyllabus = useMemo(() => {
     const groups = new Map<string, PaperRecord[]>()
     for (const p of papers) {
       const id = syllabusIdOf(p.paper_id)
       groups.set(id, [...(groups.get(id) ?? []), p])
     }
-    return [...groups.entries()].sort((a, b) => b[1].length - a[1].length)
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   }, [papers])
 
   const overall = tally(papers)
+  const completed = papers
+    .filter((p) => p.status === 'Completed' && p.percentage !== null)
+    .map((p) => p.percentage as number)
 
   if (papers.length === 0) {
-    return (
-      <div className="rounded-ui border border-hairline bg-panel p-6 text-caption text-muted">
-        还没有任何卷子。去【下载】拿几份回来。
-      </div>
-    )
+    return <div className="text-section text-muted">暂无记录，请先下载试卷。</div>
   }
 
   const detail = open ? bySyllabus.find(([id]) => id === open) : null
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-5 rounded-ui border border-hairline bg-panel p-4">
+      <div className="flex items-center gap-5 rounded-ui border border-hairline bg-panel p-5">
         <Donut
           tally={overall}
-          size={140}
+          size={DONUT_BIG}
           value={String(overall.total)}
-          label="份卷子"
+          label="总体"
         />
-        <div className="min-w-40">
-          <Legend t={overall} />
+        <Legend t={overall} />
+        <div className="ml-auto space-y-2 text-right">
+          <Stat
+            label="平均"
+            value={
+              completed.length
+                ? pct(completed.reduce((a, b) => a + b, 0) / completed.length)
+                : '—'
+            }
+          />
+          <Stat label="最高" value={completed.length ? pct(Math.max(...completed)) : '—'} />
+          <Stat label="学科" value={`${bySyllabus.length} 门`} />
         </div>
       </div>
 
+      {/* Two across on a normal window — a card carries three stats beside its
+          ring, and squeezing a third column shortens every one of them. */}
       <div
         className="grid gap-3"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(16rem, 1fr))' }}
+        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(24rem, 1fr))' }}
       >
         {bySyllabus.map(([id, records]) => {
           const t = tally(records)
+          const marks = records
+            .filter((r) => r.status === 'Completed' && r.percentage !== null)
+            .map((r) => r.percentage as number)
           return (
             <button
               key={id}
               onClick={() => setOpen(open === id ? null : id)}
               aria-expanded={open === id}
-              className={`flex items-center gap-3 rounded-ui border border-hairline p-3 text-left
+              className={`flex items-center gap-4 rounded-ui border border-hairline p-5 text-left
                           transition-colors ${open === id ? 'bg-raised' : 'bg-panel hover:bg-raised'}`}
               style={{ transitionDuration: 'var(--dur-fast)' }}
             >
-              <Glyph name={subjectGlyph(names.get(id))} className="size-5 text-muted" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-body font-medium">{names.get(id) ?? id}</div>
-                <div className="text-caption text-muted tabular-nums">
-                  {id} · {records.length} 份 · 完成 {t.total - t.pending}
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex items-center gap-2">
+                  <Glyph name={subjectGlyph(names.get(id))} className="size-5 text-accent" />
+                  <span className="text-section font-bold tabular-nums">{id}</span>
                 </div>
+                <div className="truncate text-caption text-muted">{names.get(id) ?? ''}</div>
+                <div className="h-1" />
+                <Stat label="最近" value={marks.length ? pct(marks[marks.length - 1]) : '—'} />
+                <Stat label="最佳" value={marks.length ? pct(Math.max(...marks)) : '—'} />
+                <Stat label="共" value={`${records.length} 张`} />
               </div>
-              <Donut tally={t} size={44} />
+              <Donut tally={t} size={DONUT_SMALL} />
             </button>
           )
         })}
@@ -151,21 +189,27 @@ function SyllabusDetail({
     <div className="rounded-ui border border-hairline bg-raised p-4 space-y-3"
          style={{ boxShadow: 'var(--shadow-popover)' }}>
       <div className="flex items-center gap-3">
-        <Donut tally={tally(records)} size={72} />
-        <div className="min-w-0 flex-1">
-          <div className="text-section font-medium">{name}</div>
-          <div className="text-caption text-muted tabular-nums">{syllabusId}</div>
-        </div>
         <button onClick={onClose} className="text-caption text-muted hover:text-ink">
-          收起
+          返回
         </button>
+        <div className="min-w-0 flex-1">
+          <div className="text-section font-bold">
+            {syllabusId} — {name}
+          </div>
+        </div>
+        <Donut
+          tally={tally(records)}
+          size={DONUT_PANEL}
+          value={String(records.length)}
+          label="张"
+        />
       </div>
 
       {attempts.length >= MIN_FOR_TREND ? (
         <TrendChart attempts={attempts} />
       ) : (
-        <div className="text-caption text-faint">
-          至少要两份有分数的卷子才画得出趋势。
+        <div className="text-caption italic text-muted">
+          至少需要 2 次成绩才能绘制趋势图
         </div>
       )}
 
@@ -173,26 +217,22 @@ function SyllabusDetail({
         <table className="w-full border-collapse text-body">
           <thead>
             <tr className="border-b border-hairline text-caption text-muted">
-              <th className="p-2 text-left font-normal">卷号</th>
-              <th className="p-2 text-right font-normal">得分</th>
-              <th className="p-2 text-right font-normal">满分</th>
-              <th className="p-2 text-right font-normal">百分比</th>
-              <th className="p-2 text-left font-normal">状态</th>
+              <th className="p-2 text-left font-normal">Paper ID</th>
+              <th className="p-2 text-right font-normal">Raw</th>
+              <th className="p-2 text-right font-normal">Total</th>
+              <th className="p-2 text-right font-normal">%</th>
+              <th className="p-2 text-left font-normal">Date</th>
             </tr>
           </thead>
           <tbody>
-            {records.map((r) => (
+            {attempts.map((r) => (
               <tr key={r.paper_id} className="border-b border-hairline last:border-0">
                 <td className="p-2 tabular-nums">{r.paper_id}</td>
-                <td className="p-2 text-right tabular-nums">{r.score_raw ?? '–'}</td>
-                <td className="p-2 text-right tabular-nums">{r.score_total ?? '–'}</td>
-                <td className="p-2 text-right tabular-nums">
-                  {r.percentage === null ? '–' : `${r.percentage}%`}
-                </td>
-                <td className="p-2 text-caption">
-                  <span className={r.status === 'Completed' ? 'text-ok' : 'text-muted'}>
-                    {r.status === 'Completed' ? '已完成' : '未完成'}
-                  </span>
+                <td className="p-2 text-right tabular-nums">{r.score_raw}</td>
+                <td className="p-2 text-right tabular-nums">{r.score_total}</td>
+                <td className="p-2 text-right tabular-nums">{pct(r.percentage ?? 0)}</td>
+                <td className="p-2 text-caption text-muted tabular-nums">
+                  {r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : ''}
                 </td>
               </tr>
             ))}
