@@ -13,6 +13,7 @@
  */
 import type {
   DownloadResult,
+  MailResult,
   QueryResult,
   QuerySeason,
   DownloadSource,
@@ -31,6 +32,8 @@ export interface PyApi {
     paper_id: string, source?: DownloadSource, insert?: boolean,
   ): Promise<DownloadResult>
   record_paper(paper_id: string): Promise<DownloadResult>
+  mail_ready(): Promise<boolean>
+  send_to_goodnotes(paper_id: string, qp_path: string): Promise<MailResult>
 }
 
 declare global {
