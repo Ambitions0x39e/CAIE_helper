@@ -26,6 +26,36 @@ export interface SyllabusConfig {
   paper_types: PaperTypeConfig[]
 }
 
+// -- core.models -------------------------------------------------------------
+
+export type PaperStatus = 'Pending' | 'Completed'
+
+export interface PaperRecord {
+  paper_id: string
+  status: PaperStatus
+  qp_path: string
+  ms_path: string
+  /** Only set once Completed — `completed_requires_scores` enforces that. */
+  score_raw: number | null
+  score_total: number | null
+  sent_to_gn: boolean
+  /** ISO 8601, or null on rows written before the column existed. */
+  timestamp: string | null
+  /** Computed field: null unless both scores are present and total > 0. */
+  percentage: number | null
+}
+
+export interface MistakeRecord {
+  paper_id: string
+  question_id: string
+  topic_id: string | null
+  topic_name: string | null
+  score: number
+  max_score: number
+  comment: string
+  timestamp: string
+}
+
 // -- modules.downloader ------------------------------------------------------
 
 export type QueryKind = 'qp' | 'gt' | 'other'

@@ -3,24 +3,13 @@ import { api } from '../../lib/bridge'
 import type { GradeThreshold } from '../../lib/types'
 import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { sortGrades } from './columns'
 import { SessionPicker } from './SessionPicker'
 import { type Session, gtPaperId, sessionCode } from './session'
 
 /** Two-digit components become full paper ids: 9701 + w25 + 14 → 9701_w25_qp_14. */
 function papersFor(syllabus: string, session: string, opt: GradeThreshold): string[] {
   return opt.components.map((c) => `${syllabus}_${session}_qp_${c}`)
-}
-
-/** Plain sort puts "A" before "A*" — "A" is a prefix, so it compares shorter.
- * CIE reads A* as the higher grade. Group by the letter with the star stripped
- * and put the starred one first; the remaining letters (B/C/D/E/U) already run
- * high-to-low alphabetically. */
-function sortGrades(grades: Iterable<string>): string[] {
-  return [...new Set(grades)].sort((a, b) => {
-    const base = a.replace(/\*/g, '').localeCompare(b.replace(/\*/g, ''))
-    if (base !== 0) return base
-    return Number(a.includes('*')) - Number(b.includes('*')) > 0 ? -1 : 1
-  })
 }
 
 type Doc = { syllabus_id: string; session: string; options: GradeThreshold[] }
