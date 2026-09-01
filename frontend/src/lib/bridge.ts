@@ -51,9 +51,13 @@ export interface PyApi {
   retag_mistake(
     paper_id: string, question_id: string, topic_id: string | null,
   ): Promise<SimpleResult>
-  export_mistakes_csv(paper_ids?: string[]): Promise<SaveResult>
+  /** Indices into what `mistakes()` returned, which is the store's own order. */
+  export_mistakes_csv(indices: number[]): Promise<SaveResult>
   export_mistakes_pdf(
-    paper_ids: string[], with_ms: boolean,
+    indices: number[],
+  ): Promise<SaveResult & { warnings?: string[] }>
+  export_mistakes_answers(
+    indices: number[],
   ): Promise<SaveResult & { warnings?: string[] }>
   mail_settings(): Promise<Record<string, never> | {
     configured: boolean

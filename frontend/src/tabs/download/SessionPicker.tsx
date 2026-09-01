@@ -48,9 +48,11 @@ export function SessionPicker({ onChange }: { onChange: (s: Session) => void }) 
   const years: number[] = []
   for (let y = new Date().getFullYear(); y >= FIRST_YEAR; y--) years.push(y)
 
+  // 70 / 10 / 20 of the row. The subject line carries a code and a name; the
+  // other two are a four-digit year and one word.
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <label className="min-w-0 flex-1">
+    <div className="flex items-end gap-2">
+      <label className="min-w-0" style={{ flex: '7 1 0' }}>
         <span className="block text-caption text-muted">科目</span>
         <select
           className={`mt-1 w-full ${SELECT}`}
@@ -65,10 +67,10 @@ export function SessionPicker({ onChange }: { onChange: (s: Session) => void }) 
         </select>
       </label>
 
-      <label>
+      <label className="min-w-0" style={{ flex: '1 1 0' }}>
         <span className="block text-caption text-muted">年份</span>
         <select
-          className={`mt-1 ${SELECT}`}
+          className={`mt-1 w-full ${SELECT}`}
           value={year}
           onChange={(e) => setYear(e.target.value)}
         >
@@ -80,10 +82,10 @@ export function SessionPicker({ onChange }: { onChange: (s: Session) => void }) 
         </select>
       </label>
 
-      <label>
+      <label className="min-w-0" style={{ flex: '2 1 0' }}>
         <span className="block text-caption text-muted">考季</span>
         <select
-          className={`mt-1 ${SELECT}`}
+          className={`mt-1 w-full ${SELECT}`}
           value={season}
           onChange={(e) => setSeason(e.target.value as QuerySeason)}
         >

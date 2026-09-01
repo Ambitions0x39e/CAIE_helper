@@ -30,12 +30,13 @@ from pydantic import ValidationError
 from app_web.jobs import current, push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
-from core.models import PaperType
+from core.models import MistakeRecord, PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
+from modules.marking.answer_sheet import build_answer_sheet
 from modules.marking.mcq_parser import (
     detect_student_answers,
     score_mcq_answers,
@@ -289,36 +290,63 @@ class Api:
         self._mistakes.save_all(rewritten)
         return {"success": True}
 
-    def export_mistakes_csv(
-        self, paper_ids: list[str] | None = None,
-    ) -> Payload:
+    def _chosen_mistakes(self, indices: list[int]) -> list[MistakeRecord]:
+        """The ticked rows, in store order.
+
+        Keyed by position rather than by `paper_id`/`question_id`: the store is
+        append-only, so a position is stable, while a re-grade repeats the same
+        paper and question and would make a key ambiguous.
+        """
+        records = self._mistakes.load_all()
+        return [records[i] for i in sorted(indices) if 0 <= i < len(records)]
+
+    def export_mistakes_csv(self, indices: list[int]) -> Payload:
         """Write the selection to a file the user picks. Same columns as the
         store's own file, so it reads back into anything that reads the store."""
-        records = self._mistakes.load_all()
-        if paper_ids:
-            wanted = set(paper_ids)
-            records = [r for r in records if r.paper_id in wanted]
+        chosen = self._chosen_mistakes(indices)
+        if not chosen:
+            return {"success": False, "error": "请先勾选要导出的错题"}
+        # utf-8-sig: Excel reads a plain UTF-8 CSV as mojibake, and every
+        # comment in here is Chinese.
         return _save_to_chosen_file(
-            to_csv(records).encode("utf-8-sig"), "mistakes.csv", ("CSV (*.csv)",),
+            to_csv(chosen).encode("utf-8-sig"), "mistakes.csv", ("CSV (*.csv)",),
         )
 
-    def export_mistakes_pdf(self, paper_ids: list[str], with_ms: bool) -> Payload:
+    def export_mistakes_pdf(self, indices: list[int]) -> Payload:
         """Crop the selected questions out of their QPs into one PDF.
 
         Warnings come back alongside the file rather than instead of it:
         exporting nine of ten questions is worth doing as long as the tenth is
         named. Only a total failure is an error.
         """
-        wanted = set(paper_ids)
-        records = [r for r in self._mistakes.load_all() if r.paper_id in wanted]
-        papers = {r.paper_id: r for r in self._store.load_all()}
-        qp = {pid: papers[pid].qp_path for pid in wanted if pid in papers}
-        ms = {pid: papers[pid].ms_path for pid in wanted if pid in papers}
+        chosen = self._chosen_mistakes(indices)
+        if not chosen:
+            return {"success": False, "error": "请先勾选要导出的错题"}
+        papers = self._store.load_all()
+        qp = {r.paper_id: r.qp_path for r in papers}
+        ms = {r.paper_id: r.ms_path for r in papers}
         try:
-            data, warnings = build_export(records, qp, ms if with_ms else None)
+            data, warnings = build_export(chosen, qp, ms)
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         saved = _save_to_chosen_file(data, "mistakes.pdf", ("PDF (*.pdf)",))
+        return {**saved, "warnings": warnings}
+
+    def export_mistakes_answers(self, indices: list[int]) -> Payload:
+        """Lay the selected questions' mark scheme out as an answer sheet.
+
+        Reads the parse cached during grading — no PDF work and no second
+        vision-model call.
+        """
+        chosen = self._chosen_mistakes(indices)
+        if not chosen:
+            return {"success": False, "error": "请先勾选要导出的错题"}
+        ms = {r.paper_id: r.ms_path for r in self._store.load_all()}
+        try:
+            data, warnings = build_answer_sheet(chosen, ms)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        saved = _save_to_chosen_file(data, "answers.pdf", ("PDF (*.pdf)",))
         return {**saved, "warnings": warnings}
 
     # -- mark ----------------------------------------------------------------

@@ -13,12 +13,14 @@ adapter itself owns:
 """
 from __future__ import annotations
 
+import datetime
 import json
 
 import pytest
 from pydantic import ValidationError
 
 from app_web.api import Api, _invalid
+from core.models import MistakeRecord
 
 
 @pytest.fixture
@@ -151,3 +153,49 @@ def test_grader_settings_omits_the_api_key(api: Api) -> None:
     out = api.grader_settings()
     assert "api_key" not in out
     assert "key" not in json.dumps(out).lower()
+
+
+# -- mistake exports pick rows by position -----------------------------------
+
+
+def _stub_mistakes(api: Api, count: int) -> list[MistakeRecord]:
+    """Give the adapter a known store to select out of."""
+    records = [
+        MistakeRecord(
+            paper_id="9702_s23_qp_11",
+            question_id=str(i),
+            score=0.0,
+            max_score=2.0,
+            comment="",
+            timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+        for i in range(count)
+    ]
+    api._mistakes.load_all = lambda: list(records)  # type: ignore[method-assign]
+    return records
+
+
+def test_export_selection_is_by_position_and_stays_in_store_order(api: Api) -> None:
+    """Positions, not paper+question: a re-grade repeats the same pair, so a
+    key made of the two would pull both rows when the user ticked one."""
+    records = _stub_mistakes(api, 4)
+    assert api._chosen_mistakes([2, 0]) == [records[0], records[2]]
+
+
+def test_export_selection_ignores_positions_the_store_does_not_have(api: Api) -> None:
+    """The page holds its own copy of the list; a stale index must not raise
+    across the bridge."""
+    records = _stub_mistakes(api, 2)
+    assert api._chosen_mistakes([-1, 1, 99]) == [records[1]]
+
+
+def test_exporting_nothing_is_a_result_not_a_save_dialog(api: Api) -> None:
+    _stub_mistakes(api, 2)
+    for out in (
+        api.export_mistakes_csv([]),
+        api.export_mistakes_pdf([]),
+        api.export_mistakes_answers([]),
+    ):
+        assert out["success"] is False
+        assert "勾选" in out["error"]
+        json.dumps(out)

@@ -12,7 +12,7 @@ export function SubPage({
   children: ReactNode
 }) {
   return (
-    <div className="max-w-xl space-y-3">
+    <div className="space-y-3">
       <button
         onClick={onBack}
         className="flex items-center gap-1 text-caption text-muted hover:text-ink"

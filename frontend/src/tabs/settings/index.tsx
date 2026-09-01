@@ -28,7 +28,7 @@ export function SettingsTab() {
   return (
     <PushTrack step={page === null ? MENU : SUB} dir={page === null ? -1 : 1}>
       {page === null ? (
-        <div className="max-w-xl overflow-hidden rounded-ui border border-hairline bg-panel">
+        <div className="overflow-hidden rounded-ui border border-hairline bg-panel">
           {PAGES.map((p, i) => (
             <button
               key={p.id}

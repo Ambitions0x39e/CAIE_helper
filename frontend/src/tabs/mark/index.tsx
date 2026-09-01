@@ -10,7 +10,7 @@ import type { Analysis, QuestionResult } from './types'
 
 const STEPS = [
   { id: '0', label: '选卷' },
-  { id: '1', label: '批改' },
+  { id: '1', label: '核对' },
   { id: '2', label: '结果' },
 ] as const
 
@@ -63,11 +63,11 @@ export function MarkTab() {
       <SegmentedStrip
         items={STEPS.filter(
           (s) => !(analysis?.paper_type === 'mcq' && s.id === '2'),
-        ).map((s) => ({
-          id: s.id,
-          label: Number(s.id) <= reached ? s.label : `${s.label}（未到）`,
-        }))}
+        )}
         value={String(step)}
+        // Greyed by how far the flow has got, not by where you are looking:
+        // paging back does not put the later steps out of reach again.
+        disabled={new Set(STEPS.slice(reached + 1).map((s) => s.id))}
         onChange={(v) => go(Number(v))}
       />
       <PushTrack step={step} dir={dir}>

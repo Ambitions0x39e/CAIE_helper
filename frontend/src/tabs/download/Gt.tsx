@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
-import type { GradeThreshold } from '../../lib/types'
+import type { DownloadSource, GradeThreshold } from '../../lib/types'
 import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
 import { sortGrades } from './columns'
@@ -14,7 +14,7 @@ function papersFor(syllabus: string, session: string, opt: GradeThreshold): stri
 
 type Doc = { syllabus_id: string; session: string; options: GradeThreshold[] }
 
-export function Gt() {
+export function Gt({ source }: { source: DownloadSource }) {
   const [session, setSession] = useState<Session | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,9 +62,11 @@ export function Gt() {
     setDownloadedPath(null)
     try {
       const a = await api()
-      const dl = await a.download_paper(gtPaperId(session))
+      // The threshold PDF itself only exists on CIEFrank; the papers an option
+      // pulls in are ordinary QPs and follow the tab's source.
+      const dl = await a.download_paper(gtPaperId(session), 'CIEFrank')
       if (!dl.success || !dl.qp_path) {
-        setError(`下载失败：${dl.error ?? '没有拿到文件路径'}`)
+        setError(`下载失败: ${dl.error ?? '没有拿到文件路径'}`)
         return
       }
       setDownloadedPath(dl.qp_path)
@@ -96,7 +98,7 @@ export function Gt() {
       const a = await api()
       for (const [i, paperId] of selectedPapers.entries()) {
         setProgress(`下载中 ${i + 1}/${selectedPapers.length} — ${paperId}`)
-        const dl = await a.download_paper(paperId)
+        const dl = await a.download_paper(paperId, source)
         if (!dl.success) failures.push(`${paperId}: ${dl.error}`)
       }
     } catch (err) {
@@ -117,13 +119,13 @@ export function Gt() {
       <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
         <SessionPicker onChange={setSession} />
         <Button tone="accent" onClick={lookUp} disabled={busy || !session}>
-          {busy ? '查询中…' : '查询分数线'}
+          查询分数线
         </Button>
       </div>
 
       {error && <Banner tone="bad" title={error} />}
       {downloadedPath && !error && (
-        <Banner tone="ok" title={`已下载：${gtPaperId(session!)}`} details={[`PDF → ${downloadedPath}`]} />
+        <Banner tone="ok" title={`已下载: ${gtPaperId(session!)}`} details={[`PDF → ${downloadedPath}`]} />
       )}
 
       {doc && (
@@ -131,7 +133,7 @@ export function Gt() {
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-caption text-muted">
               共 {doc.options.length} 个 option · 已勾选 {picked.size}
-              {selectedPapers.length > 0 && ` ，合计 ${selectedPapers.length} 份卷子（已去重）`}
+              {selectedPapers.length > 0 && `，合计 ${selectedPapers.length} 份卷子（已去重）`}
             </span>
             <Button
               tone="accent"
@@ -146,9 +148,14 @@ export function Gt() {
             <Button onClick={() => setPicked(new Set())}>清空</Button>
           </div>
 
-          <p className="text-micro text-faint">
-            卷号 = {prefix}&lt;卷子列的号&gt;。勾选 option 即选中它整套卷；
-            <span className="text-ok">绿色</span> ＝ 本地已有。
+          <div className="text-section font-bold">
+            {doc.syllabus_id} · {doc.session} — 共 {doc.options.length} 个 option
+          </div>
+
+          <p className="text-caption text-muted">
+            卷号 = {prefix}&lt;卷子列的号&gt;，例如 {prefix}
+            {doc.options[0].components[0]}。勾选 option 即选中它的整套卷子；
+            <span className="font-bold text-ok">绿色</span>＝本地已有。
           </p>
 
           {progress && <div className="text-caption text-muted">{progress}</div>}
