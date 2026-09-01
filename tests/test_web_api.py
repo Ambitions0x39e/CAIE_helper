@@ -133,3 +133,21 @@ def test_query_session_reports_a_bad_season_as_a_result(api: Api) -> None:
     assert out["success"] is False
     assert "考季" in out["error"]
     json.dumps(out)
+
+
+# -- settings never hand secrets back ----------------------------------------
+
+
+def test_mail_settings_omits_the_password(api: Api) -> None:
+    """The form field is write-only. Sending the stored password back would put
+    a live app password into the page's DOM for no functional gain — the user
+    re-types it to change it, and leaves it alone otherwise."""
+    out = api.mail_settings()
+    assert not any("password" in k.lower() for k in out)
+    assert "app_password" not in json.dumps(out).lower()
+
+
+def test_grader_settings_omits_the_api_key(api: Api) -> None:
+    out = api.grader_settings()
+    assert "api_key" not in out
+    assert "key" not in json.dumps(out).lower()
