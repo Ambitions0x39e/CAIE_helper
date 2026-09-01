@@ -1,44 +1,44 @@
 import { useEffect, useState } from 'react'
-import { PushTrack } from './PushTrack'
-import { TokenSheet } from './TokenSheet'
+import { BRIDGE_ABSENT, bridge } from './lib/bridge'
+import { DownloadTab } from './tabs/download'
+import { TokenSheet } from './dev/TokenSheet'
+import { PushTrack } from './ui/PushTrack'
 
-declare global {
-  interface Window {
-    pywebview?: { api: { ping(): Promise<string>; open_external(url: string): Promise<boolean> } }
-  }
-}
+const TABS = [
+  { id: 'download', label: '下载' },
+  { id: 'manage', label: '管理' },
+  { id: 'mark', label: '批改' },
+  { id: 'settings', label: '设置' },
+] as const
 
-/** Deliberately mismatched heights: the short step must pin to the top, not float. */
-const STEPS = [
-  { name: '选卷', rows: 9 },
-  { name: '批改', rows: 2 },
-  { name: '结果', rows: 5 },
-]
+type TabId = (typeof TABS)[number]['id']
 
-function StepBody({ name, rows }: { name: string; rows: number }) {
+function Pending({ label }: { label: string }) {
   return (
-    <div className="border border-hairline bg-panel rounded-md p-4">
-      <div className="text-sm font-medium mb-3">{name}</div>
-      <div className="space-y-2">
-        {Array.from({ length: rows }, (_, i) => (
-          <div key={i} className="h-5 rounded bg-hairline" style={{ width: `${95 - ((i * 13) % 40)}%` }} />
-        ))}
-      </div>
+    <div className="rounded-ui border border-hairline bg-panel p-6 text-caption text-muted">
+      {label} —— 还没搬。
     </div>
   )
 }
 
 export default function App() {
-  const [step, setStep] = useState(0)
+  const [tab, setTab] = useState<TabId>('download')
   const [dir, setDir] = useState(1)
-  const [pong, setPong] = useState('—')
+  const [connected, setConnected] = useState<boolean | null>(null)
   const [sheet, setSheet] = useState(false)
 
-  const go = (next: number) => {
-    if (next < 0 || next >= STEPS.length) return
-    setDir(next > step ? 1 : -1)
-    setStep(next)
+  const index = TABS.findIndex((t) => t.id === tab)
+
+  const go = (id: TabId) => {
+    setDir(TABS.findIndex((t) => t.id === id) > index ? 1 : -1)
+    setTab(id)
   }
+
+  // Resolved once at mount rather than per call: every tab loads on mount, and
+  // the bridge is either there for all of them or none.
+  useEffect(() => {
+    bridge().then((api) => setConnected(api !== null))
+  }, [])
 
   // F5 / Ctrl+R reload and Ctrl+F find are browser behaviours, not app ones.
   useEffect(() => {
@@ -52,70 +52,44 @@ export default function App() {
   }, [])
 
   return (
-    <div className="min-h-screen bg-page text-body text-ink p-6">
-      <div className={`mx-auto space-y-4 ${sheet ? 'max-w-6xl' : 'max-w-2xl'}`}>
-        <div className="flex items-center gap-2">
-          {STEPS.map((s, i) => (
-            <button
-              key={s.name}
-              onClick={() => go(i)}
-              className={`px-3 py-1.5 rounded-ui border border-hairline ${
-                i === step ? 'bg-panel font-medium' : 'bg-transparent text-muted'
-              }`}
-            >
-              {s.name}
-            </button>
-          ))}
-        </div>
+    <div className="flex min-h-screen bg-chrome text-body text-ink">
+      <nav className="flex w-28 shrink-0 flex-col gap-0.5 border-r border-hairline p-2">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => go(t.id)}
+            aria-current={t.id === tab}
+            className={`rounded-ui px-2.5 py-1.5 text-left transition-colors ${
+              t.id === tab ? 'bg-raised font-medium' : 'text-muted hover:text-ink'
+            }`}
+            style={{ transitionDuration: 'var(--dur-fast)' }}
+          >
+            {t.label}
+          </button>
+        ))}
+        <button
+          onClick={() => setSheet((v) => !v)}
+          className="mt-auto rounded-ui px-2.5 py-1.5 text-left text-micro text-faint hover:text-ink"
+        >
+          tokens
+        </button>
+      </nav>
+
+      <main className="min-w-0 flex-1 bg-page p-5">
+        {connected === false && (
+          <div className="mb-3 rounded-ui border border-hairline bg-panel px-3 py-2 text-caption text-warn">
+            {BRIDGE_ABSENT}
+          </div>
+        )}
 
         {sheet ? (
           <TokenSheet />
         ) : (
-          <PushTrack step={step} dir={dir}>
-            <StepBody {...STEPS[step]} />
+          <PushTrack step={index} dir={dir}>
+            {tab === 'download' ? <DownloadTab /> : <Pending label={TABS[index].label} />}
           </PushTrack>
         )}
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => go(step - 1)}
-            disabled={step === 0}
-            className="px-3 py-1.5 rounded-ui border border-hairline bg-panel disabled:opacity-40"
-          >
-            上一步
-          </button>
-          <button
-            onClick={() => go(step + 1)}
-            disabled={step === STEPS.length - 1}
-            className="px-3 py-1.5 rounded-ui border border-hairline bg-panel disabled:opacity-40"
-          >
-            下一步
-          </button>
-          <button
-            onClick={async () => setPong((await window.pywebview?.api.ping()) ?? 'no bridge')}
-            className="px-3 py-1.5 rounded-ui border border-hairline bg-panel"
-          >
-            ping
-          </button>
-          <span className="text-muted">js_api: {pong}</span>
-          <button
-            onClick={() => setSheet((v) => !v)}
-            className="px-3 py-1.5 rounded-ui border border-hairline bg-panel"
-          >
-            tokens
-          </button>
-          <button
-            onClick={() => window.pywebview?.api.open_external('https://github.com/Ambitions0x39e/CAIE_helper')}
-            className="ml-auto px-3 py-1.5 rounded-ui border border-hairline bg-panel"
-          >
-            外链
-          </button>
-        </div>
-
-        <p className="selectable text-muted">
-          这一段是正文，可以选中。上面的按钮和标签不行。
-        </p>
-      </div>
+      </main>
     </div>
   )
 }

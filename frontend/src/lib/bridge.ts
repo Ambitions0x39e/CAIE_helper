@@ -1,0 +1,82 @@
+/** The only place that touches `window.pywebview`.
+ *
+ * **`window.pywebview` existing does not mean the API is callable.** pywebview
+ * injects the object early with an empty `api`, fills it in via `_createApi`,
+ * and only then dispatches `pywebviewready` (see `webview/js/api.js` and
+ * `finish.js`). So `window.pywebview?.api.foo()` is not a guard — it passes and
+ * then throws on an undefined method. Anything running at mount has to wait for
+ * the event; probing for a known method is what tells the two states apart.
+ *
+ * The bridge is also legitimately absent: opening the Vite dev server in an
+ * ordinary browser to work on styling gets no injection at all. That degrades
+ * to `absent` rather than hanging, so the UI can still be looked at.
+ */
+import type {
+  DownloadResult,
+  QueryResult,
+  QuerySeason,
+  DownloadSource,
+  SyllabusConfig,
+} from './types'
+
+/** Mirrors the public methods of `app_web/api.py::Api`. */
+export interface PyApi {
+  ping(): Promise<string>
+  open_external(url: string): Promise<boolean>
+  syllabuses(): Promise<SyllabusConfig[]>
+  query_session(
+    subject: string, year: string, season: QuerySeason,
+  ): Promise<QueryResult>
+  download_paper(
+    paper_id: string, source?: DownloadSource, insert?: boolean,
+  ): Promise<DownloadResult>
+  record_paper(paper_id: string): Promise<DownloadResult>
+}
+
+declare global {
+  interface Window {
+    // Partial: the object arrives before its methods do.
+    pywebview?: { api: Partial<PyApi> }
+  }
+}
+
+/** Long enough to cover a slow injection, short enough to not look like a hang. */
+const READY_TIMEOUT_MS = 5000
+
+export const BRIDGE_ABSENT =
+  '没有连上 Python 端 —— 这个页面是在普通浏览器里打开的。数据相关的操作都不会有反应；要完整功能请用 uv run python -m app_web 开应用窗口。'
+
+function probe(): PyApi | null {
+  // A method, not the object: the object is there from the first frame.
+  return typeof window.pywebview?.api?.ping === 'function'
+    ? (window.pywebview.api as PyApi)
+    : null
+}
+
+let pending: Promise<PyApi | null> | null = null
+
+/** Resolves with the API once it is injected, or null if it never arrives. */
+export function bridge(): Promise<PyApi | null> {
+  pending ??= new Promise<PyApi | null>((resolve) => {
+    const found = probe()
+    if (found) {
+      resolve(found)
+      return
+    }
+    const settle = () => {
+      clearTimeout(timer)
+      window.removeEventListener('pywebviewready', settle)
+      resolve(probe())
+    }
+    const timer = setTimeout(settle, READY_TIMEOUT_MS)
+    window.addEventListener('pywebviewready', settle)
+  })
+  return pending
+}
+
+/** The API, or a thrown error naming why there isn't one. */
+export async function api(): Promise<PyApi> {
+  const found = await bridge()
+  if (!found) throw new Error(BRIDGE_ABSENT)
+  return found
+}
