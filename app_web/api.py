@@ -26,7 +26,7 @@ from pydantic import ValidationError
 
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
-from core.settings import MailConfig, app_settings
+from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
 from modules.mailer import GoodNotesMailer, MailRequest
@@ -38,12 +38,21 @@ from modules.marking.mistakes import (
     subject_id_of,
     to_csv,
 )
-from modules.marking.syllabus_parser import load_syllabus
+from modules.marking.syllabus_parser import (
+    delete_syllabus,
+    load_syllabus,
+    stored_syllabuses,
+    syllabus_path,
+)
 from modules.marking.workflow import topics_for_paper
+from modules.updater import AppUpdater, current_app_version
 
 #: What a failed call looks like. Mirrors DownloadResult/QueryResult so the
 #: frontend has exactly one shape to read.
 type Payload = dict[str, Any]
+
+#: Bailian's OpenAI-compatible endpoint — the default the form offers.
+_DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 def _invalid(exc: ValidationError) -> Payload:
@@ -94,6 +103,7 @@ class Api:
         self._downloader = PaperDownloader(self._store)
         self._manager = PaperManager(self._store)
         self._mistakes = MistakeStore()
+        self._updater = AppUpdater()
         # None when .env carries no SMTP credentials — a normal state, not an
         # error. The UI hides the GoodNotes affordance rather than failing it.
         self._mail = MailConfig.try_load()
@@ -262,6 +272,98 @@ class Api:
             return {"success": False, "error": str(exc)}
         saved = _save_to_chosen_file(data, "mistakes.pdf", ("PDF (*.pdf)",))
         return {**saved, "warnings": warnings}
+
+    # -- settings ------------------------------------------------------------
+
+    def mail_settings(self) -> Payload:
+        """Current SMTP config for the form. The password is never sent back —
+        a write-only field is the point of storing it as a SecretStr."""
+        c = self._mail
+        if c is None:
+            return {"configured": False}
+        return {
+            "configured": True,
+            "smtp_server": c.smtp_server or "",
+            "smtp_port": c.smtp_port,
+            "sender_email": str(c.sender_email),
+            "goodnotes_email": str(c.goodnotes_email),
+        }
+
+    def save_mail_settings(
+        self,
+        smtp_server: str,
+        smtp_port: int,
+        sender_email: str,
+        sender_app_password: str,
+        goodnotes_email: str,
+    ) -> Payload:
+        try:
+            config = MailConfig(
+                smtp_server=smtp_server,
+                smtp_port=int(smtp_port),
+                sender_email=sender_email,
+                sender_app_password=sender_app_password,
+                goodnotes_email=goodnotes_email,
+            )
+            config.save_to_env()
+        except ValidationError as exc:
+            return _invalid(exc)
+        except (OSError, ValueError) as exc:
+            return {"success": False, "error": f"保存失败：{exc}"}
+        self._mail = config
+        return {"success": True}
+
+    def grader_settings(self) -> Payload:
+        """Current grader config. Same rule: the key does not come back."""
+        c = GraderConfig.try_load()
+        if c is None:
+            return {"configured": False, "base_url": _DEFAULT_BASE_URL}
+        return {
+            "configured": True,
+            "base_url": c.base_url,
+            "model": c.model,
+            "dpi": c.dpi,
+            "enable_thinking": c.enable_thinking,
+        }
+
+    def save_grader_settings(
+        self, api_key: str, base_url: str, model: str,
+    ) -> Payload:
+        try:
+            config = GraderConfig(
+                api_key=api_key,
+                base_url=base_url or _DEFAULT_BASE_URL,
+                model=model or "qwen3.6-flash",
+            )
+            config.save_to_env()
+        except ValidationError as exc:
+            return _invalid(exc)
+        except OSError as exc:
+            return {"success": False, "error": f"保存失败：{exc}"}
+        return {"success": True}
+
+    def syllabuses_stored(self) -> list[Payload]:
+        """Parsed syllabuses on disk, with what each one covers."""
+        return [
+            {
+                "subject_id": s.subject_id,
+                "topic_count": len(s.topics),
+                "components": sorted(s.component_topics),
+                "path": str(syllabus_path(s.subject_id)),
+            }
+            for s in stored_syllabuses()
+        ]
+
+    def forget_syllabus(self, subject_id: str) -> Payload:
+        """Drop a stored syllabus. Re-parsing one costs a VL call, so this is
+        the only way back to that spend — it stays an explicit action."""
+        return {"success": delete_syllabus(subject_id)}
+
+    def app_version(self) -> str:
+        return current_app_version()
+
+    def check_update(self) -> Payload:
+        return self._updater.check().model_dump(mode="json")
 
     # -- grade thresholds ----------------------------------------------------
 

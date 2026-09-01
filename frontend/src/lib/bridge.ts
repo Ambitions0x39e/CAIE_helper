@@ -55,6 +55,40 @@ export interface PyApi {
   export_mistakes_pdf(
     paper_ids: string[], with_ms: boolean,
   ): Promise<SaveResult & { warnings?: string[] }>
+  mail_settings(): Promise<Record<string, never> | {
+    configured: boolean
+    smtp_server?: string
+    smtp_port?: number
+    sender_email?: string
+    goodnotes_email?: string
+  }>
+  save_mail_settings(
+    smtp_server: string, smtp_port: number, sender_email: string,
+    sender_app_password: string, goodnotes_email: string,
+  ): Promise<SimpleResult>
+  grader_settings(): Promise<{
+    configured: boolean
+    base_url?: string
+    model?: string
+    dpi?: number
+    enable_thinking?: boolean
+  }>
+  save_grader_settings(
+    api_key: string, base_url: string, model: string,
+  ): Promise<SimpleResult>
+  syllabuses_stored(): Promise<{
+    subject_id: string; topic_count: number; components: string[]; path: string
+  }[]>
+  forget_syllabus(subject_id: string): Promise<SimpleResult>
+  app_version(): Promise<string>
+  check_update(): Promise<{
+    success: boolean
+    error?: string | null
+    update_available?: boolean
+    latest_version?: string | null
+    release_notes?: string | null
+    download_url?: string | null
+  }>
   mail_ready(): Promise<boolean>
   send_to_goodnotes(paper_id: string, qp_path: string): Promise<MailResult>
 }
