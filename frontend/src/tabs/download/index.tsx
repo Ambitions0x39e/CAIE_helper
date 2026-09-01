@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { PushTrack } from '../../ui/PushTrack'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
+import { ById } from './ById'
 import { Placeholder } from './Placeholder'
 
 /** The tab's sub-views, in strip order. `index` is what PushTrack animates
@@ -30,7 +31,11 @@ export function DownloadTab() {
     <div className="space-y-3">
       <SegmentedStrip items={VIEWS} value={view} onChange={go} />
       <PushTrack step={index} dir={dir}>
-        <Placeholder title={current.label} from={current.from} lines={current.lines} />
+        {view === 'by_id' ? (
+          <ById />
+        ) : (
+          <Placeholder title={current.label} from={current.from} lines={current.lines} />
+        )}
       </PushTrack>
     </div>
   )

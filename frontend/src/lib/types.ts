@@ -30,7 +30,9 @@ export interface SyllabusConfig {
 
 export type QueryKind = 'qp' | 'gt' | 'other'
 export type QuerySeason = 'm' | 's' | 'w'
-export type DownloadSource = 'ciefrank' | 'papacambridge'
+/** Capitalised exactly as the Python Literal spells them — these strings go
+ * straight into DownloadRequest, which is strict. */
+export type DownloadSource = 'CIEFrank' | 'PapaCambridge'
 
 export interface QueryEntry {
   paper_id: string
@@ -57,6 +59,15 @@ export interface DownloadResult {
   /** Set when the insert should have been fetchable but wasn't. `success` stays
    * true — QP+MS are on disk — so this is a warning, not a failure. */
   insert_error: string | null
+}
+
+// -- modules.mailer ----------------------------------------------------------
+
+export interface MailResult {
+  success: boolean
+  paper_id: string
+  recipient: string | null
+  error: string | null
 }
 
 /** Every failed js_api call looks like this, including validation failures. */

@@ -23,8 +23,10 @@ from urllib.parse import urlparse
 from pydantic import ValidationError
 
 from core.config_store import ConfigStore
+from core.settings import MailConfig, app_settings
 from core.storage import CSVStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
+from modules.mailer import GoodNotesMailer, MailRequest
 
 #: What a failed call looks like. Mirrors DownloadResult/QueryResult so the
 #: frontend has exactly one shape to read.
@@ -51,9 +53,13 @@ class Api:
         # Built once and shared: CSVStore reads ~/.cie_helper/data.csv and
         # ConfigStore reads data/syllabus_config.json, and neither wants to be
         # re-read per call.
+        app_settings.init_dirs()
         self._store = CSVStore()
         self._config = ConfigStore()
         self._downloader = PaperDownloader(self._store)
+        # None when .env carries no SMTP credentials — a normal state, not an
+        # error. The UI hides the GoodNotes affordance rather than failing it.
+        self._mail = MailConfig.try_load()
 
     # -- health --------------------------------------------------------------
 
@@ -86,7 +92,7 @@ class Api:
         return result.model_dump(mode="json")
 
     def download_paper(
-        self, paper_id: str, source: str = "ciefrank", insert: bool = False,
+        self, paper_id: str, source: str = "CIEFrank", insert: bool = False,
     ) -> Payload:
         """Fetch a paper's QP and MS (and its insert when asked), then record it."""
         try:
@@ -100,3 +106,20 @@ class Api:
     def record_paper(self, paper_id: str) -> Payload:
         """Register a paper already sitting in the store without downloading."""
         return self._downloader.record_only(paper_id).model_dump(mode="json")
+
+    # -- GoodNotes -----------------------------------------------------------
+
+    def mail_ready(self) -> bool:
+        """Whether .env carries enough SMTP config to offer the send at all."""
+        return self._mail is not None
+
+    def send_to_goodnotes(self, paper_id: str, qp_path: str) -> Payload:
+        """Mail a downloaded QP to the GoodNotes import address."""
+        if self._mail is None:
+            return {"success": False, "error": "没有配置 SMTP，先在设置里填邮箱。"}
+        try:
+            request = MailRequest(paper_id=paper_id, qp_path=qp_path)
+        except ValidationError as exc:
+            return _invalid(exc)
+        mailer = GoodNotesMailer(config=self._mail, store=self._store)
+        return mailer.send(request).model_dump(mode="json")

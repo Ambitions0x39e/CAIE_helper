@@ -80,6 +80,32 @@ def test_a_bad_source_comes_back_the_same_way(api: Api) -> None:
     assert out["error"]
 
 
+def test_the_default_source_is_a_source_the_backend_accepts(
+    api: Api, monkeypatch,
+) -> None:
+    """The default has to survive DownloadRequest's strict Literal.
+
+    `DownloadSource` is spelled "CIEFrank"/"PapaCambridge"; a lower-cased
+    default validates fine in isolation and then rejects every real call.
+    Nothing else here would notice — the other failure tests pass a bad
+    paper_id, which fails first.
+    """
+    seen: list[str] = []
+    monkeypatch.setattr(
+        api._downloader, "download",
+        lambda request, **_: seen.append(request.source) or _ok(request.paper_id),
+    )
+    out = api.download_paper("9231_s22_qp_41")
+    assert out["success"] is True, out.get("error")
+    assert seen == ["CIEFrank"]
+
+
+def _ok(paper_id: str):
+    from modules.downloader import DownloadResult
+
+    return DownloadResult(success=True, paper_id=paper_id)
+
+
 def test_invalid_unwraps_the_validators_own_message() -> None:
     """Pydantic prefixes a custom validator's message with "Value error, ";
     the user should see the sentence the validator actually wrote."""
