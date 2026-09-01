@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { PushTrack } from '../../ui/PushTrack'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { ById } from './ById'
+import { Gt } from './Gt'
 import { Placeholder } from './Placeholder'
 
 /** The tab's sub-views, in strip order. `index` is what PushTrack animates
@@ -33,6 +34,8 @@ export function DownloadTab() {
       <PushTrack step={index} dir={dir}>
         {view === 'by_id' ? (
           <ById />
+        ) : view === 'gt' ? (
+          <Gt />
         ) : (
           <Placeholder title={current.label} from={current.from} lines={current.lines} />
         )}

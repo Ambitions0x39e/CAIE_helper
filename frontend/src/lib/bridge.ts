@@ -13,6 +13,7 @@
  */
 import type {
   DownloadResult,
+  GTResult,
   MailResult,
   QueryResult,
   QuerySeason,
@@ -32,6 +33,8 @@ export interface PyApi {
     paper_id: string, source?: DownloadSource, insert?: boolean,
   ): Promise<DownloadResult>
   record_paper(paper_id: string): Promise<DownloadResult>
+  downloaded_ids(): Promise<string[]>
+  parse_gt(pdf_path: string, session: string): Promise<GTResult>
   mail_ready(): Promise<boolean>
   send_to_goodnotes(paper_id: string, qp_path: string): Promise<MailResult>
 }

@@ -1,0 +1,238 @@
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '../../lib/bridge'
+import type { GradeThreshold } from '../../lib/types'
+import { Banner } from '../../ui/Banner'
+import { Button } from '../../ui/Button'
+import { SessionPicker } from './SessionPicker'
+import { type Session, gtPaperId, sessionCode } from './session'
+
+/** Two-digit components become full paper ids: 9701 + w25 + 14 → 9701_w25_qp_14. */
+function papersFor(syllabus: string, session: string, opt: GradeThreshold): string[] {
+  return opt.components.map((c) => `${syllabus}_${session}_qp_${c}`)
+}
+
+/** Plain sort puts "A" before "A*" — "A" is a prefix, so it compares shorter.
+ * CIE reads A* as the higher grade. Group by the letter with the star stripped
+ * and put the starred one first; the remaining letters (B/C/D/E/U) already run
+ * high-to-low alphabetically. */
+function sortGrades(grades: Iterable<string>): string[] {
+  return [...new Set(grades)].sort((a, b) => {
+    const base = a.replace(/\*/g, '').localeCompare(b.replace(/\*/g, ''))
+    if (base !== 0) return base
+    return Number(a.includes('*')) - Number(b.includes('*')) > 0 ? -1 : 1
+  })
+}
+
+type Doc = { syllabus_id: string; session: string; options: GradeThreshold[] }
+
+export function Gt() {
+  const [session, setSession] = useState<Session | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [doc, setDoc] = useState<Doc | null>(null)
+  const [downloadedPath, setDownloadedPath] = useState<string | null>(null)
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+  const [onDisk, setOnDisk] = useState<ReadonlySet<string>>(new Set())
+  const [progress, setProgress] = useState<string | null>(null)
+  const [errors, setErrors] = useState<string[]>([])
+
+  const refreshOnDisk = () =>
+    api()
+      .then((a) => a.downloaded_ids())
+      .then((ids) => setOnDisk(new Set(ids)))
+      .catch(() => setOnDisk(new Set()))
+
+  useEffect(() => {
+    refreshOnDisk()
+  }, [])
+
+  const grades = useMemo(
+    () => (doc ? sortGrades(doc.options.flatMap((o) => Object.keys(o.thresholds))) : []),
+    [doc],
+  )
+
+  /** Papers for every ticked option, de-duplicated — options share components. */
+  const selectedPapers = useMemo(() => {
+    if (!doc) return []
+    const out = new Set<string>()
+    for (const opt of doc.options) {
+      if (picked.has(opt.option)) {
+        for (const p of papersFor(doc.syllabus_id, doc.session, opt)) out.add(p)
+      }
+    }
+    return [...out]
+  }, [doc, picked])
+
+  const lookUp = async () => {
+    if (!session || busy) return
+    setBusy(true)
+    setDoc(null)
+    setPicked(new Set())
+    setErrors([])
+    setError(null)
+    setDownloadedPath(null)
+    try {
+      const a = await api()
+      const dl = await a.download_paper(gtPaperId(session))
+      if (!dl.success || !dl.qp_path) {
+        setError(`下载失败：${dl.error ?? '没有拿到文件路径'}`)
+        return
+      }
+      setDownloadedPath(dl.qp_path)
+      const parsed = await a.parse_gt(dl.qp_path, sessionCode(session))
+      if (!parsed.success) {
+        setError(parsed.error)
+        return
+      }
+      setDoc(parsed)
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggle = (option: string) => {
+    const next = new Set(picked)
+    if (!next.delete(option)) next.add(option)
+    setPicked(next)
+  }
+
+  const batchDownload = async () => {
+    if (busy || selectedPapers.length === 0) return
+    setBusy(true)
+    setErrors([])
+    const failures: string[] = []
+    try {
+      const a = await api()
+      for (const [i, paperId] of selectedPapers.entries()) {
+        setProgress(`下载中 ${i + 1}/${selectedPapers.length} — ${paperId}`)
+        const dl = await a.download_paper(paperId)
+        if (!dl.success) failures.push(`${paperId}: ${dl.error}`)
+      }
+    } catch (err) {
+      failures.push(String(err instanceof Error ? err.message : err))
+    } finally {
+      setProgress(null)
+      setBusy(false)
+      setPicked(new Set())
+      setErrors(failures)
+      refreshOnDisk()
+    }
+  }
+
+  const prefix = doc ? `${doc.syllabus_id}_${doc.session}_qp_` : ''
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
+        <SessionPicker onChange={setSession} />
+        <Button tone="accent" onClick={lookUp} disabled={busy || !session}>
+          {busy ? '查询中…' : '查询分数线'}
+        </Button>
+      </div>
+
+      {error && <Banner tone="bad" title={error} />}
+      {downloadedPath && !error && (
+        <Banner tone="ok" title={`已下载：${gtPaperId(session!)}`} details={[`PDF → ${downloadedPath}`]} />
+      )}
+
+      {doc && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-caption text-muted">
+              共 {doc.options.length} 个 option · 已勾选 {picked.size}
+              {selectedPapers.length > 0 && ` ，合计 ${selectedPapers.length} 份卷子（已去重）`}
+            </span>
+            <Button
+              tone="accent"
+              onClick={batchDownload}
+              disabled={busy || selectedPapers.length === 0}
+            >
+              批量下载
+            </Button>
+            <Button onClick={() => setPicked(new Set(doc.options.map((o) => o.option)))}>
+              全选
+            </Button>
+            <Button onClick={() => setPicked(new Set())}>清空</Button>
+          </div>
+
+          <p className="text-micro text-faint">
+            卷号 = {prefix}&lt;卷子列的号&gt;。勾选 option 即选中它整套卷；
+            <span className="text-ok">绿色</span> ＝ 本地已有。
+          </p>
+
+          {progress && <div className="text-caption text-muted">{progress}</div>}
+
+          <div className="overflow-x-auto rounded-ui border border-hairline bg-panel">
+            <table className="w-full border-collapse text-body">
+              <thead>
+                <tr className="border-b border-hairline text-caption text-muted">
+                  <th className="w-8 p-2" />
+                  <th className="p-2 text-left font-normal">Option</th>
+                  <th className="p-2 text-right font-normal">满分</th>
+                  {grades.map((g) => (
+                    <th key={g} className="p-2 text-right font-normal">
+                      {g}
+                    </th>
+                  ))}
+                  <th className="p-2 text-left font-normal">卷子</th>
+                </tr>
+              </thead>
+              <tbody>
+                {doc.options.map((opt) => {
+                  const papers = papersFor(doc.syllabus_id, doc.session, opt)
+                  return (
+                    <tr
+                      key={opt.option}
+                      onClick={() => toggle(opt.option)}
+                      className={`cursor-default border-b border-hairline last:border-0 ${
+                        picked.has(opt.option) ? 'bg-raised' : ''
+                      }`}
+                    >
+                      <td className="p-2">
+                        <input
+                          type="checkbox"
+                          checked={picked.has(opt.option)}
+                          onChange={() => toggle(opt.option)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
+                      <td className="p-2 tabular-nums">{opt.option}</td>
+                      <td className="p-2 text-right tabular-nums">{opt.max_weighted}</td>
+                      {grades.map((g) => (
+                        <td key={g} className="p-2 text-right tabular-nums">
+                          {opt.thresholds[g] ?? '–'}
+                        </td>
+                      ))}
+                      <td className="p-2">
+                        <span className="flex flex-wrap gap-1.5 tabular-nums">
+                          {opt.components.map((c, i) => (
+                            <span
+                              key={c}
+                              title={papers[i] + (onDisk.has(papers[i]) ? '（本地已有）' : '')}
+                              className={onDisk.has(papers[i]) ? 'font-medium text-ok' : ''}
+                            >
+                              {c}
+                            </span>
+                          ))}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {errors.slice(0, 5).map((e) => (
+            <Banner key={e} tone="bad" title={e} />
+          ))}
+          {errors.length > 5 && (
+            <Banner tone="bad" title={`还有 ${errors.length - 5} 个错误未显示`} />
+          )}
+        </>
+      )}
+    </div>
+  )
+}

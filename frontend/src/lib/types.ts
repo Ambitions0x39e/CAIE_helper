@@ -61,6 +61,22 @@ export interface DownloadResult {
   insert_error: string | null
 }
 
+// -- core.gt_parser ----------------------------------------------------------
+
+export interface GradeThreshold {
+  option: string
+  max_weighted: number
+  /** Two-digit component numbers, e.g. ["11", "21"] — not full paper ids. */
+  components: string[]
+  /** grade -> mark, e.g. { "A*": 180, A: 165 }. */
+  thresholds: Record<string, number>
+}
+
+/** `parse_gt` returns a GTDocument flattened next to a `success` flag. */
+export type GTResult =
+  | { success: true; syllabus_id: string; session: string; options: GradeThreshold[] }
+  | { success: false; error: string }
+
 // -- modules.mailer ----------------------------------------------------------
 
 export interface MailResult {

@@ -17,12 +17,14 @@ frontend only ever reads `success`.
 from __future__ import annotations
 
 import webbrowser
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
 from core.config_store import ConfigStore
+from core.gt_parser import GTParser
 from core.settings import MailConfig, app_settings
 from core.storage import CSVStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
@@ -106,6 +108,31 @@ class Api:
     def record_paper(self, paper_id: str) -> Payload:
         """Register a paper already sitting in the store without downloading."""
         return self._downloader.record_only(paper_id).model_dump(mode="json")
+
+    def downloaded_ids(self) -> list[str]:
+        """Paper ids already in the store, for marking what is on disk."""
+        try:
+            return [r.paper_id for r in self._store.load_all()]
+        except ValueError:
+            # A malformed row is the store's problem to report elsewhere; here
+            # it only means "cannot mark anything", which is not worth failing.
+            return []
+
+    # -- grade thresholds ----------------------------------------------------
+
+    def parse_gt(self, pdf_path: str, session: str) -> Payload:
+        """Read a downloaded grade-threshold PDF into its option rows.
+
+        Parsing is the one place in this file that catches broadly: `GTParser`
+        walks ruling lines and CID-decoded glyphs out of a third-party PDF, so
+        the failure modes are open-ended and every one of them is a message for
+        the user rather than a crash.
+        """
+        try:
+            doc = GTParser().parse(Path(pdf_path), session)
+        except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+            return {"success": False, "error": f"分数线解析失败：{exc}"}
+        return {"success": True, **doc.model_dump(mode="json")}
 
     # -- GoodNotes -----------------------------------------------------------
 
