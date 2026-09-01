@@ -52,7 +52,9 @@ export default function App() {
   }, [])
 
   return (
-    <div className="flex min-h-screen bg-chrome text-body text-ink">
+    // The nav is fixed and the main column scrolls on its own. A page-level
+    // scroll would carry the nav off the top — it is chrome, it stays put.
+    <div className="flex h-screen overflow-hidden bg-chrome text-body text-ink">
       <nav className="flex w-28 shrink-0 flex-col gap-0.5 border-r border-hairline p-2">
         {TABS.map((t) => (
           <button
@@ -75,7 +77,7 @@ export default function App() {
         </button>
       </nav>
 
-      <main className="min-w-0 flex-1 bg-page p-5">
+      <main className="min-w-0 flex-1 overflow-y-auto bg-page p-5">
         {connected === false && (
           <div className="mb-3 rounded-ui border border-hairline bg-panel px-3 py-2 text-caption text-warn">
             {BRIDGE_ABSENT}
