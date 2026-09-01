@@ -25,8 +25,12 @@ spikes/
 # Local release helper (personal workflow, not shipped)
 release.ps1
 
-# Personal notes
-dev/
+# Personal notes — the Obsidian vault at the repo root. Anchored: an
+# unanchored `dev/` matches a directory of that name at ANY depth, which
+# silently swallowed frontend/src/dev/ — and Tailwind skips gitignored files
+# when it scans for class names, so that directory's styles went missing from
+# the build with nothing reporting an error.
+/dev/
 
 # Dev Files
 BLOCKED.md
