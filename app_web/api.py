@@ -16,16 +16,21 @@ frontend only ever reads `success`.
 """
 from __future__ import annotations
 
+import datetime
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import webview
 from pydantic import ValidationError
 
+from app_web.jobs import current, push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
+from core.models import PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
@@ -34,18 +39,36 @@ from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
 from modules.marking.mistake_pdf import build_export
 from modules.marking.mistakes import (
     distinct_topic_keys,
+    mistakes_from_results,
     retag,
     subject_id_of,
     to_csv,
 )
+from modules.marking.ms_parser import (
+    PaperConfig,
+    ms_cache_exists,
+    parse_mark_scheme,
+    resolve_ms_start_page,
+)
+from modules.marking.page_segmenter import ScannedDocument, match_scanned, scan_document
+from modules.marking.renderer import LocalRenderer
 from modules.marking.syllabus_parser import (
     delete_syllabus,
     load_syllabus,
     stored_syllabuses,
     syllabus_path,
 )
-from modules.marking.workflow import topics_for_paper
+from modules.marking.workflow import (
+    collect_page_assignments,
+    grade_paper,
+    regions_to_page_map,
+    summarise_scores,
+    topics_for_paper,
+)
 from modules.updater import AppUpdater, current_app_version
+
+if TYPE_CHECKING:
+    from modules.marking.renderer import NativeRenderer
 
 #: What a failed call looks like. Mirrors DownloadResult/QueryResult so the
 #: frontend has exactly one shape to read.
@@ -53,6 +76,20 @@ type Payload = dict[str, Any]
 
 #: Bailian's OpenAI-compatible endpoint — the default the form offers.
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+@dataclass
+class _Analysis:
+    """What one 解析 produced, held between the Mark tab's steps.
+
+    Server-side rather than in the page: the parse costs a vision-model call,
+    so a reload must not throw it away.
+    """
+
+    config: PaperConfig
+    doc: ScannedDocument | None
+    paper_type: PaperType
+    answer_path: str | None
 
 
 def _invalid(exc: ValidationError) -> Payload:
@@ -107,6 +144,8 @@ class Api:
         # None when .env carries no SMTP credentials — a normal state, not an
         # error. The UI hides the GoodNotes affordance rather than failing it.
         self._mail = MailConfig.try_load()
+        self._analysis: _Analysis | None = None
+        self._results: list[Any] = []
 
     # -- health --------------------------------------------------------------
 
@@ -272,6 +311,209 @@ class Api:
             return {"success": False, "error": str(exc)}
         saved = _save_to_chosen_file(data, "mistakes.pdf", ("PDF (*.pdf)",))
         return {**saved, "warnings": warnings}
+
+    # -- mark ----------------------------------------------------------------
+
+    def pick_pdf(self, title: str = "选择 PDF") -> str | None:
+        """Host file dialog. Returns the chosen path, or None if cancelled."""
+        window = webview.active_window()
+        if window is None:
+            return None
+        chosen = window.create_file_dialog(
+            webview.FileDialog.OPEN, file_types=(f"{title} (*.pdf)",),
+        )
+        if not chosen:
+            return None
+        return chosen if isinstance(chosen, str) else chosen[0]
+
+    def start_analysis(
+        self,
+        ms_path: str,
+        paper_type: str,
+        answer_path: str | None = None,
+        start_page: int | None = None,
+        force: bool = False,
+    ) -> Payload:
+        """Parse the mark scheme and scan the answer paper, concurrently.
+
+        The two are independent — `scan_document` needs only the PDF, since
+        question ids first matter in `match_scanned` — so the answer scan runs
+        while the (slower) parse is still going, and reports the moment it
+        lands rather than waiting for the parse.
+        """
+        pt = PaperType(paper_type)
+
+        def work() -> None:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                ms_future = pool.submit(
+                    self._parse_ms, ms_path, pt, start_page, force,
+                )
+                scan_future = (
+                    pool.submit(scan_document, answer_path)
+                    if answer_path
+                    else None
+                )
+                if scan_future is not None:
+                    scan_future.add_done_callback(
+                        lambda f: push({
+                            "type": "scan",
+                            "ok": f.exception() is None,
+                            "error": str(f.exception() or ""),
+                        })
+                    )
+                config = ms_future.result()
+                doc = scan_future.result() if scan_future is not None else None
+
+            self._analysis = _Analysis(config, doc, pt, answer_path)
+            push({"type": "analysis", **self._analysis_payload()})
+
+        return start("解析", work)
+
+    def _parse_ms(
+        self, ms_path: str, pt: PaperType, start_page: int | None, force: bool,
+    ) -> PaperConfig:
+        resolved = (
+            resolve_ms_start_page(ms_path, start_page)
+            if pt is PaperType.MATH
+            else None
+        )
+        from_cache = not force and ms_cache_exists(ms_path, pt, resolved)
+        push({"type": "ms_cache", "cached": from_cache})
+        return parse_mark_scheme(
+            ms_path,
+            paper_type=pt,
+            grader_config=GraderConfig.try_load(),
+            start_page=resolved,
+            on_progress=lambda batch, total: push(
+                {"type": "ms_progress", "batch": batch, "total": total},
+            ),
+            # ms_parser annotates this parameter as the concrete
+            # NativeRenderer, but only calls render_pages on it — the
+            # Renderer protocol's shape, which LocalRenderer satisfies.
+            # Widening that annotation means editing modules/, which this
+            # migration does not do; the cast goes away in M5 when
+            # NativeRenderer does.
+            renderer=cast("NativeRenderer", LocalRenderer()),
+            force=force,
+        )
+
+    def _analysis_payload(self) -> Payload:
+        a = self._analysis
+        if a is None:
+            return {"ready": False}
+        regions, report = (
+            match_scanned(a.doc, list(a.config.questions.keys()))
+            if a.doc is not None
+            else ([], None)
+        )
+        clips = {r.question_id: [c.model_dump() for c in r.clips] for r in regions}
+        return {
+            "ready": True,
+            "paper_type": a.paper_type.value,
+            "paper_id": a.config.paper_id,
+            "total_marks": a.config.total_marks,
+            "questions": {
+                qid: {"max_marks": q.max_marks, "mark_scheme": q.mark_scheme}
+                for qid, q in a.config.questions.items()
+            },
+            "answer_path": a.answer_path,
+            "matched": report.matched if report else [],
+            "unmatched": report.unmatched if report else list(a.config.questions),
+            "clips": clips,
+        }
+
+    def analysis(self) -> Payload:
+        """The current analysis, so a reload does not lose it."""
+        return self._analysis_payload()
+
+    def start_grading(self, question_ids: list[str]) -> Payload:
+        """Grade the listed questions, pushing each result as it lands."""
+        a = self._analysis
+        if a is None:
+            return {"success": False, "error": "还没有解析结果"}
+        if not a.answer_path:
+            return {"success": False, "error": "还没有选择答卷 PDF"}
+        config = GraderConfig.try_load()
+        if config is None:
+            return {
+                "success": False,
+                "error": "还没有配置 Grader API，先去【设置】填。",
+            }
+
+        answer_path = a.answer_path
+        regions, _ = (
+            match_scanned(a.doc, list(a.config.questions.keys()))
+            if a.doc is not None
+            else ([], None)
+        )
+        page_map, clips = regions_to_page_map(regions)
+        assignments = collect_page_assignments(page_map)
+
+        def work() -> None:
+            outcome = grade_paper(
+                config=config,
+                paper_config=a.config,
+                paper_type=a.paper_type,
+                pdf_source=answer_path,
+                question_ids=question_ids,
+                assignments=assignments,
+                clips=clips,
+                renderer=LocalRenderer(),
+                syllabus_info=load_syllabus(subject_id_of(a.config.paper_id)),
+                paper_id=a.config.paper_id,
+                on_progress=lambda done, total, qid: push(
+                    {"type": "progress", "done": done, "total": total, "question": qid},
+                ),
+                on_result=lambda r: push(
+                    {"type": "result", "result": r.model_dump(mode="json")},
+                ),
+            )
+            self._results = outcome.results
+            push({
+                "type": "graded",
+                "results": [r.model_dump(mode="json") for r in outcome.results],
+                "failures": [
+                    {"question": f.question, "error": f.error}
+                    for f in outcome.failures
+                ],
+            })
+
+        return start("批改", work)
+
+    def job_running(self) -> str | None:
+        return current()
+
+    def confirm_results(
+        self, paper_id: str, overrides: dict[str, float] | None = None,
+    ) -> Payload:
+        """Write the graded scores to the paper's row and file its lost marks.
+
+        The mistake rows are appended, never replaced: re-grading a paper adds
+        a second set rather than editing the first, which is what makes the
+        错题本 a history instead of a snapshot.
+        """
+        if not self._results:
+            return {"success": False, "error": "没有可确认的批改结果"}
+        a = self._analysis
+        summary = summarise_scores(self._results, overrides or {})
+        update = self.submit_score(paper_id, summary.score, summary.max_score)
+        if not update.get("success"):
+            return update
+        self._mistakes.append_many(
+            mistakes_from_results(
+                self._results,
+                paper_id=paper_id,
+                topics=self.topics_for(paper_id),
+                timestamp=datetime.datetime.now(datetime.UTC),
+            ),
+        )
+        self._results = []
+        self._analysis = a
+        return {
+            "success": True,
+            "score": summary.score,
+            "max_score": summary.max_score,
+        }
 
     # -- settings ------------------------------------------------------------
 
