@@ -36,6 +36,10 @@ from core.storage import CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
+from modules.marking.mcq_parser import (
+    detect_student_answers,
+    score_mcq_answers,
+)
 from modules.marking.mistake_pdf import build_export
 from modules.marking.mistakes import (
     distinct_topic_keys,
@@ -61,6 +65,7 @@ from modules.marking.syllabus_parser import (
 from modules.marking.workflow import (
     collect_page_assignments,
     grade_paper,
+    merge_mcq_answers,
     regions_to_page_map,
     summarise_scores,
     topics_for_paper,
@@ -146,6 +151,10 @@ class Api:
         self._mail = MailConfig.try_load()
         self._analysis: _Analysis | None = None
         self._results: list[Any] = []
+        #: Letters the VL read off the annotated QP, before any manual
+        #: overlay. Kept apart from the manual boxes so re-scoring does
+        #: not need another detection pass.
+        self._mcq_detected: dict[str, str] = {}
 
     # -- health --------------------------------------------------------------
 
@@ -482,6 +491,85 @@ class Api:
 
     def job_running(self) -> str | None:
         return current()
+
+    # -- mark: MCQ -----------------------------------------------------------
+
+    def start_mcq_detection(self, qp_path: str, source_filename: str = "") -> Payload:
+        """Read the student's ticked letters off an annotated MCQ question paper.
+
+        `source_filename` matters when it differs from `qp_path`: the per-subject
+        skip-pages lookup keys off the original name, and a GoodNotes export
+        often arrives as a temp file with a random one.
+        """
+        a = self._analysis
+        if a is None:
+            return {"success": False, "error": "还没有解析答案键"}
+        config = GraderConfig.try_load()
+        if config is None:
+            return {
+                "success": False,
+                "error": "还没有配置 Grader API，先去【设置】填。",
+            }
+
+        def work() -> None:
+            detected, undetected = detect_student_answers(
+                qp_path,
+                a.config,
+                config,
+                renderer=cast("NativeRenderer", LocalRenderer()),
+                dpi=config.dpi,
+                on_progress=lambda batch, total: push(
+                    {"type": "mcq_progress", "batch": batch, "total": total},
+                ),
+                source_filename=source_filename or None,
+            )
+            self._mcq_detected = detected
+            push({
+                "type": "mcq_detected",
+                "detected": detected,
+                "undetected": undetected,
+                "answer_key": {
+                    qid: q.mark_scheme for qid, q in a.config.questions.items()
+                },
+            })
+
+        return start("识别答案", work)
+
+    def score_mcq(self, manual: dict[str, str] | None = None) -> Payload:
+        """Score the detected answers, with hand-typed ones laid over them.
+
+        `merge_mcq_answers` drops anything that is not a single A–D letter, so
+        a half-typed box cannot silently overwrite a detected answer.
+        """
+        a = self._analysis
+        if a is None:
+            return {"success": False, "error": "还没有解析答案键"}
+        merged = merge_mcq_answers(self._mcq_detected, manual or {})
+        score, total, per_question = score_mcq_answers(a.config, merged)
+        return {
+            "success": True,
+            "score": score,
+            "total": total,
+            "per_question": per_question,
+            "answers": merged,
+        }
+
+    def confirm_mcq(
+        self, paper_id: str, manual: dict[str, str] | None = None,
+    ) -> Payload:
+        """Record an MCQ paper's score. No mistake rows: a wrong tick carries no
+        mark scheme to explain it, so there is nothing to file under a topic."""
+        scored = self.score_mcq(manual)
+        if not scored.get("success"):
+            return scored
+        update = self.submit_score(paper_id, scored["score"], scored["total"])
+        if not update.get("success"):
+            return update
+        return {
+            "success": True,
+            "score": scored["score"],
+            "total": scored["total"],
+        }
 
     def confirm_results(
         self, paper_id: str, overrides: dict[str, float] | None = None,

@@ -10,6 +10,13 @@ export type JobEvent =
   | { type: 'ms_progress'; batch: number; total: number }
   | { type: 'scan'; ok: boolean; error: string }
   | { type: 'analysis'; [k: string]: unknown }
+  | { type: 'mcq_progress'; batch: number; total: number }
+  | {
+      type: 'mcq_detected'
+      detected: Record<string, string>
+      undetected: string[]
+      answer_key: Record<string, string>
+    }
   | { type: 'progress'; done: number; total: number; question: string }
   | { type: 'result'; result: Record<string, unknown> }
   | { type: 'graded'; results: unknown[]; failures: { question: string; error: string }[] }

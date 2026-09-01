@@ -3,6 +3,7 @@ import { api } from '../../lib/bridge'
 import { PushTrack } from '../../ui/PushTrack'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { GradeStep } from './GradeStep'
+import { McqStep } from './McqStep'
 import { ResultsStep } from './ResultsStep'
 import { SetupStep } from './SetupStep'
 import type { Analysis, QuestionResult } from './types'
@@ -60,7 +61,9 @@ export function MarkTab() {
   return (
     <div className="space-y-3">
       <SegmentedStrip
-        items={STEPS.map((s) => ({
+        items={STEPS.filter(
+          (s) => !(analysis?.paper_type === 'mcq' && s.id === '2'),
+        ).map((s) => ({
           id: s.id,
           label: Number(s.id) <= reached ? s.label : `${s.label}（未到）`,
         }))}
@@ -70,6 +73,10 @@ export function MarkTab() {
       <PushTrack step={step} dir={dir}>
         {step === 0 ? (
           <SetupStep onAnalysed={onAnalysed} />
+        ) : step === 1 && analysis?.paper_type === 'mcq' ? (
+          // MCQ detects and scores in one place — there is no per-question
+          // mark scheme to review afterwards, so it has no third step.
+          <McqStep analysis={analysis} />
         ) : step === 1 && analysis ? (
           <GradeStep
             analysis={analysis}

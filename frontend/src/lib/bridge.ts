@@ -96,6 +96,20 @@ export interface PyApi {
   ): Promise<SimpleResult>
   analysis(): Promise<{ ready: boolean; [k: string]: unknown }>
   start_grading(question_ids: string[]): Promise<SimpleResult>
+  start_mcq_detection(
+    qp_path: string, source_filename?: string,
+  ): Promise<SimpleResult>
+  score_mcq(manual: Record<string, string>): Promise<
+    SimpleResult & {
+      score: number
+      total: number
+      per_question: Record<string, boolean>
+      answers: Record<string, string>
+    }
+  >
+  confirm_mcq(
+    paper_id: string, manual: Record<string, string>,
+  ): Promise<SimpleResult & { score?: number; total?: number }>
   job_running(): Promise<string | null>
   confirm_results(
     paper_id: string, overrides: Record<string, number>,
