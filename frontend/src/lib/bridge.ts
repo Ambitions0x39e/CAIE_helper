@@ -89,6 +89,17 @@ export interface PyApi {
     release_notes?: string | null
     download_url?: string | null
   }>
+  pick_pdf(title?: string): Promise<string | null>
+  start_analysis(
+    ms_path: string, paper_type: string, answer_path: string | null,
+    start_page: number | null, force: boolean,
+  ): Promise<SimpleResult>
+  analysis(): Promise<{ ready: boolean; [k: string]: unknown }>
+  start_grading(question_ids: string[]): Promise<SimpleResult>
+  job_running(): Promise<string | null>
+  confirm_results(
+    paper_id: string, overrides: Record<string, number>,
+  ): Promise<SimpleResult & { score?: number; max_score?: number }>
   mail_ready(): Promise<boolean>
   send_to_goodnotes(paper_id: string, qp_path: string): Promise<MailResult>
 }

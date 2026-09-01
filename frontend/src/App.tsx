@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BRIDGE_ABSENT, bridge } from './lib/bridge'
 import { DownloadTab } from './tabs/download'
 import { ManageTab } from './tabs/manage'
+import { MarkTab } from './tabs/mark'
 import { SettingsTab } from './tabs/settings'
 import { TokenSheet } from './dev/TokenSheet'
 import { PushTrack } from './ui/PushTrack'
@@ -94,6 +95,8 @@ export default function App() {
               <DownloadTab />
             ) : tab === 'manage' ? (
               <ManageTab />
+            ) : tab === 'mark' ? (
+              <MarkTab />
             ) : tab === 'settings' ? (
               <SettingsTab />
             ) : (
