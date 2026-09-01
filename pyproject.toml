@@ -193,4 +193,9 @@ dev = [
     "flet-desktop>=0.86.4,<0.87",
     # Segmenter fidelity check compares pdfminer against pdfplumber.
     "pdfplumber>=0.11.0",
+    # v2 host. It stays in the dev group while `flet build` is still the
+    # packager: that command pip-installs [project.dependencies] fresh into the
+    # bundle, so anything listed there ships inside the Flet app. pywebview
+    # moves up to a runtime dependency when PyInstaller takes over.
+    "pywebview>=6.2,<7",
 ]
