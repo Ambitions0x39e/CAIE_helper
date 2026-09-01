@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BRIDGE_ABSENT, bridge } from './lib/bridge'
 import { DownloadTab } from './tabs/download'
+import { ManageTab } from './tabs/manage'
 import { TokenSheet } from './dev/TokenSheet'
 import { PushTrack } from './ui/PushTrack'
 
@@ -88,7 +89,13 @@ export default function App() {
           <TokenSheet />
         ) : (
           <PushTrack step={index} dir={dir}>
-            {tab === 'download' ? <DownloadTab /> : <Pending label={TABS[index].label} />}
+            {tab === 'download' ? (
+              <DownloadTab />
+            ) : tab === 'manage' ? (
+              <ManageTab />
+            ) : (
+              <Pending label={TABS[index].label} />
+            )}
           </PushTrack>
         )}
       </main>
