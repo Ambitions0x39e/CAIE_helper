@@ -6,6 +6,7 @@ import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
 import { Glyph } from '../../ui/Glyph'
+import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 
 const LAYOUTS = [
@@ -116,6 +117,9 @@ export function Organize({
       danger: true,
       run: () => {
         setAlsoFiles(false)
+        // The confirm sits in the list behind the detail panel, so the panel
+        // has to step aside or the question is asked where nobody can see it.
+        setSelected(null)
         setDeleting(p.paper_id)
       },
     })
@@ -190,9 +194,16 @@ export function Organize({
         />
       )}
 
-      {layout === 'detail' && current && (
-        <ScorePanel paper={current} onAct={call} onClose={() => setSelected(null)} />
-      )}
+      <Overlay open={current !== null} onClose={() => setSelected(null)}>
+        {current && (
+          <PaperDetail
+            paper={current}
+            actions={actionsOf(current)}
+            onAct={call}
+            onClose={() => setSelected(null)}
+          />
+        )}
+      </Overlay>
     </div>
   )
 }
@@ -275,13 +286,12 @@ function DetailList({
       <table className="w-full border-collapse text-body">
         <thead>
           <tr className="border-b border-hairline bg-raised text-caption font-semibold text-muted">
-            <th className="w-8 p-2" />
-            <th className="p-2 text-left font-semibold">Paper ID</th>
-            <th className="p-2 text-left font-semibold">状态</th>
-            <th className="p-2 text-left font-semibold">分数</th>
-            <th className="p-2 text-left font-semibold">%</th>
-            <th className="p-2 text-left font-semibold">时间</th>
-            <th className="p-2 text-right font-semibold">操作</th>
+            <th className="px-3 py-1.5 text-left font-semibold">Paper ID</th>
+            <th className="px-3 py-1.5 text-left font-semibold">状态</th>
+            <th className="px-3 py-1.5 text-left font-semibold">分数</th>
+            <th className="px-3 py-1.5 text-left font-semibold">%</th>
+            <th className="px-3 py-1.5 text-left font-semibold">时间</th>
+            <th className="px-3 py-1.5 text-right font-semibold">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -294,28 +304,22 @@ function DetailList({
                 className={`cursor-default border-b border-hairline last:border-0
                             ${selected === p.paper_id ? 'bg-raised' : ''}`}
               >
-                <td className="p-2">
-                  <FileText
-                    className={`size-4.5 ${done ? 'text-ok' : 'text-muted'}`}
-                    aria-hidden
-                  />
-                </td>
-                <td className="p-2 tabular-nums">{p.paper_id}</td>
-                <td className={`p-2 text-caption ${done ? '' : 'text-muted'}`}>
+                <td className="px-3 py-1 tabular-nums">{p.paper_id}</td>
+                <td className={`px-3 py-1 text-caption ${done ? '' : 'text-muted'}`}>
                   {done ? '已完成' : '待完成'}
                 </td>
-                <td className="p-2 tabular-nums">
+                <td className="px-3 py-1 tabular-nums">
                   {p.score_raw === null || p.score_total === null
                     ? '—'
                     : `${p.score_raw}/${p.score_total}`}
                 </td>
-                <td className="p-2 tabular-nums">
+                <td className="px-3 py-1 tabular-nums">
                   {p.percentage === null ? '—' : `${p.percentage.toFixed(1)}%`}
                 </td>
-                <td className="p-2 text-caption text-muted tabular-nums">
+                <td className="px-3 py-1 text-caption text-muted tabular-nums">
                   {p.timestamp ? p.timestamp.slice(0, 16).replace('T', ' ') : ''}
                 </td>
-                <td className="p-2">
+                <td className="px-3 py-1">
                   <div className="flex justify-end">
                     {actionsOf(p).map((a) => (
                       <button
@@ -325,7 +329,7 @@ function DetailList({
                           e.stopPropagation()
                           a.run()
                         }}
-                        className={`flex size-9 items-center justify-center rounded-ui
+                        className={`flex size-7 items-center justify-center rounded-ui
                                     hover:bg-raised ${a.danger ? 'text-bad' : 'text-accent'}`}
                       >
                         <a.Icon className="size-4" aria-hidden />
@@ -342,61 +346,102 @@ function DetailList({
   )
 }
 
-/** Score entry for the picked row. The four actions live on the row itself, so
- * this panel carries only what a row has no room for. */
-function ScorePanel({
+/** One paper, filling the content area: what is on record, what can be done
+ * with it, and the score form a row has no room for. */
+function PaperDetail({
   paper,
+  actions,
   onAct,
   onClose,
 }: {
   paper: PaperRecord
+  actions: Action[]
   onAct: Act
   onClose: () => void
 }) {
   const [raw, setRaw] = useState(paper.score_raw?.toString() ?? '')
   const [total, setTotal] = useState(paper.score_total?.toString() ?? '')
+  const done = paper.status === 'Completed'
+
+  const facts: [string, string][] = [
+    ['状态', done ? '已完成' : '待完成'],
+    [
+      '分数',
+      paper.score_raw === null || paper.score_total === null
+        ? '—'
+        : `${paper.score_raw}/${paper.score_total}`,
+    ],
+    ['%', paper.percentage === null ? '—' : `${paper.percentage.toFixed(1)}%`],
+    ['时间', paper.timestamp ? paper.timestamp.slice(0, 16).replace('T', ' ') : '—'],
+    ['GoodNotes', paper.sent_to_gn ? '已发送' : '未发送'],
+    ['QP', paper.qp_path || '—'],
+    ['MS', paper.ms_path || '—'],
+  ]
 
   return (
-    <div
-      className="flex flex-wrap items-end gap-2 rounded-ui border border-hairline bg-raised p-4"
-      style={{ boxShadow: 'var(--shadow-popover)' }}
-    >
-      <span className="text-subhead font-medium tabular-nums">{paper.paper_id}</span>
-      <label className="text-caption text-muted">
-        得分
-        <input
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          inputMode="decimal"
-          className="ml-2 w-20 rounded-ui border border-hairline bg-panel px-2 py-1 text-body text-ink"
-          style={{ cursor: 'text', userSelect: 'text' }}
-        />
-      </label>
-      <label className="text-caption text-muted">
-        满分
-        <input
-          value={total}
-          onChange={(e) => setTotal(e.target.value)}
-          inputMode="decimal"
-          className="ml-2 w-20 rounded-ui border border-hairline bg-panel px-2 py-1 text-body text-ink"
-          style={{ cursor: 'text', userSelect: 'text' }}
-        />
-      </label>
-      <Button
-        tone="accent"
-        disabled={!raw || !total}
-        onClick={() =>
-          onAct(
-            (a) => a.submit_score(paper.paper_id, Number(raw), Number(total)),
-            '分数已记录',
-          )
-        }
-      >
-        提交分数
-      </Button>
-      <button onClick={onClose} className="ml-auto text-caption text-muted hover:text-ink">
-        关闭
-      </button>
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button onClick={onClose} className="text-caption text-muted hover:text-ink">
+          返回
+        </button>
+        <span className="text-section font-bold tabular-nums">{paper.paper_id}</span>
+        <div className="ml-auto flex gap-2">
+          {actions.map((a) => (
+            <Button key={a.key} onClick={a.run} className={a.danger ? 'text-bad' : ''}>
+              {a.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-ui border border-hairline bg-panel">
+        {facts.map(([label, value], i) => (
+          <div
+            key={label}
+            className={`flex items-baseline gap-4 px-3 py-1.5 ${
+              i > 0 ? 'border-t border-hairline' : ''
+            }`}
+          >
+            <span className="w-24 shrink-0 text-caption text-muted">{label}</span>
+            <span className="selectable min-w-0 break-all tabular-nums">{value}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-caption text-muted">
+          得分
+          <input
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            inputMode="decimal"
+            className="ml-2 w-20 rounded-ui border border-hairline bg-panel px-2 py-1 text-body text-ink"
+            style={{ cursor: 'text', userSelect: 'text' }}
+          />
+        </label>
+        <label className="text-caption text-muted">
+          满分
+          <input
+            value={total}
+            onChange={(e) => setTotal(e.target.value)}
+            inputMode="decimal"
+            className="ml-2 w-20 rounded-ui border border-hairline bg-panel px-2 py-1 text-body text-ink"
+            style={{ cursor: 'text', userSelect: 'text' }}
+          />
+        </label>
+        <Button
+          tone="accent"
+          disabled={!raw || !total}
+          onClick={() =>
+            onAct(
+              (a) => a.submit_score(paper.paper_id, Number(raw), Number(total)),
+              '分数已记录',
+            )
+          }
+        >
+          提交分数
+        </Button>
+      </div>
     </div>
   )
 }

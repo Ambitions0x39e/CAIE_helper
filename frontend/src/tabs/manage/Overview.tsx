@@ -3,6 +3,7 @@ import { subjectGlyph, syllabusIdOf, tally } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { Donut } from '../../ui/Donut'
 import { Glyph } from '../../ui/Glyph'
+import { Overlay } from '../../ui/Overlay'
 import { TrendChart } from './TrendChart'
 
 /** A paper's marks over time need at least two points to be a line. */
@@ -148,14 +149,16 @@ export function Overview({
         })}
       </div>
 
-      {detail && (
-        <SyllabusDetail
-          syllabusId={detail[0]}
-          name={names.get(detail[0]) ?? detail[0]}
-          records={detail[1]}
-          onClose={() => setOpen(null)}
-        />
-      )}
+      <Overlay open={detail !== null} onClose={() => setOpen(null)}>
+        {detail && (
+          <SyllabusDetail
+            syllabusId={detail[0]}
+            name={names.get(detail[0]) ?? detail[0]}
+            records={detail[1]}
+            onClose={() => setOpen(null)}
+          />
+        )}
+      </Overlay>
     </div>
   )
 }
@@ -186,8 +189,7 @@ function SyllabusDetail({
   )
 
   return (
-    <div className="rounded-ui border border-hairline bg-raised p-4 space-y-3"
-         style={{ boxShadow: 'var(--shadow-popover)' }}>
+    <div className="space-y-3">
       <div className="flex items-center gap-3">
         <button onClick={onClose} className="text-caption text-muted hover:text-ink">
           返回
