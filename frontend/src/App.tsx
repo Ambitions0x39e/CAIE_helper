@@ -5,7 +5,7 @@ import { DownloadTab } from './tabs/download'
 import { ManageTab } from './tabs/manage'
 import { MarkTab } from './tabs/mark'
 import { SettingsTab } from './tabs/settings'
-import { TokenSheet } from './dev/TokenSheet'
+import { OVERLAY_ROOT } from './ui/Overlay'
 import { PushTrack } from './ui/PushTrack'
 
 const TABS = [
@@ -29,7 +29,6 @@ export default function App() {
   const [tab, setTab] = useState<TabId>('download')
   const [dir, setDir] = useState(1)
   const [connected, setConnected] = useState<boolean | null>(null)
-  const [sheet, setSheet] = useState(false)
 
   const index = TABS.findIndex((t) => t.id === tab)
 
@@ -80,24 +79,20 @@ export default function App() {
             <span className="text-caption">{t.label}</span>
           </button>
         ))}
-        <button
-          onClick={() => setSheet((v) => !v)}
-          className="rounded-ui px-2 py-1 text-micro text-faint hover:text-ink"
-        >
-          tokens
-        </button>
       </nav>
 
-      <main className="min-w-0 flex-1 overflow-y-auto bg-page p-5">
-        {connected === false && (
-          <div className="mb-3 rounded-ui border border-hairline bg-panel px-3 py-2 text-caption text-warn">
-            {BRIDGE_ABSENT}
-          </div>
-        )}
+      {/* The scroll lives one level in so this element stays the size of the
+          viewport, which is what an overlay pinned to `inset-0` needs to cover.
+          Put the scroll here and an overlay would stretch to the content's full
+          height instead. */}
+      <main className="relative min-w-0 flex-1 overflow-hidden bg-page">
+        <div className="h-full overflow-y-auto p-5">
+          {connected === false && (
+            <div className="mb-3 rounded-ui border border-hairline bg-panel px-3 py-2 text-caption text-warn">
+              {BRIDGE_ABSENT}
+            </div>
+          )}
 
-        {sheet ? (
-          <TokenSheet />
-        ) : (
           <PushTrack step={index} dir={dir}>
             {tab === 'download' ? (
               <DownloadTab />
@@ -111,7 +106,8 @@ export default function App() {
               <Pending label={TABS[index].label} />
             )}
           </PushTrack>
-        )}
+        </div>
+        <div id={OVERLAY_ROOT} className="pointer-events-none absolute inset-0 z-10" />
       </main>
     </div>
   )
