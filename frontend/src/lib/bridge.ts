@@ -15,9 +15,13 @@ import type {
   DownloadResult,
   GTResult,
   MailResult,
+  MistakeRecord,
+  PaperRecord,
   QueryResult,
   QuerySeason,
   DownloadSource,
+  SaveResult,
+  SimpleResult,
   SyllabusConfig,
 } from './types'
 
@@ -35,6 +39,22 @@ export interface PyApi {
   record_paper(paper_id: string): Promise<DownloadResult>
   downloaded_ids(): Promise<string[]>
   parse_gt(pdf_path: string, session: string): Promise<GTResult>
+  papers(): Promise<PaperRecord[]>
+  submit_score(
+    paper_id: string, score_raw: number, score_total: number,
+  ): Promise<SimpleResult>
+  delete_paper(paper_id: string, delete_local_files?: boolean): Promise<SimpleResult>
+  open_pdf(path: string): Promise<SimpleResult>
+  mistakes(): Promise<MistakeRecord[]>
+  mistake_topic_keys(): Promise<string[]>
+  topics_for(paper_id: string): Promise<Record<string, string> | null>
+  retag_mistake(
+    paper_id: string, question_id: string, topic_id: string | null,
+  ): Promise<SimpleResult>
+  export_mistakes_csv(paper_ids?: string[]): Promise<SaveResult>
+  export_mistakes_pdf(
+    paper_ids: string[], with_ms: boolean,
+  ): Promise<SaveResult & { warnings?: string[] }>
   mail_ready(): Promise<boolean>
   send_to_goodnotes(paper_id: string, qp_path: string): Promise<MailResult>
 }

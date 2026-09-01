@@ -116,6 +116,21 @@ export interface MailResult {
   error: string | null
 }
 
+/** The shape every operation-style call returns. */
+export interface SimpleResult {
+  success: boolean
+  error?: string | null
+}
+
+/** A save-dialog call. `cancelled` is a normal outcome, not a failure —
+ * nothing is written until a destination is picked. */
+export interface SaveResult {
+  success: boolean
+  path?: string
+  cancelled?: boolean
+  error?: string | null
+}
+
 /** Every failed js_api call looks like this, including validation failures. */
 export interface Failure {
   success: false
