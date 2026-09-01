@@ -1,0 +1,147 @@
+/* Design tokens.
+ *
+ * Depth comes from a ladder of surface lightnesses with a 1px line between
+ * each step — not from shadows. Shadows are reserved for the three things that
+ * genuinely float above the page.
+ *
+ * The border is the foreground colour at low alpha rather than a fixed grey.
+ * A fixed grey is only correct on the one surface it was picked against; at
+ * 8% of the foreground it composites to "8% darker than whatever is behind
+ * it", so a single token is right on all four steps of the ladder — and its
+ * dark-mode counterpart is the same mechanism mirrored.
+ *
+ * `@theme inline` is what makes the ladder switchable: it emits
+ * `var(--ui-page)` into each utility instead of freezing today's value, so
+ * redefining the --ui-* group below re-themes every utility at once.
+ */
+
+@theme inline {
+  --color-chrome: var(--ui-chrome);
+  --color-page: var(--ui-page);
+  --color-panel: var(--ui-panel);
+  --color-raised: var(--ui-raised);
+
+  --color-hairline: var(--ui-hairline);
+  --color-hairline-strong: var(--ui-hairline-strong);
+
+  --color-ink: var(--ui-ink);
+  --color-muted: var(--ui-muted);
+  --color-faint: var(--ui-faint);
+
+  --color-accent: var(--ui-accent);
+  --color-on-accent: var(--ui-on-accent);
+  --color-ok: var(--ui-ok);
+  --color-warn: var(--ui-warn);
+  --color-bad: var(--ui-bad);
+
+  --radius-ui: 6px;
+
+  /* The type scale carries the density decision: 13px body, and the steps
+     above it kept close so a heading does not open a hole in a dense table. */
+  --text-micro: 11px;
+  --text-caption: 12px;
+  --text-body: 13px;
+  --text-subhead: 14px;
+  --text-section: 16px;
+  --text-title: 20px;
+
+  /* Most transitions land in 100-150ms. `slow` exists for the rare full-pane
+     move and is still under 200. */
+  --ease-ui: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Light is the default, and is also written explicitly so a subtree can force
+   it while the OS is dark. Both theme blocks are attribute selectors rather
+   than :root ones so any element can carry a theme — that is what lets the two
+   themes sit side by side on one page for comparison. */
+:root,
+[data-theme="light"] {
+  /* ── Light ──────────────────────────────────────────────────────────────
+     Four steps, each visibly lighter than the one under it: the window frame
+     is the darkest and the floating layer is pure white. */
+  --ui-chrome: #e8e8e5;
+  --ui-page: #f2f2ef;
+  --ui-panel: #fafaf8;
+  --ui-raised: #ffffff;
+
+  --ui-hairline: rgb(0 0 0 / 0.08);
+  --ui-hairline-strong: rgb(0 0 0 / 0.16);
+
+  --ui-ink: #1a1a1a;
+  --ui-muted: rgb(0 0 0 / 0.56);
+  --ui-faint: rgb(0 0 0 / 0.36);
+
+  --ui-accent: #3f4d63;
+  --ui-on-accent: #ffffff;
+  --ui-ok: #3f7d4f;
+  --ui-warn: #996a1f;
+  --ui-bad: #a34141;
+
+  /* The only three shadows in the system. Nothing inline gets one. */
+  --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.06);
+  --shadow-dialog: 0 16px 40px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.08);
+  --shadow-command: 0 24px 60px rgb(0 0 0 / 0.22), 0 2px 8px rgb(0 0 0 / 0.1);
+
+  --dur-fast: 100ms;
+  --dur-base: 130ms;
+  --dur-slow: 180ms;
+
+  color-scheme: light;
+}
+
+/* Dark is the same ladder inverted: the frame is darkest, each step above it
+   lighter. The border flips to white at low alpha — same mechanism, so the
+   ladder needs no other change. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ui-chrome: #131316;
+    --ui-page: #1a1a1e;
+    --ui-panel: #222227;
+    --ui-raised: #2b2b31;
+
+    --ui-hairline: rgb(255 255 255 / 0.1);
+    --ui-hairline-strong: rgb(255 255 255 / 0.2);
+
+    --ui-ink: #e9e9ec;
+    --ui-muted: rgb(255 255 255 / 0.56);
+    --ui-faint: rgb(255 255 255 / 0.36);
+
+    --ui-accent: #8ea3c4;
+    --ui-on-accent: #14161a;
+    --ui-ok: #7fbb8d;
+    --ui-warn: #d2a45c;
+    --ui-bad: #e08585;
+
+    --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-dialog: 0 16px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+    --shadow-command: 0 24px 60px rgb(0 0 0 / 0.7), 0 2px 8px rgb(0 0 0 / 0.5);
+
+    color-scheme: dark;
+  }
+}
+
+[data-theme="dark"] {
+  --ui-chrome: #131316;
+  --ui-page: #1a1a1e;
+  --ui-panel: #222227;
+  --ui-raised: #2b2b31;
+
+  --ui-hairline: rgb(255 255 255 / 0.1);
+  --ui-hairline-strong: rgb(255 255 255 / 0.2);
+
+  --ui-ink: #e9e9ec;
+  --ui-muted: rgb(255 255 255 / 0.56);
+  --ui-faint: rgb(255 255 255 / 0.36);
+
+  --ui-accent: #8ea3c4;
+  --ui-on-accent: #14161a;
+  --ui-ok: #7fbb8d;
+  --ui-warn: #d2a45c;
+  --ui-bad: #e08585;
+
+  --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-dialog: 0 16px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+  --shadow-command: 0 24px 60px rgb(0 0 0 / 0.7), 0 2px 8px rgb(0 0 0 / 0.5);
+
+  color-scheme: dark;
+}

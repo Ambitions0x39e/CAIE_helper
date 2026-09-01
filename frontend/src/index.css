@@ -1,12 +1,5 @@
 @import "tailwindcss";
-
-/* Nothing here is a design token — M1 owns those. These are the few values the
-   spike needs to make the panes distinguishable on screen. */
-@theme {
-  --color-page: #f9f9f8;
-  --color-panel: #ffffff;
-  --color-hairline: rgb(0 0 0 / 0.08);
-}
+@import "./tokens.css";
 
 /* ── Not-a-web-page ────────────────────────────────────────────────────────
    pywebview's create_window already covers text selection, zoom and dragging.
@@ -16,7 +9,8 @@ html,
 body {
   /* No rubber-band at the scroll edges — the single loudest browser tell. */
   overscroll-behavior: none;
-  background: var(--color-page);
+  background: var(--ui-page);
+  color: var(--ui-ink);
 }
 
 /* The browser's blue ring is drawn by the UA, not by us; :focus-visible then
@@ -26,7 +20,7 @@ body {
 }
 
 :focus-visible {
-  box-shadow: 0 0 0 2px #334155;
+  box-shadow: 0 0 0 2px var(--ui-accent);
 }
 
 /* Body copy opts back in. Everything else stays unselectable via the window's

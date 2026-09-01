@@ -10,36 +10,17 @@ browser tab.
 from __future__ import annotations
 
 import os
-import webbrowser
 from pathlib import Path
-from urllib.parse import urlparse
 
 import webview
+
+from app_web.api import Api
 
 #: Painted before the webview has anything to show. Without it the window comes
 #: up white and flashes on every launch.
 _BACKGROUND = "#F9F9F8"
 
 _INDEX = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"
-
-
-class Api:
-    """Everything JS may call, as ``window.pywebview.api.*``."""
-
-    def ping(self) -> str:
-        return "pong"
-
-    def open_external(self, url: str) -> bool:
-        """Open *url* in the user's browser. Never navigates this window.
-
-        Only http(s) gets through: ``file:`` would hand the page a way to launch
-        local content, and ``javascript:`` a way to run in whatever the browser
-        opens it with.
-        """
-        if urlparse(url).scheme not in ("http", "https"):
-            return False
-        webbrowser.open(url)
-        return True
 
 
 #: Where `npm run dev` serves from. Pointed at with CIE_DEV=1 so edits reload
