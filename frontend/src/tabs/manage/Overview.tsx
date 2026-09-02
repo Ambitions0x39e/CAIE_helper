@@ -281,10 +281,9 @@ function SyllabusDetail({
           </table>
         </div>
 
-        <div className="self-start rounded-ui border border-hairline bg-panel p-3">
-          <div className="mb-1 text-caption text-muted">
-            得分率趋势{paper === ALL ? '' : ` · Paper ${paper}`}
-          </div>
+        {/* Bare — no panel, no heading. The strip above already names what is
+            being plotted, and the line is legible against the page. */}
+        <div className="self-start">
           {attempts.length >= MIN_FOR_TREND ? (
             <TrendChart attempts={attempts} />
           ) : (

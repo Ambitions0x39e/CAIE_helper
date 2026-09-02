@@ -242,7 +242,14 @@ export function Request({ source }: { source: DownloadSource }) {
       )}
 
       {entries && columns.length > 0 && (
-        // One column per paper number, as many across as the width allows.
+        // One column per paper number, all of them across if they fit.
+        //
+        // `auto-fit` and a column narrow enough to hold an id: the papers of a
+        // syllabus belong on one row, and 11rem is what one costs. `auto-fill`
+        // at 15rem picked three fat columns out of the same width and dropped
+        // Paper 4 onto a row of its own — the subject name survived, and the
+        // shape of the set did not. Empty tracks collapse under `auto-fit`, so
+        // a syllabus with three papers still spreads across the full width.
         //
         // Every column's header shares a row via `subgrid`, so they all end up
         // as tall as the tallest and the paper lists start on one baseline.
@@ -252,19 +259,18 @@ export function Request({ source }: { source: DownloadSource }) {
         <div
           className="grid gap-4 rounded-ui border border-hairline bg-panel p-3.5"
           style={{
-            gridTemplateColumns: 'repeat(auto-fill, minmax(15rem, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))',
             gridTemplateRows: 'auto auto',
           }}
         >
           {columns.map(([digit, qps]) => (
             <div key={digit} className="grid row-span-2 gap-y-2" style={{ gridTemplateRows: 'subgrid' }}>
-              {/* The number always fits; the name is all or nothing.
-                  A column is as narrow as 15rem and "Further Probability &
-                  Statistics" does not fit in one — and half a subject name
-                  under an ellipsis says less than no subject name at all.
-                  The wrap does the deciding: both items refuse to shrink, so
-                  a name that does not fit is pushed onto a second line, and
-                  the one-line height clips that line away whole. */}
+              {/* The number always fits; the name is all or nothing. A column
+                  is often narrower than "Further Probability & Statistics",
+                  and half a subject name under an ellipsis says less than no
+                  subject name at all. The wrap does the deciding: both items
+                  refuse to shrink, so a name that does not fit is pushed onto
+                  a second line, and the one-line height clips it away whole. */}
               <div className="border-b border-hairline pb-1.5 text-body font-medium">
                 <div className="flex h-[1lh] flex-wrap items-baseline gap-1 overflow-hidden">
                   <span className="whitespace-nowrap">Paper {digit}</span>
