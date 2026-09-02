@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { Dialog } from '../../ui/Dialog'
 import { Row, SubPage } from './SubPage'
 
 const ISSUES_URL = 'https://github.com/Ambitions0x39e/CAIE_helper/issues'
@@ -13,6 +13,14 @@ interface CheckResult {
   latest_version?: string | null
   release_notes?: string | null
   download_url?: string | null
+}
+
+/** The answer goes in the title bar — it is the whole point of the dialog, and
+ * a reader who wanted only that can stop there. */
+function dialogTitle(result: CheckResult | null): string {
+  if (!result) return ''
+  if (!result.success) return '检查失败'
+  return result.update_available ? '有新版本' : '已经是最新版本'
 }
 
 export function About({ onBack }: { onBack: () => void }) {
@@ -57,24 +65,32 @@ export function About({ onBack }: { onBack: () => void }) {
         </Row>
       </div>
 
-      {result && !result.success && (
-        <Banner tone="bad" title={result.error ?? '检查失败'} />
-      )}
-      {result?.success && !result.update_available && (
-        <Banner tone="ok" title="已经是最新版本" />
-      )}
-      {result?.success && result.update_available && (
-        <Banner
-          tone="warn"
-          title={`有新版本 ${result.latest_version}`}
-          details={result.release_notes ? [result.release_notes] : undefined}
-        />
-      )}
-      {result?.success && result.update_available && result.download_url && (
-        <p className="text-caption text-muted">
-          应用内下载安装还没接上（M4 的活）。现在先去 Releases 页面手动下载。
-        </p>
-      )}
+      <Dialog open={result !== null} title={dialogTitle(result)} onClose={() => setResult(null)}>
+        {result && !result.success && (
+          <p className="text-body text-bad">{result.error ?? '检查失败'}</p>
+        )}
+        {result?.success && !result.update_available && (
+          <p className="text-body text-muted">当前版本 {version} 已经是最新的。</p>
+        )}
+        {result?.success && result.update_available && (
+          <div className="space-y-3">
+            <p className="text-body">
+              当前 <span className="tabular-nums">{version}</span>，最新{' '}
+              <span className="tabular-nums font-semibold">{result.latest_version}</span>。
+            </p>
+            {result.release_notes && (
+              <p className="selectable whitespace-pre-wrap text-caption text-muted">
+                {result.release_notes}
+              </p>
+            )}
+            {result.download_url && (
+              <p className="text-caption text-muted">
+                应用内下载安装还没接上。现在先去 Releases 页面手动下载。
+              </p>
+            )}
+          </div>
+        )}
+      </Dialog>
     </SubPage>
   )
 }

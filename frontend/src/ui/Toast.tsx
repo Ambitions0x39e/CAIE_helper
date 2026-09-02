@@ -19,7 +19,7 @@ const DOT: Record<Note['tone'], string> = {
  * sentence twice, short enough that it is gone before the next action. */
 const LINGER = 4000
 
-/** Outlasts the spring, so the pill is not cut off mid-slide. */
+/** Outlasts the spring, so the card is not cut off mid-slide. */
 const TEARDOWN_MS = 340
 
 /** What just happened, said once and then gone.
@@ -52,13 +52,13 @@ export function Toast({ note, onDismiss }: { note: Note | null; onDismiss: () =>
 
   return createPortal(
     <motion.div
-      className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex justify-center"
+      className="pointer-events-none fixed bottom-5 right-5 z-50 flex justify-end"
       initial={{ opacity: 0, y: 8 }}
       animate={note ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
       transition={SETTLE_FAST}
     >
       <div
-        className="pointer-events-auto flex max-w-lg items-center gap-2 rounded-full border
+        className="pointer-events-auto flex max-w-lg items-center gap-2 rounded-ui border
                    border-hairline bg-panel py-1.5 pl-3 pr-1.5 text-body"
         style={{ boxShadow: 'var(--shadow-popover)' }}
       >
