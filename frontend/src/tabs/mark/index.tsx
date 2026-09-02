@@ -72,7 +72,7 @@ export function MarkTab() {
       />
       <PushTrack step={step} dir={dir}>
         {step === 0 ? (
-          <SetupStep onAnalysed={onAnalysed} />
+          <SetupStep analysis={analysis} onAnalysed={onAnalysed} />
         ) : step === 1 && analysis?.paper_type === 'mcq' ? (
           // MCQ detects and scores in one place — there is no per-question
           // mark scheme to review afterwards, so it has no third step.

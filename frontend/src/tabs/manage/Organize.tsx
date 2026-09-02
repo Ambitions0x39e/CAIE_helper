@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FileText, Send, Trash2 } from 'lucide-react'
+import { motion } from 'motion/react'
 import { api } from '../../lib/bridge'
 import { subjectGlyph, syllabusIdOf } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
-import { Banner } from '../../ui/Banner'
+import { BackButton } from '../../ui/BackButton'
 import { Button } from '../../ui/Button'
 import { Glyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
+import { type Note, Toast } from '../../ui/Toast'
 
 const LAYOUTS = [
   { id: 'icons', label: '图标' },
@@ -45,7 +47,9 @@ export function Organize({
   const [deleting, setDeleting] = useState<string | null>(null)
   const [alsoFiles, setAlsoFiles] = useState(false)
   const [mailReady, setMailReady] = useState(false)
-  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const [note, setNote] = useState<Note | null>(null)
+  /** The row the detail panel grows out of. */
+  const [origin, setOrigin] = useState<DOMRect | null>(null)
 
   useEffect(() => {
     api()
@@ -143,7 +147,7 @@ export function Organize({
         </label>
       </div>
 
-      {note && <Banner tone={note.tone} title={note.text} />}
+      <Toast note={note} onDismiss={() => setNote(null)} />
 
       {pendingDelete && (
         <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3">
@@ -188,13 +192,20 @@ export function Organize({
       ) : (
         <DetailList
           shown={shown}
-          onSelect={setSelected}
+          onSelect={(id, rect) => {
+            setOrigin(rect)
+            setSelected(id)
+          }}
           selected={selected}
           actionsOf={actionsOf}
         />
       )}
 
-      <Overlay open={current !== null} onClose={() => setSelected(null)}>
+      <Overlay
+        open={current !== null}
+        origin={origin}
+        onClose={() => setSelected(null)}
+      >
         {current && (
           <PaperDetail
             paper={current}
@@ -236,11 +247,20 @@ function IconCell({
         style={{ width: CELL, height: CELL, margin: '0 auto' }}
       >
         {open ? (
+          // Out of the middle of the square the glyph just left, one after the
+          // next — the order they are read in is the order they arrive in.
           <div className="grid grid-cols-2 gap-2">
-            {actions.map((a) => (
-              <button
+            {actions.map((a, i) => (
+              <motion.button
                 key={a.key}
                 title={a.label}
+                initial={{ scale: 0.3, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{
+                  duration: 0.16,
+                  delay: i * 0.03,
+                  ease: [0.34, 1.4, 0.64, 1],
+                }}
                 onClick={(e) => {
                   e.stopPropagation()
                   setOpen(false)
@@ -251,7 +271,7 @@ function IconCell({
                 style={{ width: CIRCLE, height: CIRCLE }}
               >
                 <a.Icon className="size-4" aria-hidden />
-              </button>
+              </motion.button>
             ))}
           </div>
         ) : (
@@ -278,7 +298,7 @@ function DetailList({
 }: {
   shown: PaperRecord[]
   selected: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string, from: DOMRect) => void
   actionsOf: (p: PaperRecord) => Action[]
 }) {
   return (
@@ -300,7 +320,7 @@ function DetailList({
             return (
               <tr
                 key={p.paper_id}
-                onClick={() => onSelect(p.paper_id)}
+                onClick={(e) => onSelect(p.paper_id, e.currentTarget.getBoundingClientRect())}
                 className={`cursor-default border-b border-hairline last:border-0
                             ${selected === p.paper_id ? 'bg-raised' : ''}`}
               >
@@ -381,9 +401,7 @@ function PaperDetail({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <button onClick={onClose} className="text-caption text-muted hover:text-ink">
-          返回
-        </button>
+        <BackButton onClick={onClose} />
         <span className="text-section font-bold tabular-nums">{paper.paper_id}</span>
         <div className="ml-auto flex gap-2">
           {actions.map((a) => (

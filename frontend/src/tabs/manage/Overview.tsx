@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { subjectGlyph, syllabusIdOf, tally } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
+import { BackButton } from '../../ui/BackButton'
 import { Donut } from '../../ui/Donut'
 import { Glyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
@@ -60,6 +61,8 @@ export function Overview({
   syllabuses: SyllabusConfig[]
 }) {
   const [open, setOpen] = useState<string | null>(null)
+  /** The card the panel grows out of. */
+  const [origin, setOrigin] = useState<DOMRect | null>(null)
 
   const names = useMemo(
     () => new Map(syllabuses.map((s) => [s.syllabus_id, s.name])),
@@ -126,7 +129,10 @@ export function Overview({
           return (
             <button
               key={id}
-              onClick={() => setOpen(open === id ? null : id)}
+              onClick={(e) => {
+                setOrigin(e.currentTarget.getBoundingClientRect())
+                setOpen(open === id ? null : id)
+              }}
               aria-expanded={open === id}
               className={`flex items-center gap-4 rounded-ui border border-hairline p-5 text-left
                           transition-colors ${open === id ? 'bg-raised' : 'bg-panel hover:bg-raised'}`}
@@ -149,7 +155,7 @@ export function Overview({
         })}
       </div>
 
-      <Overlay open={detail !== null} onClose={() => setOpen(null)}>
+      <Overlay open={detail !== null} origin={origin} onClose={() => setOpen(null)}>
         {detail && (
           <SyllabusDetail
             syllabusId={detail[0]}
@@ -191,9 +197,7 @@ function SyllabusDetail({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <button onClick={onClose} className="text-caption text-muted hover:text-ink">
-          返回
-        </button>
+        <BackButton onClick={onClose} />
         <div className="min-w-0 flex-1">
           <div className="text-section font-bold">
             {syllabusId} — {name}

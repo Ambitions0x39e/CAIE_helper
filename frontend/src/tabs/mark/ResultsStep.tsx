@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { Metric } from '../../ui/Metric'
 import type { Analysis, QuestionResult } from './types'
 
 export function ResultsStep({
@@ -42,10 +43,10 @@ export function ResultsStep({
     }
     const r = await (await api()).confirm_results(paperId, numeric)
     if (r.success) {
-      setNote({ tone: 'ok', text: `已记录 ${r.score} / ${r.max_score}` })
+      setNote({ tone: 'ok', text: '分数已记录' })
       onConfirmed()
     } else {
-      setNote({ tone: 'bad', text: r.error ?? '记录失败' })
+      setNote({ tone: 'bad', text: `记录失败: ${r.error ?? ''}` })
     }
   }
 
@@ -53,13 +54,22 @@ export function ResultsStep({
     return <div className="text-caption text-muted">还没有批改结果。</div>
   }
 
+  const total = Object.keys(analysis.questions ?? {}).length
+
   return (
-    <div className="max-w-2xl space-y-3">
-      <div className="flex flex-wrap items-baseline gap-3 rounded-ui border border-hairline bg-panel p-3.5">
-        <span className="text-title tabular-nums">
-          {summary.score} <span className="text-muted">/ {summary.max}</span>
-        </span>
-        <span className="text-body text-muted tabular-nums">{summary.pct}%</span>
+    <div className="space-y-3">
+      <div className="text-section font-bold">批改结果</div>
+
+      <div className="flex flex-wrap gap-3">
+        <Metric label="总分" value={`${summary.score}/${summary.max}`} />
+        <Metric label="百分比" value={`${summary.pct.toFixed(1)}%`} />
+        <Metric label="题数" value={`${results.length}/${total}`} />
+      </div>
+
+      <div className="text-caption text-muted">点开任意一题看判分明细。</div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3.5">
+        <span className="text-caption text-muted">检查结果，确认后记录分数。</span>
         <input
           value={paperId}
           onChange={(e) => setPaperId(e.target.value)}
@@ -68,7 +78,7 @@ export function ResultsStep({
           style={{ cursor: 'text', userSelect: 'text' }}
         />
         <Button tone="accent" onClick={confirm} disabled={!paperId}>
-          确认并记录
+          确认并记录分数
         </Button>
       </div>
 
@@ -96,7 +106,7 @@ export function ResultsStep({
               {open === r.question && (
                 <div className="space-y-2 border-t border-hairline p-3">
                   <label className="flex items-center gap-2 text-caption text-muted">
-                    改分
+                    调分
                     <input
                       value={overrides[r.question] ?? ''}
                       placeholder={String(r.total)}

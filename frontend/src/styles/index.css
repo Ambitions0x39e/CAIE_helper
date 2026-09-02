@@ -29,3 +29,30 @@ body {
   user-select: text;
   cursor: text;
 }
+
+/* ── Scrollbars ────────────────────────────────────────────────────────────
+   The track is transparent so it reads as part of the surface it sits on,
+   rather than as a grey gutter cut down the side of the panel. The thumb is
+   the same hairline the rest of the chrome is drawn with, inset by a 2px
+   transparent border so it never touches the content edge. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ui-hairline-strong);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ui-faint);
+  background-clip: content-box;
+}

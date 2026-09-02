@@ -3,6 +3,7 @@ import { api } from '../../lib/bridge'
 import { onJobEvent } from '../../lib/jobs'
 import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { Metric } from '../../ui/Metric'
 import { isValidManual } from './mcq'
 import type { Analysis } from './types'
 
@@ -32,7 +33,7 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
     () =>
       onJobEvent((e) => {
         if (e.type === 'mcq_progress')
-          setProgress(`识别第 ${e.batch}/${e.total} 批…`)
+          setProgress(`第 ${e.batch}/${e.total} 页…`)
         else if (e.type === 'mcq_detected') {
           setDetected(e.detected as Record<string, string>)
           setUndetected(e.undetected as string[])
@@ -45,7 +46,7 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
   )
 
   const pick = async () => {
-    const p = await (await api()).pick_pdf('已作答的 QP')
+    const p = await (await api()).pick_pdf('选择已批注 QP PDF')
     if (p) setQpPath(p)
   }
 
@@ -53,11 +54,11 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
     setBusy(true)
     setError(null)
     setScored(null)
-    setProgress('准备中…')
+    setProgress('正在检测答案…')
     const name = qpPath.split(/[\\/]/).pop() ?? ''
     const r = await (await api()).start_mcq_detection(qpPath, name)
     if (!r.success) {
-      setError(r.error ?? '无法开始识别')
+      setError(`检测失败: ${r.error ?? ''}`)
       setBusy(false)
       setProgress(null)
     }
@@ -66,15 +67,15 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
   const score = async () => {
     const r = await (await api()).score_mcq(manual)
     if (r.success) setScored(r as typeof scored)
-    else setError(r.error ?? '打分失败')
+    else setError(`检测失败: ${r.error ?? ''}`)
   }
 
   const confirm = async () => {
     const r = await (await api()).confirm_mcq(paperId, manual)
     setNote(
       r.success
-        ? { tone: 'ok', text: `已记录 ${r.score} / ${r.total}` }
-        : { tone: 'bad', text: r.error ?? '记录失败' },
+        ? { tone: 'ok', text: '分数已记录' }
+        : { tone: 'bad', text: `记录失败: ${r.error ?? ''}` },
     )
   }
 
@@ -85,16 +86,18 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
   const hasDetection = Object.keys(detected).length > 0 || undetected.length > 0
 
   return (
-    <div className="max-w-2xl space-y-3">
+    <div className="space-y-3">
+      <div className="text-section font-bold">检测与批改</div>
+
       <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={pick}>选已作答的 QP</Button>
-          <span className="min-w-0 flex-1 truncate text-caption text-faint">
-            {qpPath || '未选择'}
+          <Button onClick={pick}>选择已批注 QP PDF</Button>
+          <span className="min-w-0 flex-1 truncate text-caption text-muted">
+            {qpPath ? (qpPath.split(/[\\/]/).pop() ?? '') : '未选择文件'}
           </span>
         </div>
         <Button tone="accent" onClick={detect} disabled={busy || !qpPath}>
-          {busy ? '识别中…' : '识别答案'}
+          检测答案
         </Button>
       </div>
 
@@ -103,19 +106,26 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
       {undetected.length > 0 && (
         <Banner
           tone="warn"
-          title={`有 ${undetected.length} 题没识别出来，下面手动填：${undetected.join(', ')}`}
+          title={`未能检测到 ${undetected.length} 题: ${undetected.join(', ')}。请在下方手动填写。`}
         />
       )}
 
       {hasDetection && (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          {scored && (
+            <div className="flex flex-wrap gap-3">
+              <Metric label="得分" value={`${scored.score}/${scored.total}`} />
+              <Metric
+                label="百分比"
+                value={`${((scored.score / Math.max(scored.total, 1)) * 100).toFixed(1)}%`}
+              />
+              <Metric label="已检测" value={String(Object.keys(detected).length)} />
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3.5">
             <Button onClick={score}>打分</Button>
-            {scored && (
-              <span className="text-body tabular-nums">
-                {scored.score} <span className="text-muted">/ {scored.total}</span>
-              </span>
-            )}
+            <span className="text-caption text-muted">检查上方结果，确认后记录分数。</span>
             <input
               value={paperId}
               onChange={(e) => setPaperId(e.target.value)}
@@ -124,11 +134,13 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
               style={{ cursor: 'text', userSelect: 'text' }}
             />
             <Button tone="accent" onClick={confirm} disabled={!paperId || !scored}>
-              确认并记录
+              确认并记录分数
             </Button>
           </div>
 
           {note && <Banner tone={note.tone} title={note.text} />}
+
+          <div className="text-body font-bold">逐题结果:</div>
 
           <div
             className="grid gap-1.5"
