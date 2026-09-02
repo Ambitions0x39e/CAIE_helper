@@ -57,6 +57,44 @@ uv run mypy app_flet core modules
 uv run pytest
 ```
 
+## Building the packaged app (webview — the v2 shipping path)
+
+`app_web` is packaged with PyInstaller, not `flet build`. Three steps, in order
+— the spec bundles `frontend/dist` as it finds it, so a stale UI build ships
+without a word:
+
+```bash
+npm run build --prefix frontend
+uv run pyinstaller packaging/windows/cie-helper.spec --noconfirm
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\cie-helper.iss
+```
+
+Output: `dist/cie-helper/` (~84 MB) and `dist/cie-helper-<version>-setup.exe`
+(~38 MB).
+
+- **No path handling in the app needs to know it is frozen.** All three runtime
+  lookups (`core/config_store.py`'s `data/`, `modules/updater.py`'s
+  `pyproject.toml`, `app_web/main.py`'s `frontend/dist`) are
+  `Path(__file__).parents[1] / <name>` from a module one level down, which
+  under a onedir build resolves to `_internal/` — where the spec's `datas` put
+  them.
+- **Dependencies are not listed by hand.** pywebview ships its own hook
+  (`webview/__pyinstaller/`) that collects the WebView2 interop DLLs, and
+  pyinstaller-hooks-contrib covers pythonnet, pypdfium2 and pillow. A
+  `collect_all` loop over those was tried and removed: the hooks already do it.
+- **pandas and numpy are excluded on purpose**, worth 44 MB. The openai SDK's
+  `_extras/pandas_proxy.py` is a lazy proxy nothing reaches through, but
+  PyInstaller follows the import statically and packs both libraries.
+- **pywebview, pypdfium2 and pillow stay in the dev group**, not
+  `[project.dependencies]`. PyInstaller reads the environment, so it does not
+  need them there — and `flet build` pip-installs `[project.dependencies]`
+  fresh into the Flet bundle, where pypdfium2's and pillow's vendored `.dylib`s
+  break the universal macOS build. They move up when `app_flet` goes.
+- **The installer wipes two payload shapes.** `[InstallDelete]` lists
+  `_internal` alongside the 1.x layout's loose `app\`, `site-packages\`, `Lib\`
+  and `DLLs\`: an upgrade from 1.x lands in the same `{app}`, and `ignoreversion`
+  overwrites files but never deletes ones the new build stopped shipping.
+
 ## Building the packaged app (Flet)
 
 The distributable app is built with `flet build windows` / `flet build macos` —
