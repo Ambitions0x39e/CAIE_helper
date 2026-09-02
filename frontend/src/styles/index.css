@@ -61,15 +61,22 @@ body {
    Feedback belongs on the press, not on the release. `:active` fires the
    moment the pointer goes down, which is the difference between a control
    that answers and one that waits to see whether you meant it. Every button
-   gets it, so a control added later is not the one dead spot in the app. */
+   gets it, so a control added later is not the one dead spot in the app.
+
+   **On `scale`, never on `transform`.** motion animates a button by writing
+   `transform` inline once a frame; a transition on `transform` re-interpolates
+   every one of those writes over its own duration, so the spring arrives late,
+   in steps, and then snaps when the last value lands. `scale` is an
+   independent transform property — it composes with whatever `transform`
+   holds, and the two animate without touching each other. */
 button:not(:disabled):active,
 [role="button"]:not([aria-disabled="true"]):active {
-  transform: scale(0.97);
+  scale: 0.97;
 }
 
 button,
 [role="button"] {
-  transition: transform var(--dur-fast) var(--ease-ui);
+  transition: scale var(--dur-fast) var(--ease-ui);
 }
 
 /* ── Reduced motion ────────────────────────────────────────────────────────
@@ -80,7 +87,7 @@ button,
 @media (prefers-reduced-motion: reduce) {
   button:not(:disabled):active,
   [role="button"]:not([aria-disabled="true"]):active {
-    transform: none;
+    scale: 1;
   }
 
   *,
