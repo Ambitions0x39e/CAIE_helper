@@ -1,5 +1,5 @@
-import { ChevronLeft } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { BackButton } from '../../ui/BackButton'
 
 /** The frame every settings sub-page shares: a back row, then the content. */
 export function SubPage({
@@ -13,14 +13,10 @@ export function SubPage({
 }) {
   return (
     <div className="space-y-3">
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1 text-caption text-muted hover:text-ink"
-      >
-        <ChevronLeft className="size-3.5" aria-hidden />
-        设置
-      </button>
-      <div className="text-section font-medium">{title}</div>
+      <div className="flex items-center gap-2">
+        <BackButton onClick={onBack} />
+        <div className="text-section font-medium">{title}</div>
+      </div>
       {children}
     </div>
   )

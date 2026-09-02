@@ -60,24 +60,49 @@ export function GradeStep({
   }
 
   const matched = new Set(analysis.matched ?? [])
+  const matchedCount = questionIds.filter((q) => matched.has(q)).length
+  const unmatched = questionIds.filter((q) => !matched.has(q))
 
   return (
-    <div className="max-w-2xl space-y-3">
+    <div className="space-y-3">
+      <div className="text-section font-bold">核对题目</div>
+      <div className="text-body">勾选要批改的题，并确认每题的页码。</div>
+
+      <Banner
+        tone={matchedCount === questionIds.length ? 'ok' : 'warn'}
+        title={
+          analysis.total_pages
+            ? `PDF 共 ${analysis.total_pages} 页 | ${matchedCount}/${questionIds.length} 题已自动定位`
+            : `${matchedCount}/${questionIds.length} 题已自动定位`
+        }
+        details={
+          unmatched.length > 0
+            ? [`未识别：${unmatched.slice(0, 8).join('、')}${
+                unmatched.length > 8 ? ` 等 ${unmatched.length} 题` : ''
+              }。这些题会按整页送去批改。`]
+            : undefined
+        }
+      />
+
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-caption text-muted tabular-nums">
           {analysis.paper_id} · 共 {questionIds.length} 题 · 满分 {analysis.total_marks}
         </span>
         <Button onClick={() => setPicked(new Set(questionIds))}>全选</Button>
-        <Button onClick={() => setPicked(new Set())}>清空</Button>
+        <Button onClick={() => setPicked(new Set())}>全不选</Button>
         <Button tone="accent" onClick={run} disabled={busy || picked.size === 0}>
-          {busy ? '批改中…' : `批改 ${picked.size} 题`}
+          开始批改
         </Button>
       </div>
+
+      {picked.size === 0 && (
+        <div className="text-caption text-warn">请至少勾选一个题目进行批改。</div>
+      )}
 
       {progress && (
         <div className="space-y-1">
           <div className="text-caption text-muted tabular-nums">
-            {progress.done}/{progress.total}
+            正在批改… {progress.done}/{progress.total}
           </div>
           <div className="h-1 overflow-hidden rounded bg-hairline">
             <div

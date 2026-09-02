@@ -12,6 +12,8 @@ export interface Analysis {
   total_marks?: number
   questions?: Record<string, QuestionCfg>
   answer_path?: string | null
+  /** Pages in the answer PDF; 0 when none was picked. */
+  total_pages?: number
   /** Questions the segmenter located, so their region can be cropped. */
   matched?: string[]
   /** The rest — they grade off whole pages instead. */

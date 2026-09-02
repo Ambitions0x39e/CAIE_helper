@@ -1,0 +1,76 @@
+import { X } from 'lucide-react'
+import { motion } from 'motion/react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+
+export interface Note {
+  tone: 'ok' | 'bad' | 'warn'
+  text: string
+}
+
+const DOT: Record<Note['tone'], string> = {
+  ok: 'bg-ok',
+  bad: 'bg-bad',
+  warn: 'bg-warn',
+}
+
+/** How long it sits there before taking itself away. Long enough to read a
+ * sentence twice, short enough that it is gone before the next action. */
+const LINGER = 4000
+
+/** What just happened, said once and then gone.
+ *
+ * Floats over the page instead of being appended to it: the result of pressing
+ * a button is not a new part of the view, and giving it a slot pushes
+ * everything below it down every time an action finishes.
+ */
+export function Toast({ note, onDismiss }: { note: Note | null; onDismiss: () => void }) {
+  /** Held past `note` going null so the outgoing text is still there to read
+   * while it slides away. */
+  const [shown, setShown] = useState(note)
+  if (note && note !== shown) setShown(note)
+
+  // Kept in a ref so the timer restarts on a new note and nothing else; an
+  // inline arrow from the caller changes identity every render.
+  const dismiss = useRef(onDismiss)
+  useEffect(() => {
+    dismiss.current = onDismiss
+  })
+
+  useEffect(() => {
+    // Cleared on a clock, not on the slide-out's completion callback — see
+    // Overlay for why a frame loop is not something to hang teardown on.
+    const timer = setTimeout(() => (note ? dismiss.current() : setShown(null)), note ? LINGER : 200)
+    return () => clearTimeout(timer)
+  }, [note])
+
+  if (!shown || typeof document === 'undefined') return null
+
+  return createPortal(
+    <motion.div
+      className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex justify-center"
+      initial={{ opacity: 0, y: 8 }}
+      animate={note ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
+      transition={{ duration: 0.15, ease: [0.4, 0, 0.2, 1] }}
+    >
+      <div
+        className="pointer-events-auto flex max-w-lg items-center gap-2 rounded-full border
+                   border-hairline bg-panel py-1.5 pl-3 pr-1.5 text-body"
+        style={{ boxShadow: 'var(--shadow-popover)' }}
+      >
+        <span className={`size-1.5 shrink-0 rounded-full ${DOT[shown.tone]}`} />
+        <span className="min-w-0 truncate">{shown.text}</span>
+        <button
+          onClick={() => dismiss.current()}
+          aria-label="关闭"
+          className="flex size-5 shrink-0 items-center justify-center rounded-full text-faint
+                     transition-colors hover:bg-raised hover:text-ink"
+          style={{ transitionDuration: 'var(--dur-fast)' }}
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+    </motion.div>,
+    document.body,
+  )
+}

@@ -5,7 +5,13 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { FALLBACK_GLYPH, subjectGlyph, syllabusIdOf, tally } from './papers.ts'
+import {
+  FALLBACK_GLYPH,
+  comparePaperIds,
+  subjectGlyph,
+  syllabusIdOf,
+  tally,
+} from './papers.ts'
 import type { PaperRecord } from './types.ts'
 
 const done = (paper_id: string, raw: number, total: number): PaperRecord => ({
@@ -83,5 +89,35 @@ describe('subjectGlyph — the keyword table is ordered, longest first', () => {
 describe('syllabusIdOf', () => {
   test('takes the leading four digits', () => {
     assert.equal(syllabusIdOf('9702_s24_qp_11'), '9702')
+  })
+})
+
+describe('comparePaperIds', () => {
+  test('year comes before series', () => {
+    // The trap in sorting the ids as strings: the series letter is to the
+    // left of the year, so `m24` would sort ahead of `s23`.
+    assert.deepEqual(
+      ['9709_m24_qp_11', '9709_s23_qp_11'].sort(comparePaperIds),
+      ['9709_s23_qp_11', '9709_m24_qp_11'],
+    )
+  })
+
+  test('within a year it runs March, Summer, Winter', () => {
+    assert.deepEqual(
+      ['9709_w23_qp_11', '9709_s23_qp_11', '9709_m23_qp_11'].sort(comparePaperIds),
+      ['9709_m23_qp_11', '9709_s23_qp_11', '9709_w23_qp_11'],
+    )
+  })
+
+  test('same sitting falls back to the paper number', () => {
+    assert.deepEqual(
+      ['9709_s23_qp_12', '9709_s23_qp_11'].sort(comparePaperIds),
+      ['9709_s23_qp_11', '9709_s23_qp_12'],
+    )
+  })
+
+  test('an id the table has not seen still appears, at the end', () => {
+    const sorted = ['9709_x23_qp_11', '9709_s23_qp_11'].sort(comparePaperIds)
+    assert.deepEqual(sorted, ['9709_s23_qp_11', '9709_x23_qp_11'])
   })
 })

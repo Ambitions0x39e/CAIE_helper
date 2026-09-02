@@ -454,6 +454,7 @@ class Api:
                 for qid, q in a.config.questions.items()
             },
             "answer_path": a.answer_path,
+            "total_pages": a.doc.page_count if a.doc is not None else 0,
             "matched": report.matched if report else [],
             "unmatched": report.unmatched if report else list(a.config.questions),
             "clips": clips,

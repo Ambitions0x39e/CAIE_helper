@@ -78,3 +78,31 @@ export function subjectGlyph(syllabusName: string | undefined): string {
 export function syllabusIdOf(paperId: string): string {
   return paperId.slice(0, 4)
 }
+
+/** Sitting order of the three exam series within a year.
+ *
+ * March (`m`) is the Feb/March series, `s` the May/June one and `w` the
+ * Oct/Nov one. Anything else sorts after all three rather than being dropped,
+ * so an id this table has not seen still appears in the list. */
+const SERIES: Record<string, number> = { m: 0, s: 1, w: 2 }
+
+/** `9709_s23_qp_12` → the year and series it was sat in. */
+function sitting(paperId: string): [number, number] {
+  const code = paperId.split('_')[1] ?? ''
+  const year = Number(code.slice(1))
+  return [
+    Number.isFinite(year) ? year : Number.POSITIVE_INFINITY,
+    SERIES[code[0]] ?? Object.keys(SERIES).length,
+  ]
+}
+
+/** Chronological order: year, then March → Summer → Winter, then paper number.
+ *
+ * Sorting the ids as plain strings looks right on one year and is wrong across
+ * two — the series letter sits left of the year, so `m24` lands before `s23`
+ * and every March paper the user owns is bunched at the top of the list. */
+export function comparePaperIds(a: string, b: string): number {
+  const [ay, as] = sitting(a)
+  const [by, bs] = sitting(b)
+  return ay - by || as - bs || a.localeCompare(b)
+}

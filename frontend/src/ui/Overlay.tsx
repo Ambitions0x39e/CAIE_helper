@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 /** The element in App's layout that overlays are portalled into. It is a
@@ -8,42 +8,96 @@ import { createPortal } from 'react-dom'
  * the bottom of a list that may be metres long. */
 export const OVERLAY_ROOT = 'overlay-root'
 
-/** Scale a panel grows from. Not 0 — coming up from a point reads as a new
- * thing appearing, coming up from nine tenths reads as the row you clicked
- * opening out. */
-const REST_SCALE = 0.94
+/** The panel is already laid out at full size; only the window onto it moves.
+ * Matching the card's own corner is what makes the first frame read as the
+ * card rather than as a new surface appearing on top of it. */
+const CORNER = 6
 
-/** A panel covering the whole content area.
+/** Fraction of the content area the fallback origin covers, for a caller with
+ * no element to grow from. */
+const CENTRED = 0.7
+
+const GROW_MS = 180
+
+/** `clip-path` insets that show only `rect` of the host.
+ *
+ * Both ends must have identical structure — same function, same count of
+ * lengths, same units — or there is nothing to interpolate between and the
+ * clip snaps instead of growing. */
+function clipTo(rect: DOMRect, host: DOMRect): string {
+  const top = Math.max(0, rect.top - host.top)
+  const left = Math.max(0, rect.left - host.left)
+  const bottom = Math.max(0, host.bottom - rect.bottom)
+  const right = Math.max(0, host.right - rect.right)
+  return `inset(${top}px ${right}px ${bottom}px ${left}px round ${CORNER}px)`
+}
+
+const OPEN_CLIP = `inset(0px 0px 0px 0px round 0px)`
+
+/** A panel covering the whole content area, growing out of the thing that
+ * opened it.
  *
  * Rendered through a portal rather than in place: the caller is inside the
  * scroller, and an overlay declared there would scroll away with the rows
- * behind it.
- *
- * It grows in and cuts out. Both halves were tried: AnimatePresence *around*
- * the portal never renders, because `isValidElement` is false for a portal and
- * AnimatePresence drops children it cannot key; AnimatePresence *inside* the
- * portal ran the exit but never unmounted the node, leaving an invisible sheet
- * over the page that swallowed every click. Closing on the spot is what a back
- * navigation does anyway.
+ * behind it. `AnimatePresence` cannot drive that portal — `isValidElement` is
+ * false for one, so it drops the child and nothing renders — so the exit is
+ * held here instead: the panel stays mounted until it has finished shrinking
+ * back into the rectangle it came out of.
  */
 export function Overlay({
   open,
+  origin,
   onClose,
   children,
 }: {
   open: boolean
+  /** Where it grows from — the bounding rect of the element that was clicked.
+   * Omitted, it grows from the middle of the content area. */
+  origin?: DOMRect | null
   onClose: () => void
   children: ReactNode
 }) {
+  /** Stays true through the close so the panel is still there to shrink. */
+  const [mounted, setMounted] = useState(open)
+  if (open && !mounted) setMounted(true)
+
+  // Torn down on a clock rather than on the animation's completion callback.
+  // The panel is opaque and covers the whole content area, so a frame loop
+  // that never reports back — a throttled tab, a window that is not
+  // compositing — would leave an invisible sheet swallowing every click.
+  // A timer ends it whether or not the animation ever ran.
+  useEffect(() => {
+    if (open) return
+    const timer = setTimeout(() => setMounted(false), GROW_MS + 40)
+    return () => clearTimeout(timer)
+  }, [open])
+
   const host = typeof document === 'undefined' ? null : document.getElementById(OVERLAY_ROOT)
-  if (!host || !open) return null
+  if (!host || !mounted) return null
+
+  // `origin` outlives the close — the caller sets it when the panel opens and
+  // leaves it there — so the same rectangle drives both directions and the
+  // panel shrinks back into the thing it came out of.
+  const bounds = host.getBoundingClientRect()
+  const closed = clipTo(
+    origin ??
+      new DOMRect(
+        bounds.left + (bounds.width * (1 - CENTRED)) / 2,
+        bounds.top + (bounds.height * (1 - CENTRED)) / 2,
+        bounds.width * CENTRED,
+        bounds.height * CENTRED,
+      ),
+    bounds,
+  )
 
   return createPortal(
     <motion.div
       className="pointer-events-auto absolute inset-0 overflow-y-auto bg-page p-5"
-      initial={{ opacity: 0, scale: REST_SCALE }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.13, ease: [0.4, 0, 0.2, 1] }}
+      initial={{ clipPath: closed, opacity: 0 }}
+      animate={
+        open ? { clipPath: OPEN_CLIP, opacity: 1 } : { clipPath: closed, opacity: 0 }
+      }
+      transition={{ duration: GROW_MS / 1000, ease: [0.4, 0, 0.2, 1] }}
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
       tabIndex={-1}
     >
