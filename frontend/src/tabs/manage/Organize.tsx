@@ -8,6 +8,7 @@ import { BackButton } from '../../ui/BackButton'
 import { Button } from '../../ui/Button'
 import { Glyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
+import { SETTLE_FAST } from '../../ui/motion'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { type Note, Toast } from '../../ui/Toast'
 
@@ -131,7 +132,7 @@ export function Organize({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {/* The strip sits centred and the switch hard right, the same balance the
           two views are read with. */}
       <div className="flex items-center">
@@ -256,11 +257,9 @@ function IconCell({
                 title={a.label}
                 initial={{ scale: 0.3, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                transition={{
-                  duration: 0.16,
-                  delay: i * 0.03,
-                  ease: [0.34, 1.4, 0.64, 1],
-                }}
+                // No overshoot: nothing was thrown here. A bounce is what
+                // momentum looks like, and this arrived from a click.
+                transition={{ ...SETTLE_FAST, delay: i * 0.03 }}
                 onClick={(e) => {
                   e.stopPropagation()
                   setOpen(false)
@@ -306,12 +305,12 @@ function DetailList({
       <table className="w-full border-collapse text-body">
         <thead>
           <tr className="border-b border-hairline bg-raised text-caption font-semibold text-muted">
-            <th className="px-3 py-1.5 text-left font-semibold">Paper ID</th>
-            <th className="px-3 py-1.5 text-left font-semibold">状态</th>
-            <th className="px-3 py-1.5 text-left font-semibold">分数</th>
-            <th className="px-3 py-1.5 text-left font-semibold">%</th>
-            <th className="px-3 py-1.5 text-left font-semibold">时间</th>
-            <th className="px-3 py-1.5 text-right font-semibold">操作</th>
+            <th className="px-4 py-2.5 text-left font-semibold">Paper ID</th>
+            <th className="px-4 py-2.5 text-left font-semibold">状态</th>
+            <th className="px-4 py-2.5 text-left font-semibold">分数</th>
+            <th className="px-4 py-2.5 text-left font-semibold">%</th>
+            <th className="px-4 py-2.5 text-left font-semibold">时间</th>
+            <th className="px-4 py-2.5 text-right font-semibold">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -324,22 +323,22 @@ function DetailList({
                 className={`cursor-default border-b border-hairline last:border-0
                             ${selected === p.paper_id ? 'bg-raised' : ''}`}
               >
-                <td className="px-3 py-1 tabular-nums">{p.paper_id}</td>
-                <td className={`px-3 py-1 text-caption ${done ? '' : 'text-muted'}`}>
+                <td className="px-4 py-2 tabular-nums">{p.paper_id}</td>
+                <td className={`px-4 py-2 text-caption ${done ? '' : 'text-muted'}`}>
                   {done ? '已完成' : '待完成'}
                 </td>
-                <td className="px-3 py-1 tabular-nums">
+                <td className="px-4 py-2 tabular-nums">
                   {p.score_raw === null || p.score_total === null
                     ? '—'
                     : `${p.score_raw}/${p.score_total}`}
                 </td>
-                <td className="px-3 py-1 tabular-nums">
+                <td className="px-4 py-2 tabular-nums">
                   {p.percentage === null ? '—' : `${p.percentage.toFixed(1)}%`}
                 </td>
-                <td className="px-3 py-1 text-caption text-muted tabular-nums">
+                <td className="px-4 py-2 text-caption text-muted tabular-nums">
                   {p.timestamp ? p.timestamp.slice(0, 16).replace('T', ' ') : ''}
                 </td>
-                <td className="px-3 py-1">
+                <td className="px-4 py-2">
                   <div className="flex justify-end">
                     {actionsOf(p).map((a) => (
                       <button

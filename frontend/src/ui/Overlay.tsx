@@ -1,6 +1,7 @@
 import { motion } from 'motion/react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { SETTLE } from './motion'
 
 /** The element in App's layout that overlays are portalled into. It is a
  * sibling of the scrolling content and pinned to the viewport region, which is
@@ -11,13 +12,15 @@ export const OVERLAY_ROOT = 'overlay-root'
 /** The panel is already laid out at full size; only the window onto it moves.
  * Matching the card's own corner is what makes the first frame read as the
  * card rather than as a new surface appearing on top of it. */
-const CORNER = 6
+const CORNER = 7
 
 /** Fraction of the content area the fallback origin covers, for a caller with
  * no element to grow from. */
 const CENTRED = 0.7
 
-const GROW_MS = 180
+/** Must outlast the spring, or the panel is yanked off the screen partway
+ * through shrinking. */
+const TEARDOWN_MS = 460
 
 /** `clip-path` insets that show only `rect` of the host.
  *
@@ -68,7 +71,7 @@ export function Overlay({
   // A timer ends it whether or not the animation ever ran.
   useEffect(() => {
     if (open) return
-    const timer = setTimeout(() => setMounted(false), GROW_MS + 40)
+    const timer = setTimeout(() => setMounted(false), TEARDOWN_MS)
     return () => clearTimeout(timer)
   }, [open])
 
@@ -92,12 +95,12 @@ export function Overlay({
 
   return createPortal(
     <motion.div
-      className="pointer-events-auto absolute inset-0 overflow-y-auto bg-page p-5"
+      className="pointer-events-auto absolute inset-0 overflow-y-auto bg-page px-7 py-6"
       initial={{ clipPath: closed, opacity: 0 }}
       animate={
         open ? { clipPath: OPEN_CLIP, opacity: 1 } : { clipPath: closed, opacity: 0 }
       }
-      transition={{ duration: GROW_MS / 1000, ease: [0.4, 0, 0.2, 1] }}
+      transition={SETTLE}
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
       tabIndex={-1}
     >

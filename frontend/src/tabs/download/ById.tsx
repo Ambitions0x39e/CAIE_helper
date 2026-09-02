@@ -58,8 +58,8 @@ export function ById({ source }: { source: DownloadSource }) {
     mailReady && outcome?.kind === 'downloaded' && Boolean(outcome.result.qp_path) && !sent?.success
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
+    <div className="space-y-4">
+      <div className="rounded-ui border border-hairline bg-panel p-4.5 space-y-3">
         <Field
           label="Paper ID"
           hint="格式: <科目>_<考期>_qp_<试卷>"

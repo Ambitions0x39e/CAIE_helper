@@ -36,7 +36,7 @@ export function DownloadTab() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <SegmentedStrip items={VIEWS} value={view} onChange={go} />
         <div className="ml-auto flex items-center gap-2">

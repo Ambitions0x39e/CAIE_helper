@@ -14,12 +14,30 @@ function rowNote(entry: QueryEntry): string {
   return ''
 }
 
-/** A MS/insert hanging under its QP. Not selectable: ticking the QP takes the
- * whole set, because `download(insert=true)` fetches QP+MS+in together. */
-function Leaf({ text }: { text: string }) {
+/** A MS/insert hanging under its QP, drawn the way `tree` draws one.
+ *
+ * Box-drawing rather than an arrow glyph: `├──` and `└──` are full-height at
+ * the body size and join up into a single vertical rule down the group, so the
+ * branch reads as one shape instead of as a column of small marks. The last
+ * child closes the corner, which is what says the group ended.
+ *
+ * A tree library would bring selection, virtualisation and drag — none of which
+ * this has. It is two fixed levels of text.
+ *
+ * Not selectable: ticking the QP takes the whole set, because
+ * `download(insert=true)` fetches QP+MS+in together.
+ */
+function Leaf({ text, last }: { text: string; last: boolean }) {
   return (
-    <div className="flex items-center gap-1.5 pl-6 text-caption text-faint">
-      <span aria-hidden>↳</span>
+    <div className="flex items-center text-caption text-faint">
+      <span
+        aria-hidden
+        // Monospace so the trunk lines up under itself, and `leading-none` so
+        // consecutive rows' verticals meet instead of breaking at every line.
+        className="select-none whitespace-pre font-mono leading-none"
+      >
+        {last ? ' └─ ' : ' ├─ '}
+      </span>
       <span className="tabular-nums">{text}</span>
     </div>
   )
@@ -188,8 +206,8 @@ export function Request({ source }: { source: DownloadSource }) {
   )
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
+    <div className="space-y-4">
+      <div className="rounded-ui border border-hairline bg-panel p-4.5 space-y-3">
         <SessionPicker onChange={setSession} />
         <Button tone="accent" onClick={runQuery} disabled={busy || !session}>
           查询
@@ -218,7 +236,7 @@ export function Request({ source }: { source: DownloadSource }) {
       )}
 
       {loading && (
-        <div className="rounded-ui border border-hairline bg-panel p-3.5">
+        <div className="rounded-ui border border-hairline bg-panel p-4.5">
           <Skeleton />
         </div>
       )}
@@ -228,10 +246,9 @@ export function Request({ source }: { source: DownloadSource }) {
         //
         // Every column's header shares a row via `subgrid`, so they all end up
         // as tall as the tallest and the paper lists start on one baseline.
-        // The Flet version had to estimate rendered text width per character
-        // class, pick a line count for the whole header, and re-run all of it
-        // on every window resize while carrying the ticks across the rebuild.
-        // The browser does the same job as a layout pass.
+        // Alignment comes out of a layout pass rather than out of measuring
+        // text: no per-character width estimate, no line count to pick, and
+        // nothing to recompute on resize.
         <div
           className="grid gap-4 rounded-ui border border-hairline bg-panel p-3.5"
           style={{
@@ -262,9 +279,12 @@ export function Request({ source }: { source: DownloadSource }) {
                   return (
                     <div key={entry.paper_id}>
                       <Row entry={entry} />
-                      <Leaf text={hasMs ? ms : '（没有对应 MS）'} />
+                      <Leaf
+                        text={hasMs ? ms : '（没有对应 MS）'}
+                        last={!entry.has_insert}
+                      />
                       {entry.has_insert && (
-                        <Leaf text={entry.paper_id.replace('_qp_', '_in_')} />
+                        <Leaf text={entry.paper_id.replace('_qp_', '_in_')} last />
                       )}
                     </div>
                   )
@@ -276,7 +296,7 @@ export function Request({ source }: { source: DownloadSource }) {
       )}
 
       {entries && leftovers.length > 0 && (
-        <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-1">
+        <div className="rounded-ui border border-hairline bg-panel p-4.5 space-y-1">
           {leftovers.map((entry) =>
             entry.kind === 'gt' ? (
               <Row key={entry.paper_id} entry={entry} />

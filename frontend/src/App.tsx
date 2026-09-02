@@ -85,8 +85,15 @@ export default function App() {
           viewport, which is what an overlay pinned to `inset-0` needs to cover.
           Put the scroll here and an overlay would stretch to the content's full
           height instead. */}
-      <main className="relative min-w-0 flex-1 overflow-hidden bg-page">
-        <div className="h-full overflow-y-auto p-5">
+      {/* The content region runs one step roomier than the chrome. Every
+          spacing utility Tailwind emits is `calc(var(--spacing) * N)`, so
+          redefining that one variable here scales every padding, gap and box
+          inside — and the nav, which sits outside, keeps the size it has. */}
+      <main
+        className="relative min-w-0 flex-1 overflow-hidden bg-page"
+        style={{ '--spacing': '0.275rem' } as React.CSSProperties}
+      >
+        <div className="h-full overflow-y-auto px-7 py-6">
           {connected === false && (
             <div className="mb-3 rounded-ui border border-hairline bg-panel px-3 py-2 text-caption text-warn">
               {BRIDGE_ABSENT}

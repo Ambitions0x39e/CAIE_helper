@@ -8,7 +8,7 @@ const TICKS = [0, 25, 50, 75, 100]
 /** Percentage over time, oldest first.
  *
  * A plain polyline in an SVG that scales to its box: the x axis is attempt
- * order rather than real time, matching the Flet chart — the papers are not
+ * order rather than real time — the papers are not
  * evenly spaced in time and spacing them that way buries a cluster.
  */
 export function TrendChart({ attempts }: { attempts: PaperRecord[] }) {

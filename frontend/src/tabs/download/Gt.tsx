@@ -115,8 +115,8 @@ export function Gt({ source }: { source: DownloadSource }) {
   const prefix = doc ? `${doc.syllabus_id}_${doc.session}_qp_` : ''
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
+    <div className="space-y-4">
+      <div className="rounded-ui border border-hairline bg-panel p-4.5 space-y-3">
         <SessionPicker onChange={setSession} />
         <Button tone="accent" onClick={lookUp} disabled={busy || !session}>
           查询分数线
@@ -165,14 +165,14 @@ export function Gt({ source }: { source: DownloadSource }) {
               <thead>
                 <tr className="border-b border-hairline text-caption text-muted">
                   <th className="w-8 p-2" />
-                  <th className="p-2 text-left font-normal">Option</th>
-                  <th className="p-2 text-right font-normal">满分</th>
+                  <th className="p-2.5 text-left font-normal">Option</th>
+                  <th className="p-2.5 text-right font-normal">满分</th>
                   {grades.map((g) => (
-                    <th key={g} className="p-2 text-right font-normal">
+                    <th key={g} className="p-2.5 text-right font-normal">
                       {g}
                     </th>
                   ))}
-                  <th className="p-2 text-left font-normal">卷子</th>
+                  <th className="p-2.5 text-left font-normal">卷子</th>
                 </tr>
               </thead>
               <tbody>
@@ -194,10 +194,10 @@ export function Gt({ source }: { source: DownloadSource }) {
                           onClick={(e) => e.stopPropagation()}
                         />
                       </td>
-                      <td className="p-2 tabular-nums">{opt.option}</td>
-                      <td className="p-2 text-right tabular-nums">{opt.max_weighted}</td>
+                      <td className="p-2.5 tabular-nums">{opt.option}</td>
+                      <td className="p-2.5 text-right tabular-nums">{opt.max_weighted}</td>
                       {grades.map((g) => (
-                        <td key={g} className="p-2 text-right tabular-nums">
+                        <td key={g} className="p-2.5 text-right tabular-nums">
                           {opt.thresholds[g] ?? '–'}
                         </td>
                       ))}

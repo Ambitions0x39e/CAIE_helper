@@ -205,7 +205,7 @@ export function Mistakes() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <SegmentedStrip items={VIEWS} value={view} onChange={setView} />
         <span className="ml-auto text-caption text-muted tabular-nums">
@@ -288,15 +288,15 @@ export function Mistakes() {
                     <thead>
                       <tr className="border-b border-hairline text-caption text-muted">
                         <th className="w-8 p-2" />
-                        <th className="p-2 text-left font-normal">题号</th>
+                        <th className="p-2.5 text-left font-normal">题号</th>
                         {view === 'paper' && (
-                          <th className="p-2 text-left font-normal">Topic</th>
+                          <th className="p-2.5 text-left font-normal">Topic</th>
                         )}
                         {view === 'topic' && (
-                          <th className="p-2 text-left font-normal">卷号</th>
+                          <th className="p-2.5 text-left font-normal">卷号</th>
                         )}
-                        <th className="p-2 text-right font-normal">得分</th>
-                        <th className="p-2 text-left font-normal">评语</th>
+                        <th className="p-2.5 text-right font-normal">得分</th>
+                        <th className="p-2.5 text-left font-normal">评语</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -313,7 +313,7 @@ export function Mistakes() {
                               onChange={() => toggleRow(i)}
                             />
                           </td>
-                          <td className="p-2 tabular-nums">{r.question_id}</td>
+                          <td className="p-2.5 tabular-nums">{r.question_id}</td>
                           <td className="p-2 text-muted">
                             {view === 'paper' ? (
                               <TopicPicker record={r} onDone={load} />
@@ -321,7 +321,7 @@ export function Mistakes() {
                               r.paper_id
                             )}
                           </td>
-                          <td className="p-2 text-right tabular-nums">
+                          <td className="p-2.5 text-right tabular-nums">
                             {r.score} / {r.max_score}
                           </td>
                           <td className="selectable p-2 text-caption text-muted">

@@ -56,3 +56,73 @@ body {
   background: var(--ui-faint);
   background-clip: content-box;
 }
+
+/* ── Press ─────────────────────────────────────────────────────────────────
+   Feedback belongs on the press, not on the release. `:active` fires the
+   moment the pointer goes down, which is the difference between a control
+   that answers and one that waits to see whether you meant it. Every button
+   gets it, so a control added later is not the one dead spot in the app. */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  transform: scale(0.97);
+}
+
+button,
+[role="button"] {
+  transition: transform var(--dur-fast) var(--ease-ui);
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────────────
+   Not "no feedback" — gentler feedback. Travel and scaling go away, and what
+   is left is the opacity change that says a thing arrived or left. The JS
+   side is covered separately by MotionConfig's reducedMotion="user", which
+   turns transform animations into cross-fades rather than dropping them. */
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active {
+    transform: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: var(--dur-fast) !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Higher contrast ───────────────────────────────────────────────────────
+   The hairline is the foreground at 8% alpha, which is what makes one token
+   correct on all four surfaces. Asked for more contrast, it steps up rather
+   than the whole ladder being rebuilt. */
+@media (prefers-contrast: more) {
+  :root {
+    --ui-hairline: rgb(0 0 0 / 0.28);
+    --ui-hairline-strong: rgb(0 0 0 / 0.5);
+    --ui-muted: rgb(0 0 0 / 0.72);
+    --ui-faint: rgb(0 0 0 / 0.55);
+  }
+
+  /* Explicit dark, at any OS setting. */
+  :root[data-theme="dark"] {
+    --ui-hairline: rgb(255 255 255 / 0.3);
+    --ui-hairline-strong: rgb(255 255 255 / 0.55);
+    --ui-muted: rgb(255 255 255 / 0.75);
+    --ui-faint: rgb(255 255 255 / 0.58);
+  }
+}
+
+/* System dark, unless the page has forced light. The colour-scheme condition
+   has to ride on the media query rather than the selector: `:not([data-theme
+   ="light"])` alone matches an unstamped root, which is the default in *light*
+   mode too — it would hang white hairlines on a white page. */
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ui-hairline: rgb(255 255 255 / 0.3);
+    --ui-hairline-strong: rgb(255 255 255 / 0.55);
+    --ui-muted: rgb(255 255 255 / 0.75);
+    --ui-faint: rgb(255 255 255 / 0.58);
+  }
+}

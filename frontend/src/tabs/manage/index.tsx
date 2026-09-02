@@ -47,7 +47,7 @@ export function ManageTab() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <SegmentedStrip items={SECTIONS} value={section} onChange={go} />
       <PushTrack step={index} dir={dir}>
         {section === 'overview' ? (

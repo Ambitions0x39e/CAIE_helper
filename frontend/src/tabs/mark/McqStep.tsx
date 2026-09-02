@@ -86,10 +86,10 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
   const hasDetection = Object.keys(detected).length > 0 || undetected.length > 0
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="text-section font-bold">检测与批改</div>
 
-      <div className="rounded-ui border border-hairline bg-panel p-3.5 space-y-3">
+      <div className="rounded-ui border border-hairline bg-panel p-4.5 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={pick}>选择已批注 QP PDF</Button>
           <span className="min-w-0 flex-1 truncate text-caption text-muted">
