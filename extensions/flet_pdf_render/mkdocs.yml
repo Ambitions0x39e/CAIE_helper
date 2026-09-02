@@ -1,7 +1,0 @@
-site_name: FletPdfRender
-
-theme:
-  name: "material"
-
-plugins:
-  - mkdocstrings

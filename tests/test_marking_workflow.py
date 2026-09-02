@@ -1,8 +1,7 @@
 """Tests for modules.marking.workflow.
 
-This logic used to be nested inside app_flet/tabs/mark.py's build_mark_tab
-closure, where it could not be reached without a running Flet page — these
-are the first tests it has ever had.
+The module takes explicit arguments and imports nothing from the UI layer,
+which is what lets the whole grading flow be driven from here with stubs.
 """
 from __future__ import annotations
 

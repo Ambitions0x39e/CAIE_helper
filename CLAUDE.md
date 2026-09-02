@@ -33,8 +33,8 @@ release notes。那些地方是写「变化」的；成品是写「现状」的�
 ## Commands
 
 ```bash
-# Run the app
-uv run flet run app_flet
+# Run the app (needs `npm run build --prefix frontend` once, for the UI)
+uv run python -m app_web
 
 # Install dependencies
 uv sync
@@ -48,18 +48,18 @@ uv run ruff check .
 # Format
 uv run ruff format .
 
-# Type check — name the three packages. `tests/` and `main.py` are outside
-# strict mode (see [[tool.mypy.overrides]]), so a bare `.` reports dozens of
-# errors that are not the app's.
-uv run mypy app_flet core modules
+# Type check — name the three packages. `tests/` is outside strict mode
+# (see [[tool.mypy.overrides]]), so a bare `.` reports dozens of errors that
+# are not the app's.
+uv run mypy app_web core modules
 
 # Run tests
 uv run pytest
 ```
 
-## Building the packaged app (webview — the v2 shipping path)
+## Building the packaged app
 
-`app_web` is packaged with PyInstaller, not `flet build`. Three steps, in order
+`app_web` is packaged with PyInstaller. Three steps, in order
 — the spec bundles `frontend/dist` as it finds it, so a stale UI build ships
 without a word:
 
@@ -85,66 +85,10 @@ Output: `dist/cie-helper/` (~84 MB) and `dist/cie-helper-<version>-setup.exe`
 - **pandas and numpy are excluded on purpose**, worth 44 MB. The openai SDK's
   `_extras/pandas_proxy.py` is a lazy proxy nothing reaches through, but
   PyInstaller follows the import statically and packs both libraries.
-- **pywebview, pypdfium2 and pillow stay in the dev group**, not
-  `[project.dependencies]`. PyInstaller reads the environment, so it does not
-  need them there — and `flet build` pip-installs `[project.dependencies]`
-  fresh into the Flet bundle, where pypdfium2's and pillow's vendored `.dylib`s
-  break the universal macOS build. They move up when `app_flet` goes.
 - **The installer wipes two payload shapes.** `[InstallDelete]` lists
   `_internal` alongside the 1.x layout's loose `app\`, `site-packages\`, `Lib\`
   and `DLLs\`: an upgrade from 1.x lands in the same `{app}`, and `ignoreversion`
   overwrites files but never deletes ones the new build stopped shipping.
-
-## Building the packaged app (Flet)
-
-The distributable app is built with `flet build windows` / `flet build macos` —
-those two are the shipping targets (see 平台范围 below). The gotchas here were all
-hit on Windows; see memory `reference_flet_build_windows.md` and
-`reference_flet_build_size.md`:
-
-```bash
-# The bundled CPython comes from `requires-python`, NOT from a CLI flag — see
-# the note below. No --python-version needed; passing one only overrides it.
-# Windows (Chinese/GBK console): force UTF-8 or rich crashes on emoji output.
-# CL=-utf-8 guarded MSVC against non-GBK chars in plugin sources (C4819→C2220);
-# flet 0.86.1 fixed that (#6686) so it is probably redundant now — kept until
-# someone verifies a build without it. Dash spelling, NOT /utf-8, which Git Bash
-# mangles into a Program Files path.
-# Build from a SHORT real path (deep worktree paths overflow MSBuild).
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
-```
-
-- **`requires-python` picks the bundled CPython — keep its upper bound.** An
-  earlier version of this file claimed `--python-version` was the only control.
-  It isn't: `flet_cli/utils/python_versions.py::resolve_python_version` resolves
-  `--python-version` → `[project].requires-python` → manifest default, and for
-  the specifier it takes the **highest supported version that satisfies it**
-  (supported today: 3.12, 3.13, 3.14). So bare `>=3.13` bundled **3.14** while
-  the dev venv stayed on 3.13 — the suite ran on one Python and users got
-  another, silently. The project is pinned to `>=3.13,<3.14`; verified mapping:
-
-  | `requires-python` | bundles |
-  |---|---|
-  | `>=3.13` | 3.14 |
-  | `>=3.13,<3.14` | 3.13 |
-  | `>=3.14` | 3.14 |
-
-  Never leave the bound open: the day flet supports 3.15, an open `>=` jumps to
-  it on the next build with no diff to show for it. Moving to 3.14 is a
-  deliberate change — bump this specifier, `[tool.ruff] target-version` and
-  `[tool.mypy] python_version` together, then re-run the suite on 3.14. Runtime
-  deps all have cp314 dual-arch macOS wheels already; the one snag is dev-only
-  `watchdog` (6.0.0 tops out at cp313 on macOS, so it may need an sdist build).
-- **Switching Python versions self-cleans.** 0.86 records the version in
-  `build/.python-version` and forces a rebuild when it changes ("bad magic
-  number" from mixed `.pyc` is what this prevents), so no manual `flet clean`
-  for a version switch — unlike a *toolchain* bump, below.
-- **After any toolchain bump, `uv run flet clean` first.** 0.86 ships Flutter 3.44.8; a `build/` left over from an older Flutter holds `hook.dill` files compiled by the previous Dart SDK, and the new one dies on them with `Can't load Kernel binary: Invalid kernel binary format version (expected 130, found 127)`. The failure names `package:objective_c`, which makes it look like a plugin problem — it isn't, it's a stale cache.
-- **What ships**: `flet build` installs `[project.dependencies]` FRESH into the bundle (`build/windows/site-packages`). Separately it copies the **entire working directory** and **ignores `.gitignore`** — only top-level names in `[tool.flet.app].exclude` are left out.
-- **No more `app.zip`.** serious_python 4.x (via flet 0.86) ships the app **unpacked** at `build/windows/app/`, compiled to `.pyc`, alongside `site-packages` — there is no first-launch extraction and no `%APPDATA%\…\flet\app\` copy. `pyproject.toml` still ships next to the sources, so `current_app_version()` keeps working.
-- **Keep the exclude list complete.** Anything heavy not listed there (`.venv`, `.claude`, `.mypy_cache`, `.git`, caches, stray root PDFs) ships inside the bundle and bloats it — this is what once took it to ~1.2 GB. With the full exclude list `build/windows` is ~243 MB. When adding a new top-level dir/cache, add it to `exclude`.
-- **`uv sync --no-dev` does NOT shrink the app** — the `.venv` folder is copied wholesale regardless of what's installed; only `exclude` controls size.
-- **Keep `flet`, `flet-cli`, `flet-desktop` pinned in the same minor, in lockstep** (see memory `reference_flet_version_pin.md`), and keep the extension pubspec's `flet:` range covering that minor. The bundle's Python flet is pip-installed fresh from `[project.dependencies]` (uv.lock is ignored), while the Flutter client comes from flet-cli's template — if they diverge the packaged app opens to a permanent white screen (session never registers, `main()` never runs). 0.86 makes this stricter: its stream transports use a length-prefixed framing incompatible with pre-0.86 peers. Debug a white-screening package by running the exe with `--debug` (keeps Dart-side logs); the app sources are now editable in place at `build/windows/app/` (but they are `.pyc`).
 
 ## 平台范围：桌面（Windows + macOS）
 
@@ -154,35 +98,55 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 CL=-utf-8 uv run flet build windows
 
 具体意味着：布局按桌面窗口尺寸和鼠标交互设计（断点、间距、hover 态），
 触屏手势和小屏折叠都不用考虑；依赖要有 Windows 和 macOS 的 wheel，但不必有
-iOS 的。macOS 包只能在 Mac 上 `flet build macos` —— 交叉编译不存在。
+iOS 的。
 
-`extensions/flet_pdf_render`（pdfrx 原生渲染）不是移动端遗产 —— 它是桌面上
-**正在用的**渲染路径，`app_flet` 的整条批改流程都走它。
+**目前只有 Windows 打了包。** macOS 要出货得自己写一份 PyInstaller spec 和
+dmg 流程，而且只能在 Mac 上跑 —— 交叉编译不存在。
 
 ## Stack
 
 - **Python 3.13+** with `uv` as package manager
-- **Flet** for the UI (desktop app, Windows + macOS; `flet run app_flet`)
+- **pywebview + React/TypeScript** for the UI — a native window hosting a built
+  Vite bundle, with `window.pywebview.api` as the only bridge (`app_web/`,
+  `frontend/`)
 - **Pydantic v2** for all validation, settings, and domain models (strict mode enabled on most models)
 - **pdfminer.six** for all PDF text/geometry extraction — segmentation *and* grade thresholds. **pdfplumber is dev-only now**, kept solely for the segmenter fidelity check that diffs the two engines; nothing shipped imports it, and the old `gt` extra is gone
 - **requests** for downloading PDFs
 - **ruff** (E/F/I/UP/B/SIM) + **mypy strict** for linting/typing
 
-The Streamlit app (`app.py`, `pages/`, `modules/visualizer.py`) was removed once
-it had been fully superseded by the Flet app — it no longer even imported. Two of
-its features were never ported: the grade-threshold checker and the syllabus
-config editor. `core/gt_parser.py` (UI-agnostic) is kept for a future port; the
-deleted UI is recoverable from git history.
+`core/gt_parser.py` is UI-agnostic and drives the 分数线 view. The syllabus
+config has no in-app editor — `data/syllabus_config.json` is edited by hand.
 
 ## Architecture
 
 ### Entry point
-- `main.py` / `app_flet/main.py` — Flet app: header + 4 tabs (下载 / 管理 / 批改 / 设置)
-- `app_flet/state.py` — `AppState`, the mutable state shared across tabs
-- `app_flet/tabs/*.py` — one `build_*_tab()` per tab; `app_flet/components/` holds shared widgets and dialogs
-- `app_flet/tabs/manage/` — everything that reads back stored papers, in one tab with three sections. `tab.py` owns the section strip and hosts 总览's full-cover detail panel (the fixed-height `Stack` + `on_resize` pattern from `mark/tab.py` — a scrolling `Column` gives an overlay no viewport to pin to). `overview.py` is the aggregate view (a hand-drawn `canvas.Arc` donut plus one card per syllabus, opening onto its score table and trend chart); `organize.py` is browse-and-act (Finder's icon / detail layouts); `mistakes.py` is the per-paper breakdown of lost marks. The `finder_*` row style lives in `organize.py` and 错题 imports it — the two have different columns and share only the look.
-  - **The donut counts one unit per paper, not per mark.** A Pending record has no `score_total` (`completed_requires_scores` only demands them for Completed), so the grey slice has no marks to contribute. Each paper is one unit: a completed one splits into earned/lost by its score rate, a pending one is one whole grey unit. `tests/test_manage_overview.py` pins the slices summing to the paper count.
-- `app_flet/tabs/mark/` — the other tab too big for a single file. `tab.py` owns the rebuild loop, `setup_step` / `answer_pages` / `grade_step` / `results` / `mcq` are the sections, and they share mutable state through `MarkTabContext` (`context.py`) instead of the closure refs the old single-file version used. UI-agnostic decisions live one layer down, in `modules/marking/workflow.py`.
+- `app_web/main.py` — the pywebview host: opens the window, loads
+  `frontend/dist/index.html` off disk, and hands the page an `Api` instance as
+  `js_api`. `CIE_DEV=1` points it at the Vite dev server instead; `CIE_DEBUG=1`
+  restores devtools.
+- `app_web/api.py` — every `window.pywebview.api.*` method. Thin adapters only:
+  take JSON, build the Pydantic model, call `core`/`modules`, return
+  `model_dump(mode="json")`. A business rule appearing here is in the wrong layer.
+  Failures come back one way — `_invalid` folds `ValidationError` into the same
+  `{success, error}` shape the operations return, so the frontend never has to
+  handle a rejected promise for a mistyped paper id.
+- `app_web/jobs.py` — long-running work (parse, grade, MCQ detect) runs on a
+  thread and pushes progress events to the page; one in-progress flag at a time.
+- `frontend/src/App.tsx` — the four-tab shell (下载 / 管理 / 批改 / 设置) plus the
+  overlay root that full-cover panels portal into.
+- `frontend/src/tabs/<tab>/` — one directory per tab. `manage/` splits into
+  `Overview` (donut + per-syllabus cards), `Organize` (icon / detail layouts)
+  and `Mistakes`; `mark/` into `SetupStep` / `GradeStep` / `McqStep` /
+  `ResultsStep`.
+  - **The donut counts one unit per paper, not per mark.** A Pending record has
+    no `score_total` (`completed_requires_scores` only demands them for
+    Completed), so the grey slice has no marks to contribute. Each paper is one
+    unit: a completed one splits into earned/lost by its score rate, a pending
+    one is one whole grey unit. `frontend/src/lib/papers.test.ts` pins the
+    slices summing to the paper count.
+- `frontend/src/ui/` — the shared primitives. `Overlay` is the full-cover panel
+  (portal + clip-path grow from the clicked rect); `PushTrack` the sliding
+  N-step track; `motion.ts` the two springs everything animates on.
 
 ### `core/` — infrastructure layer
 - **`settings.py`** — `AppSettings` (paths: `~/.cie_helper/`) and `MailConfig` (SMTP from .env). Singleton `app_settings` imported by all modules.
@@ -200,9 +164,9 @@ deleted UI is recoverable from git history.
 - **`manager.py`** — `PaperManager` handles score submission (marks Completed, timestamps), record deletion (optionally removes local PDFs), and opening PDFs in system viewer (cross-platform).
 - **`mailer.py`** — `GoodNotesMailer` sends QP PDF to GoodNotes import email via SMTP SSL, updates `sent_to_gn` flag on success. Uses `_MailError` (never leaks outside module).
 - **`updater.py`** — in-app update check / download / silent install against GitHub releases.
-- **`marking/`** — the Mark tab's pipeline, split out because these served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading), `workflow` (orchestration). Nothing outside `app_flet/tabs/mark/` imports them.
+- **`marking/`** — the Mark tab's pipeline, split out because these served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading), `workflow` (orchestration). Nothing outside `app_web/api.py` imports them.
   - **`page_segmenter` is two-phase**: `scan_document(pdf)` does every PDF-only step and `match_scanned(doc, question_ids)` the rest, so the Mark tab can scan the answer paper *while* the mark scheme is still parsing. `segment_questions_report()` is still the one-shot composition of the two.
-  - **`workflow.py` must never import `flet`/`app_flet`.** That constraint is what makes the grading pipeline testable (`tests/test_marking_workflow.py`); keep user-facing strings on the UI side of the boundary.
+  - **`workflow.py` must never import `app_web`.** That constraint is what makes the grading pipeline testable (`tests/test_marking_workflow.py`); keep user-facing strings on the UI side of the boundary.
 
 ### Data patterns
 - **Result objects** — all operations return typed result objects (`DownloadResult`, `MailResult`, `UpdateResult`, `DeleteResult`, `OpenResult`) with `success: bool`, `error: str | None`, and operation-specific fields. Exceptions are caught and wrapped — never propagate to the UI layer.
@@ -220,4 +184,4 @@ deleted UI is recoverable from git history.
 - `typing.Literal` for string enum patterns (DownloadSource, PaperRecord.status)
 - Cross-field validation via `@model_validator(mode="after")`
 - Private exception classes (`_DownloadError`, `_MailError`) to encapsulate module internals
-- Layering is one-directional: `core ← modules ← app_flet`. Nothing in `core/` or `modules/` may import `app_flet`.
+- Layering is one-directional: `core ← modules ← app_web ← frontend`. Nothing in `core/` or `modules/` may import `app_web`.

@@ -1,2 +1,0 @@
-from flet_pdf_render.flet_pdf_render import PdfRenderer as PdfRenderer
-from flet_pdf_render.flet_pdf_render import RenderClip as RenderClip

@@ -25,7 +25,7 @@ from modules.marking.ms_parser import PaperConfig, QuestionConfig
 from modules.marking.renderer import page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
-    from modules.marking.renderer import NativeRenderer
+    from modules.marking.workflow import Renderer
 
 _ANSWER_LETTERS = frozenset("ABCD")
 
@@ -257,7 +257,7 @@ def detect_student_answers(
     qp_pdf_path: str | Path,
     answer_key: PaperConfig,
     grader_config: GraderConfig,
-    renderer: NativeRenderer,
+    renderer: Renderer,
     dpi: int = 200,
     on_progress: Callable[[int, int], None] | None = None,
     source_filename: str | Path | None = None,

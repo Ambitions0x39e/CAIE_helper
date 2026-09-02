@@ -1,7 +1,6 @@
 /** Run with `npm test` (node --test, no framework dependency).
  *
- * These replace tests/test_manage_overview.py, which could not come across
- * because it imports flet. Same cases, same reasoning.
+ * These pin the arithmetic the 总览 donut and the subject glyphs read out.
  */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'

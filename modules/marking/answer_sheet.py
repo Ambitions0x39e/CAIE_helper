@@ -16,7 +16,7 @@ vendored dylibs break the universal macOS build (see ``pyproject.toml``), and
 a font resolved from the host would render differently on a machine that
 hasn't got it.
 
-Nothing here may import ``flet``/``app_flet`` — same rule as the rest of
+Nothing here may import ``app_web`` — same rule as the rest of
 ``modules/marking``.
 """
 from __future__ import annotations

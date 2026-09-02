@@ -2,9 +2,9 @@
 
 Turning a grading run into rows, grouping them, filtering them and writing
 them out as CSV are all decisions, not widgets — they live here so they can
-be tested without a Flet page, for the same reason ``workflow.py`` exists.
+be tested without a UI, for the same reason ``workflow.py`` exists.
 
-Nothing in this module may import ``flet`` or ``app_flet`` (see CLAUDE.md's
+Nothing in this module may import ``app_web`` (see CLAUDE.md's
 one-directional layering rule); keep user-facing strings on the other side
 of the boundary, with the one exception of :data:`UNCLASSIFIED`, which is a
 grouping key the UI only echoes.

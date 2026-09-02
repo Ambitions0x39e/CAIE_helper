@@ -1,14 +1,11 @@
 """UI-agnostic orchestration for the Mark tab's flow.
 
-Everything here used to live inside ``app_flet/tabs/mark.py``'s
-``build_mark_tab`` closure, where it read and wrote a dozen shared ``list``
-refs and Flet controls — so none of it could be tested. These are plain
-functions over explicit arguments; the Flet layer keeps the widgets, the
-threading and the user-facing strings, and calls in here for the decisions.
+Plain functions over explicit arguments: the UI layer keeps the widgets,
+the threading and the user-facing strings, and calls in here for the decisions.
 
-Nothing in this module may import ``flet`` or ``app_flet`` (see CLAUDE.md's
-one-directional layering rule) — that constraint is exactly what makes it
-testable, so keep UI strings on the other side of the boundary.
+Nothing in this module may import ``app_web`` (see CLAUDE.md's one-directional
+layering rule) — that constraint is exactly what makes it testable, so keep
+UI strings on the other side of the boundary.
 """
 from __future__ import annotations
 
@@ -175,10 +172,10 @@ def topics_for_paper(
 # ── Grading run ───────────────────────────────────────────────────
 
 class Renderer(Protocol):
-    """The slice of NativeRenderer a grading run needs.
+    """The slice of a renderer a grading run needs.
 
-    Declared structurally so tests can drive :func:`grade_paper` without a
-    Flet page, an event loop, or the pdfrx service behind it.
+    Declared structurally so a test can drive :func:`grade_paper` with a
+    stub, and so nothing here has to name a concrete rasterizer.
     """
 
     def render_regions(

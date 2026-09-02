@@ -21,7 +21,7 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 from urllib.parse import urlparse
 
 import webview
@@ -73,9 +73,6 @@ from modules.marking.workflow import (
 )
 from modules.updater import AppUpdater, current_app_version
 
-if TYPE_CHECKING:
-    from modules.marking.renderer import NativeRenderer
-
 #: What a failed call looks like. Mirrors DownloadResult/QueryResult so the
 #: frontend has exactly one shape to read.
 type Payload = dict[str, Any]
@@ -117,8 +114,7 @@ def _save_to_chosen_file(
     """Ask the user where to put *data*, then write it there.
 
     The dialog is the host's own, so nothing is written until a destination is
-    picked and cancelling is a normal outcome rather than an error — same
-    contract the Flet tab's save picker had.
+    picked and cancelling is a normal outcome rather than an error.
     """
     window = webview.active_window()
     if window is None:
@@ -270,7 +266,7 @@ class Api:
         """Re-file one mistake under a different topic; None clears the tag.
 
         The store is append-only and has no update, so the whole file is
-        rewritten with the one row replaced — matching what the Flet tab does.
+        rewritten with the one row replaced.
         """
         records = self._mistakes.load_all()
         topics = self.topics_for(paper_id) or {}
@@ -424,13 +420,7 @@ class Api:
             on_progress=lambda batch, total: push(
                 {"type": "ms_progress", "batch": batch, "total": total},
             ),
-            # ms_parser annotates this parameter as the concrete
-            # NativeRenderer, but only calls render_pages on it — the
-            # Renderer protocol's shape, which LocalRenderer satisfies.
-            # Widening that annotation means editing modules/, which this
-            # migration does not do; the cast goes away in M5 when
-            # NativeRenderer does.
-            renderer=cast("NativeRenderer", LocalRenderer()),
+            renderer=LocalRenderer(),
             force=force,
         )
 
@@ -545,7 +535,7 @@ class Api:
                 qp_path,
                 a.config,
                 config,
-                renderer=cast("NativeRenderer", LocalRenderer()),
+                renderer=LocalRenderer(),
                 dpi=config.dpi,
                 on_progress=lambda batch, total: push(
                     {"type": "mcq_progress", "batch": batch, "total": total},

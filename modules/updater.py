@@ -90,9 +90,10 @@ def platform_asset_suffix() -> str | None:
 def current_app_version() -> str:
     """Our own version, read from pyproject.toml (same source as the About page).
 
-    ``flet build`` copies the whole working directory into the bundle, so
-    pyproject.toml sits next to the package in a packaged app too. Returns ""
-    when it cannot be read — ``check()`` turns that into a plain error.
+    The packaging spec ships pyproject.toml into the bundle root, which is
+    what ``parents[1]`` resolves to in a frozen build, so this reads the same
+    file either way. Returns "" when it cannot be read — ``check()`` turns
+    that into a plain error.
     """
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     try:
