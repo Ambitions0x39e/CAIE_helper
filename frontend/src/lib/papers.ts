@@ -79,6 +79,21 @@ export function syllabusIdOf(paperId: string): string {
   return paperId.slice(0, 4)
 }
 
+/** Which paper of the syllabus this is: the second-to-last digit of the
+ * variant. `_qp_12` / `_qp_13` → "1", `_qp_21` → "2". A single-digit variant
+ * (`_qp_1`) uses that digit; anything without one lands in "?".
+ *
+ * It is what both the download tab's columns and the 管理 tab's per-paper
+ * trends are grouped by. */
+export function paperDigit(paperId: string): string {
+  const variant = paperId.split('_').pop() ?? ''
+  if (variant.length >= 2 && /\d/.test(variant[variant.length - 2])) {
+    return variant[variant.length - 2]
+  }
+  if (/\d/.test(variant[0] ?? '')) return variant[0]
+  return '?'
+}
+
 /** Sitting order of the three exam series within a year.
  *
  * March (`m`) is the Feb/March series, `s` the May/June one and `w` the

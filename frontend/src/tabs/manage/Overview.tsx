@@ -1,14 +1,19 @@
 import { useMemo, useState } from 'react'
-import { subjectGlyph, syllabusIdOf, tally } from '../../lib/papers'
+import { paperDigit, subjectGlyph, syllabusIdOf, tally } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
 import { Donut } from '../../ui/Donut'
 import { Glyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
+import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { TrendChart } from './TrendChart'
 
 /** A paper's marks over time need at least two points to be a line. */
 const MIN_FOR_TREND = 2
+
+/** The filter segment that keeps every paper of the syllabus. A paper number
+ * is a single digit, so it cannot collide with this. */
+const ALL = 'all'
 
 /** The three ring sizes: the overall one, a card's, and the panel header's. */
 const DONUT_BIG = 168
@@ -180,23 +185,37 @@ function SyllabusDetail({
   records: PaperRecord[]
   onClose: () => void
 }) {
+  /** `all`, or the paper number the marks are narrowed to. */
+  const [paper, setPaper] = useState(ALL)
+
+  /** Which papers of this syllabus the user actually owns — Paper 1 and
+   * Paper 3 for one subject, 1 through 5 for another. */
+  const digits = useMemo(
+    () => [...new Set(records.map((r) => paperDigit(r.paper_id)))].sort(),
+    [records],
+  )
+
   /** Completed papers oldest first; undated last, since a row written before
    * the timestamp column existed has none. */
   const attempts = useMemo(
     () =>
       records
         .filter((r) => r.percentage !== null)
+        .filter((r) => paper === ALL || paperDigit(r.paper_id) === paper)
         .sort((a, b) => {
           if (!a.timestamp) return 1
           if (!b.timestamp) return -1
           return a.timestamp.localeCompare(b.timestamp)
         }),
-    [records],
+    [records, paper],
   )
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
+    // Sized to the panel rather than to its content, so the marks scroll
+    // inside their own column and the header, the filter and the chart stay
+    // where they are.
+    <div className="flex h-full flex-col gap-4">
+      <div className="flex shrink-0 items-center gap-3">
         <BackButton onClick={onClose} />
         <div className="min-w-0 flex-1">
           <div className="text-section font-bold">
@@ -211,39 +230,69 @@ function SyllabusDetail({
         />
       </div>
 
-      {attempts.length >= MIN_FOR_TREND ? (
-        <TrendChart attempts={attempts} />
-      ) : (
-        <div className="text-caption italic text-muted">
-          至少需要 2 次成绩才能绘制趋势图
+      {digits.length > 1 && (
+        <div className="shrink-0">
+          <SegmentedStrip
+            items={[
+              { id: ALL, label: '总览' },
+              ...digits.map((d) => ({ id: d, label: `Paper ${d}` })),
+            ]}
+            value={paper}
+            onChange={setPaper}
+          />
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-ui border border-hairline">
-        <table className="w-full border-collapse text-body">
-          <thead>
-            <tr className="border-b border-hairline text-caption text-muted">
-              <th className="p-2.5 text-left font-normal">Paper ID</th>
-              <th className="p-2.5 text-right font-normal">Raw</th>
-              <th className="p-2.5 text-right font-normal">Total</th>
-              <th className="p-2.5 text-right font-normal">%</th>
-              <th className="p-2.5 text-left font-normal">Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {attempts.map((r) => (
-              <tr key={r.paper_id} className="border-b border-hairline last:border-0">
-                <td className="p-2.5 tabular-nums">{r.paper_id}</td>
-                <td className="p-2.5 text-right tabular-nums">{r.score_raw}</td>
-                <td className="p-2.5 text-right tabular-nums">{r.score_total}</td>
-                <td className="p-2.5 text-right tabular-nums">{pct(r.percentage ?? 0)}</td>
-                <td className="p-2 text-caption text-muted tabular-nums">
-                  {r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : ''}
-                </td>
+      <div
+        className="grid min-h-0 flex-1 gap-4"
+        style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}
+      >
+        <div className="flex min-h-0 flex-col overflow-y-auto rounded-ui border border-hairline">
+          <table className="w-full border-collapse text-body">
+            <thead className="sticky top-0 z-10 bg-panel">
+              <tr className="border-b border-hairline text-caption text-muted">
+                <th className="p-2.5 text-left font-normal">Paper ID</th>
+                <th className="p-2.5 text-right font-normal">Raw</th>
+                <th className="p-2.5 text-right font-normal">Total</th>
+                <th className="p-2.5 text-right font-normal">%</th>
+                <th className="p-2.5 text-left font-normal">Date</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {attempts.map((r) => (
+                <tr key={r.paper_id} className="border-b border-hairline last:border-0">
+                  <td className="p-2.5 tabular-nums">{r.paper_id}</td>
+                  <td className="p-2.5 text-right tabular-nums">{r.score_raw}</td>
+                  <td className="p-2.5 text-right tabular-nums">{r.score_total}</td>
+                  <td className="p-2.5 text-right tabular-nums">{pct(r.percentage ?? 0)}</td>
+                  <td className="p-2 text-caption text-muted tabular-nums">
+                    {r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : ''}
+                  </td>
+                </tr>
+              ))}
+              {attempts.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-3 text-caption italic text-muted">
+                    还没有成绩
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="self-start rounded-ui border border-hairline bg-panel p-3">
+          <div className="mb-1 text-caption text-muted">
+            得分率趋势{paper === ALL ? '' : ` · Paper ${paper}`}
+          </div>
+          {attempts.length >= MIN_FOR_TREND ? (
+            <TrendChart attempts={attempts} />
+          ) : (
+            <div className="py-8 text-center text-caption italic text-muted">
+              至少需要 2 次成绩才能绘制趋势图
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

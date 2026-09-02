@@ -7,6 +7,7 @@ import { describe, test } from 'node:test'
 import {
   FALLBACK_GLYPH,
   comparePaperIds,
+  paperDigit,
   subjectGlyph,
   syllabusIdOf,
   tally,
@@ -118,5 +119,28 @@ describe('comparePaperIds', () => {
   test('an id the table has not seen still appears, at the end', () => {
     const sorted = ['9709_x23_qp_11', '9709_s23_qp_11'].sort(comparePaperIds)
     assert.deepEqual(sorted, ['9709_s23_qp_11', '9709_x23_qp_11'])
+  })
+})
+
+describe('paperDigit — which paper of the syllabus this is', () => {
+  test('takes the second-to-last digit of the variant', () => {
+    for (const [id, want] of [
+      ['9231_s22_qp_11', '1'],
+      ['9231_s22_qp_12', '1'],
+      ['9231_s22_qp_13', '1'],
+      ['9231_s22_qp_21', '2'],
+      ['9231_s22_qp_41', '4'],
+    ] as const) {
+      assert.equal(paperDigit(id), want, id)
+    }
+  })
+
+  test('a single-digit variant uses that digit', () => {
+    assert.equal(paperDigit('9702_s23_qp_1'), '1')
+  })
+
+  test('anything without a digit lands in the ? bucket', () => {
+    assert.equal(paperDigit('9701_w25_gt'), '?')
+    assert.equal(paperDigit('9702_s23_qp_ab'), '?')
   })
 })
