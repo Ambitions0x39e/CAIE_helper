@@ -7,7 +7,7 @@ A local app to download CIE past papers, mark them with AI, and track your score
 1. Install `uv` (Astral's Python package manager) — see the instructions [here](https://docs.astral.sh/uv/getting-started/installation/). `uv` will fetch the right Python version for you.
 2. Run `uv sync` to install the dependencies.
 3. Build the UI with `npm run build --prefix frontend`, then package with
-   `uv run pyinstaller packaging/windows/cie-helper.spec --noconfirm`.
+   `uv run pyinstaller packaging/cie-helper.spec --noconfirm`.
 
 ### Installer for distribution
 Compile `packaging/windows/cie-helper.iss` with Inno Setup 6 → `dist/cie-helper-<version>-setup.exe`.

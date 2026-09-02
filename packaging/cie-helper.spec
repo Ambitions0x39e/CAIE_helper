@@ -1,22 +1,37 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for the Windows app.
+"""PyInstaller spec, for both desktop targets.
 
-Build from the repo root, so `dist/` and `build/` land where the installer
-script expects them:
+Build from the repo root, so `dist/` and `build/` land where the packaging
+scripts expect them:
 
-    uv run pyinstaller packaging/windows/cie-helper.spec --noconfirm
+    uv run pyinstaller packaging/cie-helper.spec --noconfirm
 
-Output is `dist/cie-helper/` — the exe plus `_internal/`, which Inno then wraps
-into a single setup.exe (see cie-helper.iss).
+On Windows that leaves `dist/cie-helper/` — the exe plus `_internal/`, which
+Inno then wraps into a single setup.exe (see windows/cie-helper.iss).
+On macOS the same COLLECT is wrapped by BUNDLE into `dist/CIE Helper.app`,
+which macos/build-dmg.sh stages into a .dmg.
+
+One spec rather than one per platform: the analysis, the data files and the
+exclusions are identical, and the only genuinely per-platform parts are the
+icon format and the .app wrapper at the very end.
 
 Nothing here needs a matching change in the app's own path handling. Every
 runtime lookup is `Path(__file__).parents[1] / <name>` from a module one level
 down, and under a frozen build that resolves to `_internal/` — which is exactly
-where the `datas` entries below put things.
+where the `datas` entries below put things. Inside a .app that path is
+`Contents/Frameworks/`, and the same lookup still lands on it.
 """
+import re
+import sys
 from pathlib import Path
 
-ROOT = Path(SPECPATH).resolve().parents[1]  # noqa: F821 — injected by PyInstaller
+ROOT = Path(SPECPATH).resolve().parent  # noqa: F821 — injected by PyInstaller
+
+# The .app carries its version in Info.plist, where Finder and the updater
+# read it. Same single source of truth as everywhere else: [project].version.
+VERSION = re.search(
+    r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text("utf-8"), re.M
+).group(1)
 
 datas = [
     # The UI. `npm run build --prefix frontend` has to have run first; the app
@@ -85,10 +100,14 @@ exe = EXE(  # noqa: F821
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
+    # Native arch. A universal2 build needs every wheel in the tree to be
+    # universal, and pypdfium2 and pillow ship per-arch ones.
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ROOT / "packaging" / "windows" / "app.ico"),
+    # Windows embeds the icon in the exe; macOS reads it out of the .app's
+    # Info.plist instead, so it is passed to BUNDLE below and not here.
+    icon=str(ROOT / "packaging" / "windows" / "app.ico") if sys.platform == "win32" else None,
 )
 
 coll = COLLECT(  # noqa: F821
@@ -100,3 +119,26 @@ coll = COLLECT(  # noqa: F821
     upx_exclude=[],
     name="cie-helper",
 )
+
+if sys.platform == "darwin":
+    # `.icns` only — PyInstaller does not convert, and a `.ico` here is a build
+    # error. Absent, the bundle gets the generic application icon and the build
+    # still succeeds, which is the right trade for a target that has no
+    # released artwork yet.
+    icns = ROOT / "packaging" / "macos" / "app.icns"
+    app = BUNDLE(  # noqa: F821
+        coll,
+        name="CIE Helper.app",
+        icon=str(icns) if icns.exists() else None,
+        bundle_identifier="xyz.asanagi.cie-helper",
+        version=VERSION,
+        info_plist={
+            # Without this the window renders at 72 dpi and every glyph in the
+            # webview is soft on a Retina display.
+            "NSHighResolutionCapable": True,
+            # Nothing here is a document handler or a background agent; it is a
+            # plain windowed app.
+            "LSApplicationCategoryType": "public.app-category.education",
+            "CFBundleShortVersionString": VERSION,
+        },
+    )

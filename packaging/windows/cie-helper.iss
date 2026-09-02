@@ -6,7 +6,7 @@
 ;  Prereqs, in order — the spec bundles frontend/dist as-is, so a stale UI
 ;  build ships silently:
 ;      npm run build --prefix frontend
-;      uv run pyinstaller packaging/windows/cie-helper.spec --noconfirm
+;      uv run pyinstaller packaging/cie-helper.spec --noconfirm
 ;
 ;  Compile (from anywhere — paths below are relative to THIS .iss file):
 ;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\cie-helper.iss
