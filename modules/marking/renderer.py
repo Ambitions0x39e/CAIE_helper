@@ -1,38 +1,26 @@
-"""Unified PDF rendering, backed by the native pdfrx Flet extension.
+"""Unified PDF rendering, backed by pypdfium2 in this process.
 
-pdfrx renders natively on every platform, so this is the single rendering path
-in the app — nothing here goes through pdfplumber, which is a dev-only dep.
+One rendering path for the whole app: `LocalRenderer` rasterizes with PDFium
+directly, so a grading run needs no event loop, no RPC and nothing from the UI
+layer. Nothing here goes through pdfplumber, which is a dev-only dep.
 
-**The native side is handed a path, never the PDF's bytes.** Python and Dart
-are two sides of one process, so the file it needs is already on disk where it
-can reach it. A bytes-based call ships the whole document over the Flet RPC,
-which stalls the transport on a large answer export — a 35MB GoodNotes scan
-hangs forever with no result. A path keeps the payload constant-size whatever
-the document weighs.
-
-The extension's `PdfRenderer` service is async and lives on the flet page;
-`NativeRenderer` bridges it to the synchronous, background-thread grading loop
-via `run_coroutine_threadsafe` against the page's event loop. The pure helpers
-(`to_pdf_bytes`, `full_page_clips`) are app-independent and unit-tested.
+The pure helpers (`to_pdf_bytes`, `full_page_clips`) are app-independent and
+unit-tested.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import logging
 import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from modules.marking.page_segmenter import PageClip, _load_pages
 
 if TYPE_CHECKING:
-    from asyncio import AbstractEventLoop
     from collections.abc import Iterator
-
-    from flet_pdf_render import PdfRenderer
 
 _log = logging.getLogger("cie_helper.renderer")
 
@@ -116,11 +104,11 @@ class LocalRenderer:
     takes an inset in points from each edge — verified against a banded page:
     an 800pt page with ``crop=(0, 400, 0, 200)`` returns exactly the 200pt band
     starting 200pt down. Rendering the full page and cropping the bitmap would
-    instead hold a whole page of pixels per clip, which on a large scan is the
-    memory the RPC-era workaround used to spend.
+    instead hold a whole page of pixels per clip, which is a whole page of
+    memory per clip on a large scan.
 
-    pypdfium2 and pillow are imported lazily because this module is also
-    imported by the Flet app, whose bundle does not carry them.
+    pypdfium2 and pillow are imported lazily: importing this module for the
+    pure helpers alone should not pay for loading PDFium.
     """
 
     def render_regions(
@@ -171,68 +159,6 @@ class LocalRenderer:
         _log.info("render_regions(local): %d image(s) from %d clip(s)",
                   len(out), len(clips))
         return out
-
-    def render_pages(
-        self,
-        source: str | bytes | Path,
-        page_numbers: list[int],
-        dpi: int = 200,
-    ) -> list[bytes]:
-        """Render whole pages (1-indexed page numbers) to PNGs."""
-        all_clips = full_page_clips(source)
-        selected = [all_clips[n - 1] for n in page_numbers]
-        return self.render_regions(source, selected, dpi)
-
-
-class NativeRenderer:
-    """Sync-callable renderer bridging to the async pdfrx `PdfRenderer` service.
-
-    Construct once per grading run with the page's `PdfRenderer` service and the
-    page's event loop, then call from any (background) thread.
-    """
-
-    def __init__(self, service: PdfRenderer, loop: AbstractEventLoop) -> None:
-        self._service = service
-        self._loop = loop
-
-    def render_regions(
-        self,
-        source: str | bytes | Path,
-        clips: list[PageClip],
-        dpi: int = 200,
-    ) -> list[bytes]:
-        """Render each clip (full-width vertical slice) to a PNG."""
-        if not clips:
-            return []
-
-        from flet_pdf_render import RenderClip
-
-        rclips = [
-            RenderClip(page=c.page_idx, y_top=c.y_top, y_bottom=c.y_bottom)
-            for c in clips
-        ]
-        pages = sorted({c.page_idx + 1 for c in clips})
-
-        with _as_local_path(source) as pdf_path:
-            _log.info(
-                "render_regions: %d clip(s) on page(s) %s, dpi=%d",
-                len(clips), pages, dpi,
-            )
-            coro = self._service.render_regions(pdf_path, rclips, dpi)
-            future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-            try:
-                result = cast("list[bytes]", future.result(
-                    timeout=_RENDER_TIMEOUT_S,
-                ))
-            except TimeoutError:
-                future.cancel()
-                raise TimeoutError(
-                    f"原生渲染超时（>{_RENDER_TIMEOUT_S:.0f}s）："
-                    f"第 {pages} 页。可能是答卷 PDF 过大/扫描件，"
-                    "请换用更小的答卷或降低 DPI。"
-                ) from None
-        _log.info("render_regions: got %d image(s)", len(result))
-        return result
 
     def render_pages(
         self,

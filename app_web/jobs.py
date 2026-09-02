@@ -13,7 +13,7 @@ backend ever proves unreliable; nothing here depends on which is used beyond
 this file.
 
 **One job at a time.** Both operations mutate the same analysis state, and the
-Flet tab guarded them with a single in-progress flag for the same reason. The
+A single in-progress flag is what guards them. The
 guard lives here so every caller inherits it rather than remembering it.
 """
 from __future__ import annotations

@@ -10,7 +10,7 @@ a clip rectangle around it. Nothing is rasterised, so the text stays real
 text and the file stays small — and none of it needs the native pdfrx
 renderer, so it works (and is testable) outside the packaged app.
 
-Nothing here may import ``flet`` or ``app_flet``: the layout is arithmetic
+Nothing here may import ``app_web``: the layout is arithmetic
 and the composition is a file operation, both worth testing without a page.
 """
 from __future__ import annotations

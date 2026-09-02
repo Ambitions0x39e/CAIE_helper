@@ -45,6 +45,6 @@ site/
 # Agent worktrees / session state — .claude/ carries whole .venv copies (515 MB)
 .claude/
 
-# Spike output. flet's exclude matches top-level NAMES, not globs, so a stray
-# root PDF also ships inside the built app — keep them out of the repo root.
+# Spike output. Test PDFs land here while working on the parsers; none of them
+# belong in the repo.
 /*.pdf

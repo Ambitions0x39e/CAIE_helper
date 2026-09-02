@@ -25,7 +25,7 @@ from core.settings import GraderConfig
 from modules.marking.renderer import page_count, to_pdf_bytes
 
 if TYPE_CHECKING:
-    from modules.marking.renderer import NativeRenderer
+    from modules.marking.workflow import Renderer
 
 QUESTION_ID_RE = re.compile(r"^(\d+)(?:\(([a-z])\))?$")
 
@@ -365,7 +365,7 @@ def _merge_questions(
 def _parse_all_vl(
     pdf_path: str | Path,
     grader_config: GraderConfig,
-    renderer: NativeRenderer,
+    renderer: Renderer,
     start_page: int = 6,
     batch_size: int = 2,
     on_progress: Callable[[int, int], None] | None = None,
@@ -557,7 +557,7 @@ def parse_mark_scheme(
     grader_config: GraderConfig | None = None,
     start_page: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
-    renderer: NativeRenderer | None = None,
+    renderer: Renderer | None = None,
     force: bool = False,
 ) -> PaperConfig:
     """Parse a mark scheme PDF into structured question configs.

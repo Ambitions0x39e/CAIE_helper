@@ -44,10 +44,9 @@ a = Analysis(  # noqa: F821
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # The Flet stack is not part of this app and must not be dragged in behind
-    # a stray import: `modules/marking/renderer.py` names `flet_pdf_render`,
-    # but only under TYPE_CHECKING. pdfplumber is dev-only (the segmenter
-    # fidelity check) and nothing shipped imports it.
+    # pdfplumber is dev-only (the segmenter fidelity check) and nothing
+    # shipped imports it; the rest are dev tooling that a stray import would
+    # otherwise drag in.
     #
     # pandas and numpy are here for a different reason, and it is worth 44 MB
     # of the bundle: the openai SDK ships `_extras/pandas_proxy.py`, a lazy
@@ -57,10 +56,6 @@ a = Analysis(  # noqa: F821
     # the proxy defers; if any code path ever does touch it, this is the line
     # that turns that into an ImportError rather than a silent 44 MB.
     excludes=[
-        "flet",
-        "flet_cli",
-        "flet_desktop",
-        "flet_pdf_render",
         "pdfplumber",
         "pandas",
         "numpy",

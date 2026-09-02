@@ -3,43 +3,19 @@ name = "cie-helper"
 version = "1.4.1"
 description = "CIE/AP past paper automation and tracker"
 readme = "README.md"
-# The upper bound is what pins the BUNDLED CPython, not just the dev env.
-# `flet build` resolves the Python it packages from this specifier and takes
-# the HIGHEST supported version that satisfies it (flet_cli/utils/
-# python_versions.py::resolve_python_version). Bare ">=3.13" therefore
-# shipped 3.14 while the dev venv stayed on 3.13 — tested on one, shipped the
-# other. "<3.14" makes 3.13 the only match, on every machine, with no CLI flag
-# to remember. Moving to 3.14 later means changing this line (to
-# ">=3.14,<3.15" — keep an upper bound or 3.15 will silently take over the
-# moment flet supports it) and re-running the suite on 3.14.
+# Upper bound kept deliberate: PyInstaller freezes whatever interpreter the
+# venv runs, so moving to 3.14 means bumping this together with
+# [tool.ruff] target-version and [tool.mypy] python_version, then re-running
+# the suite on it.
 requires-python = ">=3.13,<3.14"
 
 dependencies = [
-    # Runtime deps, packaged into the Windows and macOS bundles.
-    # NB: plain "flet" (not flet[all]) — the [all] extra drags in flet-cli ->
-    # watchdog, which belongs in the dev group, not the shipped bundle.
-    # NB2: UPPER BOUND IS LOAD-BEARING. `flet build` pip-installs this FRESH
-    # into the bundle (ignoring uv.lock), while the Flutter client is generated
-    # by flet-cli's pinned template. If pip grabs a flet newer than the
-    # flet-cli that generated the client, the wire protocol mismatches and the
-    # packaged app white-screens (session never registers; main() never runs).
-    # 0.86 makes this stricter still: the stream transports gained a
-    # length-prefixed framing that is incompatible with pre-0.86 peers.
-    # So: bump flet, flet-cli and flet-desktop TOGETHER, and keep the extension
-    # pubspec's flet range (extensions/flet_pdf_render/src/flutter/…) covering
-    # the same minor.
-    #
-    # 2026-07-16: pinned to 0.85.x because 0.86.0 failed to build on
-    # Chinese-codepage Windows — flet#6686 (C4819 escalated to C2220) plus a
-    # serious_python 4.3.2 pip-install that hung forever during packaging.
-    # 2026-08-01: moved to 0.86.x. #6686 is fixed in 0.86.1 ("flet build windows
-    # failing on non-UTF-8 system locales, e.g. code page 936/GBK"), and 0.86
-    # is the only way to get a bundled Python other than 3.12: `flet build
-    # --python-version 3.13` (0.85's serious_python hardcodes the 3.12 download
-    # URL in its CMakeLists, no switch). Without it the app ships 3.12 while
-    # this project declares >=3.13 — a mismatch waiting to bite.
-    "flet>=0.86.4,<0.87",
-    "flet-pdf-render",  # local native pdfrx render extension
+    # Runtime deps. PyInstaller reads the environment rather than this list,
+    # but this is still the declaration of what the app needs to run — a
+    # `uv sync --no-dev` has to produce a working app.
+    "pywebview>=6.2,<7",
+    "pypdfium2>=5.6",
+    "pillow>=11.0",
     "pydantic[email]>=2.7.0",
     "pydantic-settings>=2.3.0",
     "requests>=2.32.0",
@@ -49,18 +25,6 @@ dependencies = [
     "pypdf>=5.0.0",
     "python-dotenv>=1.0.0",
     "openai>=1.30.0",
-    # ── NO DEPENDENCY HERE MAY VENDOR A `.dylib`. ────────────────────────
-    # It silently breaks the universal macOS build. serious_python lipo-merges
-    # the two per-arch site-packages trees for `*.so` but NOT `*.dylib`, so a
-    # vendored dylib stays arm64-only while everything else (pydantic-core, the
-    # app binary, Python.framework) comes out x86_64+arm64 — an app that looks
-    # universal and dies on Intel. Measured on pypdfium2
-    # (pypdfium2_raw/libpdfium.dylib) and pillow (18 files under PIL/.dylibs/):
-    # those 19 were the only non-fat binaries in the entire bundle.
-    #
-    # This is also why rasterizing stays on the Dart side. pdfrx already ships a
-    # universal PDFium in Contents/Frameworks/PDFium.framework, so a Python
-    # rasterizer would be a second, arch-broken copy of the same engine.
 ]
 
 [project.optional-dependencies]
@@ -73,74 +37,6 @@ dev = [
     "mypy>=1.10.0",
     "pytest>=8.2.0",
 ]
-
-[tool.flet.app]
-# What gets packaged = the whole project dir MINUS these names.
-# flet does NOT read .gitignore, so every heavy non-app dir must be listed here
-# explicitly or it ships inside the app. Matched by TOP-LEVEL name.
-#
-# Since flet 0.86 / serious_python 4.x there is no `app.zip`: the app ships
-# UNPACKED (and compiled to .pyc) at build/<platform>/app/, next to
-# site-packages. This exclude list governs that copy exactly as it governed the
-# zip, so everything below still applies.
-#
-# Runtime deps are installed FRESH into the bundle from [project.dependencies]
-# (see SERIOUS_PYTHON_SITE_PACKAGES), so the local `.venv` is NOT needed in the
-# package — excluding it is safe and removes ~425 MB.
-#
-# Categories below:
-#   dev-only dirs      : extensions*, spikes, tests, dev, in_dev, docs
-#   env / vcs / caches : .venv, .git, .claude, .mypy_cache, .pytest_cache,
-#                        .ruff_cache, .codegraph, .cursor, __pycache__, dist
-#   stray test PDFs    : the loose *.pdf files sitting in the repo root
-# (*extensions/ holds the render-extension SOURCE; its Python comes from the
-#  installed dep and its Dart from the package's bundled data, so the source
-#  tree isn't needed — and a stale nested build/ there overflows the filesystem
-#  name-length limit during the copy.)
-exclude = [
-    # Not part of the shipped app — and packaging them is actively dangerous.
-    # `flet build` copies the app-source tree with a symlink-FOLLOWING copy.
-    # A leftover `staging/Applications -> /Applications` (from an old dmg
-    # attempt) made the macOS "Packaging Python app" step recursively copy all
-    # of /Applications into the bundle — a runaway that ate ~200 GB and filled
-    # the disk (invisible to du: the growing files were already unlinked).
-    # Keep build output and any staging/asset dirs out of the payload.
-    "build", "staging", "test_papers", "site",
-    # dev-only dirs
-    "extensions", "spikes", "tests", "dev", "in_dev", "docs", "packaging",
-    # environments / vcs / tool caches
-    ".venv", ".git", ".claude", ".mypy_cache", ".pytest_cache",
-    ".ruff_cache", ".codegraph", ".cursor", "__pycache__", "dist",
-    # secrets / dev files — the local root `.env` holds REAL SMTP + API creds and
-    # ships inside the bundle even though the runtime only reads ~/.cie_helper/.env,
-    # so packaging it is a pure credential leak with zero functional need.
-    ".env", ".env.example",
-    # dev-only top-level FILES. The runtime never reads any of these, but they
-    # were shipping inside the bundle because exclude is the only filter (flet
-    # ignores .gitignore) and it matches top-level NAMES — dirs and files
-    # alike. release.ps1 is the local, gitignored build script; the three .md
-    # files are notes for whoever is working on the repo, not for users.
-    "release.ps1", "CLAUDE.md", "PROGRESS.md", "BLOCKED.md",
-    ".gitignore", ".gitattributes",
-]
-
-[tool.flet.dev_packages]
-flet-pdf-render = "extensions/flet_pdf_render"
-
-# 2026-08-05: connectivity_plus (a transitive Dart dep, pulled in by flet itself
-# for network-status detection) references NWPath.isUltraConstrained since
-# 7.1.0 — a macOS 26 SDK symbol gated by `#available(macOS 26.0, *)` at
-# runtime, but Swift still needs the symbol to exist in the SDK you compile
-# against, so it fails to build on Xcode < the one bundling the macOS 26 SDK
-# (Xcode 15.3 confirmed broken). Pin to the last version before that line
-# landed. Drop this once Xcode is upgraded past whatever ships the macOS 26
-# SDK — the pin is what silently loses macOS 26's "ultra constrained network"
-# detection, a cosmetic status field, not functionality.
-[tool.flet.flutter.pubspec.dependency_overrides]
-connectivity_plus = "7.0.0"
-
-[tool.uv.sources]
-flet-pdf-render = { path = "extensions/flet_pdf_render", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -174,11 +70,6 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# Local Flet extension (extensions/flet_pdf_render) — wired as a build dep in 2B.3.
-module = ["flet_pdf_render", "flet_pdf_render.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
 
@@ -191,25 +82,7 @@ dev = [
     "ruff>=0.15.8",
     "fpdf2>=2.8.0",
     "mypy>=1.10.0",
-    # flet build/run tooling — local only, never packaged (drags in watchdog).
-    # Keep in the SAME minor as the runtime `flet` pin above (see NB2 there):
-    # the cli's Flutter client and the bundled Python flet must match.
-    "flet-cli>=0.86.4,<0.87",
-    "flet-desktop>=0.86.4,<0.87",
     # Segmenter fidelity check compares pdfminer against pdfplumber.
     "pdfplumber>=0.11.0",
-    # ── v2 stack. These three move up to [project.dependencies] in M4, when
-    # PyInstaller replaces `flet build` as the packager. They must NOT go there
-    # before then: `flet build` pip-installs [project.dependencies] fresh into
-    # the bundle, so listing them ships them inside the Flet app — and for
-    # pypdfium2 and pillow that reintroduces the vendored `.dylib` that the
-    # comment on [project.dependencies] exists to keep out. The Flet app is
-    # what still ships, and its macOS build has to stay universal.
-    "pywebview>=6.2,<7",
-    "pypdfium2>=5.6",
-    "pillow>=11.0",
-    # Packages the v2 app: `uv run pyinstaller packaging/windows/cie-helper.spec`.
-    # It reads the environment, not [project.dependencies], which is why the
-    # three above still work as a build input from here.
     "pyinstaller>=6.22",
 ]
