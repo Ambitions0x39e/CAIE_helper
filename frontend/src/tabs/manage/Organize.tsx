@@ -8,7 +8,6 @@ import { BackButton } from '../../ui/BackButton'
 import { Button } from '../../ui/Button'
 import { Glyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
-import { SETTLE_FAST } from '../../ui/motion'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { type Note, Toast } from '../../ui/Toast'
 
@@ -257,9 +256,10 @@ function IconCell({
                 title={a.label}
                 initial={{ scale: 0.3, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                // No overshoot: nothing was thrown here. A bounce is what
-                // momentum looks like, and this arrived from a click.
-                transition={{ ...SETTLE_FAST, delay: i * 0.03 }}
+                // Short and slightly past 1 at the end of the curve. Four
+                // circles staggered 30ms apart have to be over almost at
+                // once, or the ring reads as four arrivals instead of one.
+                transition={{ duration: 0.16, delay: i * 0.03, ease: [0.34, 1.4, 0.64, 1] }}
                 onClick={(e) => {
                   e.stopPropagation()
                   setOpen(false)
