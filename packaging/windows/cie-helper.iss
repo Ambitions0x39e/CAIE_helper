@@ -18,7 +18,7 @@
 ; ============================================================================
 
 #define MyAppName "CIE Helper"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Ambitions0x39e"      ; <-- edit to your name/handle
 #define MyAppExeName "cie-helper.exe"
 
