@@ -92,7 +92,7 @@ export function Overview({
   const detail = open ? bySyllabus.find(([id]) => id === open) : null
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex items-center gap-5 rounded-ui border border-hairline bg-panel p-5">
         <Donut
           tally={overall}
@@ -195,7 +195,7 @@ function SyllabusDetail({
   )
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex items-center gap-3">
         <BackButton onClick={onClose} />
         <div className="min-w-0 flex-1">
@@ -223,20 +223,20 @@ function SyllabusDetail({
         <table className="w-full border-collapse text-body">
           <thead>
             <tr className="border-b border-hairline text-caption text-muted">
-              <th className="p-2 text-left font-normal">Paper ID</th>
-              <th className="p-2 text-right font-normal">Raw</th>
-              <th className="p-2 text-right font-normal">Total</th>
-              <th className="p-2 text-right font-normal">%</th>
-              <th className="p-2 text-left font-normal">Date</th>
+              <th className="p-2.5 text-left font-normal">Paper ID</th>
+              <th className="p-2.5 text-right font-normal">Raw</th>
+              <th className="p-2.5 text-right font-normal">Total</th>
+              <th className="p-2.5 text-right font-normal">%</th>
+              <th className="p-2.5 text-left font-normal">Date</th>
             </tr>
           </thead>
           <tbody>
             {attempts.map((r) => (
               <tr key={r.paper_id} className="border-b border-hairline last:border-0">
-                <td className="p-2 tabular-nums">{r.paper_id}</td>
-                <td className="p-2 text-right tabular-nums">{r.score_raw}</td>
-                <td className="p-2 text-right tabular-nums">{r.score_total}</td>
-                <td className="p-2 text-right tabular-nums">{pct(r.percentage ?? 0)}</td>
+                <td className="p-2.5 tabular-nums">{r.paper_id}</td>
+                <td className="p-2.5 text-right tabular-nums">{r.score_raw}</td>
+                <td className="p-2.5 text-right tabular-nums">{r.score_total}</td>
+                <td className="p-2.5 text-right tabular-nums">{pct(r.percentage ?? 0)}</td>
                 <td className="p-2 text-caption text-muted tabular-nums">
                   {r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : ''}
                 </td>

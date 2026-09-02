@@ -12,7 +12,7 @@ export function SubPage({
   children: ReactNode
 }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex items-center gap-2">
         <BackButton onClick={onBack} />
         <div className="text-section font-medium">{title}</div>

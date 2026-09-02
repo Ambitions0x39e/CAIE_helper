@@ -34,16 +34,38 @@
   --color-warn: var(--ui-warn);
   --color-bad: var(--ui-bad);
 
-  --radius-ui: 6px;
+  --radius-ui: 7px;
 
-  /* The type scale carries the density decision: 13px body, and the steps
-     above it kept close so a heading does not open a hole in a dense table. */
-  --text-micro: 11px;
-  --text-caption: 12px;
-  --text-body: 13px;
-  --text-subhead: 14px;
-  --text-section: 16px;
-  --text-title: 20px;
+  /* The type scale carries the density decision, and each step carries its own
+     leading and tracking — one letter-spacing for the whole scale is wrong at
+     one end of it or the other.
+
+     Tracking runs negative as the size grows: letters read as drifting apart
+     at display sizes and as crowding together at caption sizes, so the large
+     steps pull in and the smallest one opens up. Leading runs the other way —
+     tight on headings, generous on the body copy that gets read in sentences
+     rather than glanced at. */
+  --text-micro: 12px;
+  --text-micro--line-height: 1.45;
+  --text-micro--letter-spacing: 0.005em;
+
+  --text-caption: 13px;
+  --text-caption--line-height: 1.45;
+
+  --text-body: 14px;
+  --text-body--line-height: 1.55;
+
+  --text-subhead: 15px;
+  --text-subhead--line-height: 1.4;
+  --text-subhead--letter-spacing: -0.005em;
+
+  --text-section: 18px;
+  --text-section--line-height: 1.3;
+  --text-section--letter-spacing: -0.012em;
+
+  --text-title: 26px;
+  --text-title--line-height: 1.15;
+  --text-title--letter-spacing: -0.022em;
 
   /* Most transitions land in 100-150ms. `slow` exists for the rare full-pane
      move and is still under 200. */

@@ -95,8 +95,8 @@ export function SetupStep({
     [onAnalysed],
   )
 
-  /** Subject first, then the papers under it — the same two-step narrowing the
-   * Flet tab does, so a subject with forty papers does not bury one with two. */
+  /** Subject first, then the papers under it: a subject with forty papers
+   * should not bury one with two. */
   const codes = useMemo(
     () => [...new Set(papers.map((p) => syllabusIdOf(p.paper_id)))].sort(),
     [papers],
@@ -142,10 +142,10 @@ export function SetupStep({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="text-section font-bold">选择试卷与答卷</div>
 
-      <div className="space-y-3 rounded-ui border border-hairline bg-panel p-3.5">
+      <div className="space-y-4 rounded-ui border border-hairline bg-panel p-4.5">
         <div className="flex flex-wrap items-center gap-5">
           <Radio
             name="ms-source"

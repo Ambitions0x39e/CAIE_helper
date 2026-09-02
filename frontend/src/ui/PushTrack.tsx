@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
+import { SETTLE } from './motion'
 
 const variants = {
   enter: (dir: number) => ({ x: dir > 0 ? '100%' : '-100%' }),
@@ -9,10 +10,13 @@ const variants = {
 
 /** N-step track: the outgoing step leaves the same way the incoming one arrives.
  *
- * Long enough to be read as travel. A push of a hundred-odd milliseconds is
- * over before the eye has followed it, and what lands is a swap — which is the
- * thing the movement exists to avoid. Nothing here touches opacity: the two
- * panes are solid, and one slides off while the other slides on.
+ * The pair is symmetric on purpose — a pane that enters from the right leaves
+ * to the right when you go back, so the direction you travelled is the
+ * direction you can return along.
+ *
+ * Nothing here touches opacity: the two panes are solid, and one slides off
+ * while the other slides on. A cross-fade would put them on top of each other
+ * and say nothing about which way you moved.
  */
 export function PushTrack({ step, dir, children }: { step: number; dir: number; children: ReactNode }) {
   return (
@@ -25,7 +29,7 @@ export function PushTrack({ step, dir, children }: { step: number; dir: number; 
           initial="enter"
           animate="center"
           exit="exit"
-          transition={{ duration: 0.26, ease: [0.32, 0.72, 0, 1] }}
+          transition={SETTLE}
         >
           {children}
         </motion.div>

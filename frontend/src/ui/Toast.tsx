@@ -2,6 +2,7 @@ import { X } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { SETTLE_FAST } from './motion'
 
 export interface Note {
   tone: 'ok' | 'bad' | 'warn'
@@ -17,6 +18,9 @@ const DOT: Record<Note['tone'], string> = {
 /** How long it sits there before taking itself away. Long enough to read a
  * sentence twice, short enough that it is gone before the next action. */
 const LINGER = 4000
+
+/** Outlasts the spring, so the pill is not cut off mid-slide. */
+const TEARDOWN_MS = 340
 
 /** What just happened, said once and then gone.
  *
@@ -40,7 +44,7 @@ export function Toast({ note, onDismiss }: { note: Note | null; onDismiss: () =>
   useEffect(() => {
     // Cleared on a clock, not on the slide-out's completion callback — see
     // Overlay for why a frame loop is not something to hang teardown on.
-    const timer = setTimeout(() => (note ? dismiss.current() : setShown(null)), note ? LINGER : 200)
+    const timer = setTimeout(() => (note ? dismiss.current() : setShown(null)), note ? LINGER : TEARDOWN_MS)
     return () => clearTimeout(timer)
   }, [note])
 
@@ -51,7 +55,7 @@ export function Toast({ note, onDismiss }: { note: Note | null; onDismiss: () =>
       className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex justify-center"
       initial={{ opacity: 0, y: 8 }}
       animate={note ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
-      transition={{ duration: 0.15, ease: [0.4, 0, 0.2, 1] }}
+      transition={SETTLE_FAST}
     >
       <div
         className="pointer-events-auto flex max-w-lg items-center gap-2 rounded-full border

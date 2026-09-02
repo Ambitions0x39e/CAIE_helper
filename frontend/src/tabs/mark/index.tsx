@@ -19,8 +19,7 @@ export function MarkTab() {
   const [results, setResults] = useState<QuestionResult[]>([])
   const [step, setStep] = useState(0)
   /** How far the flow has actually got. Looking back does not undo progress,
-   * so anything past this stays unreachable — same split the Flet tab drew
-   * between view_step and reached_step. */
+   * so anything past this stays unreachable. */
   const [reached, setReached] = useState(0)
   const [dir, setDir] = useState(1)
 
@@ -59,7 +58,7 @@ export function MarkTab() {
   }, [])
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <SegmentedStrip
         items={STEPS.filter(
           (s) => !(analysis?.paper_type === 'mcq' && s.id === '2'),

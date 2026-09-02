@@ -64,7 +64,7 @@ export function GradeStep({
   const unmatched = questionIds.filter((q) => !matched.has(q))
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="text-section font-bold">核对题目</div>
       <div className="text-body">勾选要批改的题，并确认每题的页码。</div>
 

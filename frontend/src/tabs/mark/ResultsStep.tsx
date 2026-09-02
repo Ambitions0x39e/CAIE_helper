@@ -57,7 +57,7 @@ export function ResultsStep({
   const total = Object.keys(analysis.questions ?? {}).length
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="text-section font-bold">批改结果</div>
 
       <div className="flex flex-wrap gap-3">
