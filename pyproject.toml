@@ -208,4 +208,8 @@ dev = [
     "pywebview>=6.2,<7",
     "pypdfium2>=5.6",
     "pillow>=11.0",
+    # Packages the v2 app: `uv run pyinstaller packaging/windows/cie-helper.spec`.
+    # It reads the environment, not [project.dependencies], which is why the
+    # three above still work as a build input from here.
+    "pyinstaller>=6.22",
 ]

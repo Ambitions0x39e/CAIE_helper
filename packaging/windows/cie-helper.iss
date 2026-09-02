@@ -1,10 +1,12 @@
 ; ============================================================================
 ;  CIE Helper — Inno Setup installer script
 ; ----------------------------------------------------------------------------
-;  Wraps the `flet build windows` output folder into a single setup.exe.
+;  Wraps the PyInstaller output folder into a single setup.exe.
 ;
-;  Prereq: run the Flet build first so build\windows\ exists:
-;      PYTHONIOENCODING=utf-8 PYTHONUTF8=1 uv run flet build windows
+;  Prereqs, in order — the spec bundles frontend/dist as-is, so a stale UI
+;  build ships silently:
+;      npm run build --prefix frontend
+;      uv run pyinstaller packaging/windows/cie-helper.spec --noconfirm
 ;
 ;  Compile (from anywhere — paths below are relative to THIS .iss file):
 ;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\cie-helper.iss
@@ -12,7 +14,7 @@
 ;  Output: dist\cie-helper-<version>-setup.exe
 ;
 ;  Override source/output dirs on the command line if needed:
-;      ISCC /DBuildDir="C:\path\to\build\windows" /DOutputDir="C:\out" cie-helper.iss
+;      ISCC /DBuildDir="C:\path\to\dist\cie-helper" /DOutputDir="C:\out" cie-helper.iss
 ; ============================================================================
 
 #define MyAppName "CIE Helper"
@@ -22,7 +24,7 @@
 
 ; Paths are relative to this .iss file (packaging\windows\).
 #ifndef BuildDir
-  #define BuildDir "..\..\build\windows"
+  #define BuildDir "..\..\dist\cie-helper"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\..\dist"
@@ -51,11 +53,11 @@ OutputBaseFilename=cie-helper-{#MyAppVersion}-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-; App is 64-bit (Flet/Flutter x64). x64compatible also covers ARM64-via-emulation.
+; App is 64-bit. x64compatible also covers ARM64-via-emulation.
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Installer wizard / Add-Remove-Programs icon. The app window + taskbar + shortcut
-; icons come from the exe itself, embedded at `flet build` time from assets/icon.png.
+; icons come from the exe itself, embedded by the spec's `icon=` from this same file.
 SetupIconFile=app.ico
 
 [Languages]
@@ -80,6 +82,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; App data lives in ~/.cie_helper, never under {app}, so this deletes nothing
 ; the user owns. Scoped to the payload — do NOT wipe {app}\* wholesale, that
 ; would take out unins000.* and break uninstall registration.
+;
+; Two payload shapes are listed. `_internal` is this build's; the loose dirs
+; below it are what a 1.x install put on disk, and an upgrade from one lands
+; in the same {app} — leaving them would park a second interpreter and a
+; second copy of every dependency next to the new one, permanently.
+Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\site-packages"
 Type: filesandordirs; Name: "{app}\Lib"
@@ -89,8 +97,9 @@ Type: files; Name: "{app}\*.dll"
 Type: files; Name: "{app}\*.pyd"
 
 [Files]
-; Ship the ENTIRE build\windows folder: exe + all DLLs + data\ + Lib\ + DLLs\ +
-; site-packages\. Missing any of these and the app won't launch.
+; Ship the ENTIRE folder: the exe plus _internal\, which holds the interpreter,
+; every dependency, the built frontend and data\. Missing any of it and the app
+; won't launch.
 Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]

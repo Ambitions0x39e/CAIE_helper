@@ -241,10 +241,18 @@ export function Request({ source }: { source: DownloadSource }) {
         >
           {columns.map(([digit, qps]) => (
             <div key={digit} className="grid row-span-2 gap-y-2" style={{ gridTemplateRows: 'subgrid' }}>
-              <div className="border-b border-hairline pb-1.5 text-body font-medium">
-                Paper {digit}
+              {/* The number always fits; the name gives way. A column is as
+                  narrow as 15rem, and "Further Probability & Statistics" does
+                  not fit in one — wrapped, it pushes every other column's
+                  header down with it, since they share a row. */}
+              <div className="flex items-baseline gap-1 border-b border-hairline pb-1.5 text-body font-medium">
+                <span className="shrink-0">Paper {digit}</span>
                 {typeNames.get(digit) && (
-                  <span className="text-muted"> · {typeNames.get(digit)}</span>
+                  // The gap is the container's, not a leading space in here:
+                  // a flex item's own leading whitespace is trimmed away.
+                  <span className="min-w-0 truncate text-muted" title={typeNames.get(digit)}>
+                    · {typeNames.get(digit)}
+                  </span>
                 )}
               </div>
               <div className="space-y-2">
