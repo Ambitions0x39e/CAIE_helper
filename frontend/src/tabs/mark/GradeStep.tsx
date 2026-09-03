@@ -48,9 +48,6 @@ export function GradeStep({
         </Button>
       </div>
 
-      <div className="text-caption text-muted">
-        点一格开关一题。标了「整页」的没被分段定位到，会按整页送去批改。
-      </div>
 
       <div className="grid gap-2.5" style={{ gridTemplateColumns: GRID_COLS }}>
         {questionIds.map((q) => {
