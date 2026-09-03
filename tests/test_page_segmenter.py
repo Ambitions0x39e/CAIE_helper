@@ -9,6 +9,7 @@ import pytest
 from fpdf import FPDF
 
 from modules.marking.page_segmenter import (
+    _CLIP_TOP_PAD,
     PageClip,
     QuestionRegion,
     _accepted_garbled_subs,
@@ -24,6 +25,7 @@ from modules.marking.page_segmenter import (
     _match_boundaries,
     _SegPage,
     _SegWord,
+    _snap_to_line_top,
     match_scanned,
     scan_document,
     segment_questions_report,
@@ -116,12 +118,19 @@ def _cid_sub_label(letter_cp: int) -> str:
     return _cid([_OPEN_CP, letter_cp, _CLOSE_CP, 5])
 
 
+#: Body copy on these papers sets at ~10.8pt, so a word's box is that tall.
+_LINE_H = 10.8
+
+
 def _page_of(words: list[tuple[float, float, str]]) -> _SegPage:
     """A _SegPage built straight from (x0, top, text) — no PDF needed."""
     return _SegPage(
         width=612.0,
         height=792.0,
-        words=[_SegWord(text=t, x0=x, top=y) for x, y, t in words],
+        words=[
+            _SegWord(text=t, x0=x, top=y, bottom=y + _LINE_H)
+            for x, y, t in words
+        ],
         has_curves=False,
     )
 
@@ -437,6 +446,36 @@ class TestMatchBoundaries:
         assert matches[1] == ("Q1(a)(ii)", 0, 90)
 
 
+# ── Tests: line-top snapping ──────────────────────────────────────
+
+class TestSnapToLineTop:
+    def _page(self, words: list[_SegWord]) -> _SegPage:
+        return _SegPage(width=612.0, height=792.0, words=words, has_curves=False)
+
+    def test_lifts_to_the_tallest_thing_on_the_line(self) -> None:
+        page = self._page([
+            _SegWord(text="above", x0=100.0, top=40.0, bottom=50.8),
+            _SegWord(text="(b)", x0=93.7, top=70.0, bottom=80.8),
+            # Display maths on the same line: its box hangs down past the
+            # marker's top edge, which is what puts it on this line.
+            _SegWord(text="sum", x0=250.0, top=58.0, bottom=90.0),
+        ])
+        b = _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=70.0)
+
+        assert _snap_to_line_top([b], [page])[0].y == 58.0
+
+    def test_ignores_the_margin_rail(self) -> None:
+        # "DO NOT WRITE IN THIS MARGIN" runs down the right edge as rotated
+        # text: one tall box overlapping every line on the page.
+        page = self._page([
+            _SegWord(text="(b)", x0=93.7, top=70.0, bottom=80.8),
+            _SegWord(text="rail", x0=578.0, top=30.0, bottom=700.0),
+        ])
+        b = _Boundary(kind=_BoundaryKind.SUB, page_idx=0, y=70.0)
+
+        assert _snap_to_line_top([b], [page])[0].y == 70.0
+
+
 # ── Tests: region building ────────────────────────────────────────
 
 class TestBuildRegions:
@@ -447,11 +486,13 @@ class TestBuildRegions:
         assert len(regions) == 2
         assert regions[0].question_id == "Q1a"
         assert len(regions[0].clips) == 1
-        assert regions[0].clips[0].y_top == 50.0
+        # A clip opens above its boundary — see _CLIP_TOP_PAD — while the
+        # bottom stays exactly where the next question starts.
+        assert regions[0].clips[0].y_top == 50.0 - _CLIP_TOP_PAD
         assert regions[0].clips[0].y_bottom == 400.0
 
         assert regions[1].question_id == "Q1b"
-        assert regions[1].clips[0].y_top == 400.0
+        assert regions[1].clips[0].y_top == 400.0 - _CLIP_TOP_PAD
         assert regions[1].clips[0].y_bottom == 740.0
 
     def test_cross_page_region(self) -> None:
@@ -461,7 +502,9 @@ class TestBuildRegions:
         q1b = regions[0]
         assert q1b.question_id == "Q1b"
         assert len(q1b.clips) == 3
-        assert q1b.clips[0] == PageClip(page_idx=0, y_top=500.0, y_bottom=740.0)
+        assert q1b.clips[0] == PageClip(
+            page_idx=0, y_top=500.0 - _CLIP_TOP_PAD, y_bottom=740.0,
+        )
         assert q1b.clips[1] == PageClip(page_idx=1, y_top=45.0, y_bottom=740.0)
         assert q1b.clips[2] == PageClip(page_idx=2, y_top=45.0, y_bottom=200.0)
 
