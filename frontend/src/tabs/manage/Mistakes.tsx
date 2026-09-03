@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
 import type { MistakeRecord } from '../../lib/types'
-import { Banner } from '../../ui/Banner'
+import { notify } from '../../ui/Toast'
 import { Button } from '../../ui/Button'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 
@@ -93,7 +93,6 @@ export function Mistakes() {
   const [view, setView] = useState<ViewId>('paper')
   const [keys, setKeys] = useState<ReadonlySet<string>>(new Set())
   const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(new Set())
-  const [note, setNote] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null)
   /** Ticked rows, as positions in `records`. The store is append-only, so a
    * position is stable; paper+question is not, because a re-grade repeats it. */
   const [picked, setPicked] = useState<ReadonlySet<number>>(new Set())
@@ -180,16 +179,16 @@ export function Mistakes() {
     const r = await call([...picked])
     if (r.cancelled) return
     if (!r.success) {
-      setNote({ tone: 'bad', text: r.error ?? '导出失败' })
+      notify('bad', r.error ?? '导出失败')
       return
     }
     const warned = r.warnings ?? []
-    setNote({
-      tone: warned.length ? 'warn' : 'ok',
-      text: warned.length
+    notify(
+      warned.length ? 'warn' : 'ok',
+      warned.length
         ? `已导出 → ${r.path}；${warned.length} 项未包含: ${warned.join('；')}`
         : `已导出 → ${r.path}`,
-    })
+    )
   }
 
   if (records === null) {
@@ -252,8 +251,6 @@ export function Mistakes() {
           )}
         </div>
       )}
-
-      {note && <Banner tone={note.tone} title={note.text} />}
 
       <div className="space-y-2">
         {groups.map(([key, rows]) => {

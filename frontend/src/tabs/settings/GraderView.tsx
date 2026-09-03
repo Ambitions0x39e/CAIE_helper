@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { notify } from '../../ui/Toast'
 import { Row, SubPage, TextInput } from './SubPage'
 
 export function GraderView({ onBack }: { onBack: () => void }) {
@@ -9,7 +9,6 @@ export function GraderView({ onBack }: { onBack: () => void }) {
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('qwen3.6-flash')
   const [configured, setConfigured] = useState(false)
-  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
   useEffect(() => {
     api()
@@ -24,11 +23,7 @@ export function GraderView({ onBack }: { onBack: () => void }) {
 
   const save = async () => {
     const r = await (await api()).save_grader_settings(key, baseUrl, model)
-    setNote(
-      r.success
-        ? { tone: 'ok', text: '已保存' }
-        : { tone: 'bad', text: r.error ?? '保存失败' },
-    )
+    notify(r.success ? 'ok' : 'bad', r.success ? '已保存' : (r.error ?? '保存失败'))
     if (r.success) setConfigured(true)
   }
 
@@ -46,7 +41,6 @@ export function GraderView({ onBack }: { onBack: () => void }) {
           <TextInput value={model} onChange={setModel} />
         </Row>
       </div>
-      {note && <Banner tone={note.tone} title={note.text} />}
       <Button tone="accent" onClick={save} disabled={!key}>保存</Button>
     </SubPage>
   )

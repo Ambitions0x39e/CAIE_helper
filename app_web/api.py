@@ -347,13 +347,22 @@ class Api:
 
     # -- mark ----------------------------------------------------------------
 
-    def pick_pdf(self, title: str = "选择 PDF") -> str | None:
-        """Host file dialog. Returns the chosen path, or None if cancelled."""
+    def pick_pdf(self) -> str | None:
+        """Host file dialog. Returns the chosen path, or None if cancelled.
+
+        The filter is fixed, and has to be. `file_types` entries are validated
+        against ``^([\\w ]+)\\(...\\)$``, so the description may hold word
+        characters and spaces and nothing else — a bracket anywhere in it
+        raises `ValueError` before a dialog is ever shown. It reads like a
+        place to put a caption, and it is not one: `create_file_dialog` takes
+        no title, so what the user is choosing is said by the button that
+        opened this and by the filename shown beside it.
+        """
         window = webview.active_window()
         if window is None:
             return None
         chosen = window.create_file_dialog(
-            webview.FileDialog.OPEN, file_types=(f"{title} (*.pdf)",),
+            webview.FileDialog.OPEN, file_types=("PDF (*.pdf)",),
         )
         if not chosen:
             return None

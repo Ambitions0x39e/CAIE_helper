@@ -1,16 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
 import type { DownloadResult, DownloadSource, MailResult } from '../../lib/types'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
 import { Field } from '../../ui/Field'
+import { notify } from '../../ui/Toast'
 
-/** What the result area is showing. `null` is the empty state. */
-type Outcome =
-  | { kind: 'downloaded'; result: DownloadResult }
-  | { kind: 'recorded'; result: DownloadResult }
-  | { kind: 'failed'; error: string }
-  | null
+/** The last paper this panel put on disk — what 发送到 GoodNotes attaches. */
+type Outcome = { kind: 'downloaded' | 'recorded'; result: DownloadResult } | null
 
 export function ById({ source }: { source: DownloadSource }) {
   const [paperId, setPaperId] = useState('')
@@ -35,9 +31,19 @@ export function ById({ source }: { source: DownloadSource }) {
     setSent(null)
     try {
       const result = await call(id)
-      setOutcome(result.success ? { kind, result } : { kind: 'failed', error: result.error ?? '未知错误' })
+      if (result.success) {
+        setOutcome({ kind, result })
+        notify(
+          'ok',
+          kind === 'downloaded'
+            ? `已下载: ${result.paper_id}`
+            : `已记录 (无PDF): ${result.paper_id}`,
+        )
+      } else {
+        notify('bad', result.error ?? '未知错误')
+      }
     } catch (err) {
-      setOutcome({ kind: 'failed', error: String(err instanceof Error ? err.message : err) })
+      notify('bad', String(err instanceof Error ? err.message : err))
     } finally {
       setBusy(false)
     }
@@ -50,7 +56,12 @@ export function ById({ source }: { source: DownloadSource }) {
   const sendToGoodNotes = async () => {
     if (outcome?.kind !== 'downloaded' || !outcome.result.qp_path) return
     const { paper_id, qp_path } = outcome.result
-    setSent(await api().then((a) => a.send_to_goodnotes(paper_id, qp_path)))
+    const result = await api().then((a) => a.send_to_goodnotes(paper_id, qp_path))
+    setSent(result)
+    notify(
+      result.success ? 'ok' : 'bad',
+      result.success ? `已发送到 ${result.recipient}` : `发送失败: ${result.error}`,
+    )
   }
 
   // Offered only once there is a QP on disk to attach.
@@ -79,21 +90,6 @@ export function ById({ source }: { source: DownloadSource }) {
         </div>
       </div>
 
-      {outcome?.kind === 'downloaded' && (
-        <Banner
-          tone="ok"
-          title={`已下载: ${outcome.result.paper_id}`}
-          details={[
-            `QP → ${outcome.result.qp_path}`,
-            `MS → ${outcome.result.ms_path}`,
-          ]}
-        />
-      )}
-      {outcome?.kind === 'recorded' && (
-        <Banner tone="ok" title={`已记录 (无PDF): ${outcome.result.paper_id}`} />
-      )}
-      {outcome?.kind === 'failed' && <Banner tone="bad" title={outcome.error} />}
-
       {canSend && (
         <div className="flex items-center gap-2">
           <span className="text-caption text-muted">
@@ -101,12 +97,6 @@ export function ById({ source }: { source: DownloadSource }) {
           </span>
           <Button onClick={sendToGoodNotes}>发送到 GoodNotes</Button>
         </div>
-      )}
-      {sent && (
-        <Banner
-          tone={sent.success ? 'ok' : 'bad'}
-          title={sent.success ? `已发送到 ${sent.recipient}` : `发送失败: ${sent.error}`}
-        />
       )}
     </div>
   )

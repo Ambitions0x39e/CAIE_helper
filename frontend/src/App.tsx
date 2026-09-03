@@ -7,6 +7,7 @@ import { MarkTab } from './tabs/mark'
 import { SettingsTab } from './tabs/settings'
 import { OVERLAY_ROOT } from './ui/Overlay'
 import { PushTrack } from './ui/PushTrack'
+import { ToastHost } from './ui/Toast'
 
 const TABS = [
   { id: 'download', label: '下载', Icon: Download },
@@ -116,6 +117,10 @@ export default function App() {
         </div>
         <div id={OVERLAY_ROOT} className="pointer-events-none absolute inset-0 z-10" />
       </main>
+
+      {/* One host for the whole app: what just happened is said in the same
+          corner whichever tab said it. */}
+      <ToastHost />
     </div>
   )
 }

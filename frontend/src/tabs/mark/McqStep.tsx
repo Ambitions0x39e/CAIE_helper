@@ -1,21 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
-import { onJobEvent } from '../../lib/jobs'
-import { Banner } from '../../ui/Banner'
+import { MCQ_JOB, onJobEvent } from '../../lib/jobs'
 import { Button } from '../../ui/Button'
 import { Metric } from '../../ui/Metric'
+import { notify } from '../../ui/Toast'
+import { compareQuestionIds } from './cells'
 import { isValidManual } from './mcq'
 import type { Analysis } from './types'
 
 export function McqStep({ analysis }: { analysis: Analysis }) {
   const questionIds = useMemo(
-    () => Object.keys(analysis.questions ?? {}),
+    () => Object.keys(analysis.questions ?? {}).sort(compareQuestionIds),
     [analysis],
   )
 
   const [qpPath, setQpPath] = useState('')
   const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState<string | null>(null)
   const [detected, setDetected] = useState<Record<string, string>>({})
   const [undetected, setUndetected] = useState<string[]>([])
   const [answerKey, setAnswerKey] = useState<Record<string, string>>({})
@@ -26,57 +26,53 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
     per_question: Record<string, boolean>
   } | null>(null)
   const [paperId, setPaperId] = useState(analysis.paper_id ?? '')
-  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(
     () =>
       onJobEvent((e) => {
-        if (e.type === 'mcq_progress')
-          setProgress(`第 ${e.batch}/${e.total} 页…`)
+        if (e.type === 'mcq_progress') notify('warn', `第 ${e.batch}/${e.total} 页…`)
         else if (e.type === 'mcq_detected') {
           setDetected(e.detected as Record<string, string>)
           setUndetected(e.undetected as string[])
           setAnswerKey(e.answer_key as Record<string, string>)
-          setProgress(null)
-        } else if (e.type === 'error') setError(e.message)
-        else if (e.type === 'finished') setBusy(false)
+          if (e.undetected.length > 0) {
+            notify(
+              'warn',
+              `未能检测到 ${e.undetected.length} 题: ${e.undetected.join(', ')}。请手动填写。`,
+            )
+          }
+        } else if (e.type === 'error' && e.job === MCQ_JOB) notify('bad', e.message)
+        else if (e.type === 'finished' && e.job === MCQ_JOB) setBusy(false)
       }),
     [],
   )
 
   const pick = async () => {
-    const p = await (await api()).pick_pdf('选择已批注 QP PDF')
+    const p = await (await api()).pick_pdf()
     if (p) setQpPath(p)
   }
 
   const detect = async () => {
     setBusy(true)
-    setError(null)
     setScored(null)
-    setProgress('正在检测答案…')
+    notify('warn', '正在检测答案…')
     const name = qpPath.split(/[\\/]/).pop() ?? ''
     const r = await (await api()).start_mcq_detection(qpPath, name)
     if (!r.success) {
-      setError(`检测失败: ${r.error ?? ''}`)
+      notify('bad', `检测失败: ${r.error ?? ''}`)
       setBusy(false)
-      setProgress(null)
     }
   }
 
   const score = async () => {
     const r = await (await api()).score_mcq(manual)
     if (r.success) setScored(r as typeof scored)
-    else setError(`检测失败: ${r.error ?? ''}`)
+    else notify('bad', `检测失败: ${r.error ?? ''}`)
   }
 
   const confirm = async () => {
     const r = await (await api()).confirm_mcq(paperId, manual)
-    setNote(
-      r.success
-        ? { tone: 'ok', text: '分数已记录' }
-        : { tone: 'bad', text: `记录失败: ${r.error ?? ''}` },
-    )
+    notify(r.success ? 'ok' : 'bad', r.success ? '分数已记录' : `记录失败: ${r.error ?? ''}`)
   }
 
   /** What each question will actually be scored on. */
@@ -100,15 +96,6 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
           检测答案
         </Button>
       </div>
-
-      {progress && <Banner tone="warn" title={progress} />}
-      {error && <Banner tone="bad" title={error} />}
-      {undetected.length > 0 && (
-        <Banner
-          tone="warn"
-          title={`未能检测到 ${undetected.length} 题: ${undetected.join(', ')}。请在下方手动填写。`}
-        />
-      )}
 
       {hasDetection && (
         <>
@@ -137,8 +124,6 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
               确认并记录分数
             </Button>
           </div>
-
-          {note && <Banner tone={note.tone} title={note.text} />}
 
           <div className="text-body font-bold">逐题结果:</div>
 

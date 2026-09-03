@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
-import { onJobEvent } from '../../lib/jobs'
+import { PARSE_JOB, onJobEvent } from '../../lib/jobs'
 import { comparePaperIds, syllabusIdOf } from '../../lib/papers'
 import type { PaperRecord } from '../../lib/types'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { notify } from '../../ui/Toast'
 import type { Analysis } from './types'
 
 const SELECT = 'rounded-ui border border-hairline bg-raised px-2 py-1.5 text-body text-ink'
@@ -43,6 +43,15 @@ function fileName(path: string): string {
   return path.replace(/\\/g, '/').split('/').pop() ?? ''
 }
 
+/** What a finished parse got out of the two PDFs, in one line. */
+function parsedSummary(a: Analysis): string {
+  const total = Object.keys(a.questions ?? {}).length
+  const answer = a.total_pages
+    ? `；答卷 ${a.total_pages} 页，识别 ${a.matched?.length ?? 0}/${total} 题`
+    : ''
+  return `已解析 ${a.paper_id} — 共 ${total} 题，总分 ${a.total_marks}${answer}`
+}
+
 export function SetupStep({
   analysis,
   onAnalysed,
@@ -60,10 +69,7 @@ export function SetupStep({
   const [answerPath, setAnswerPath] = useState('')
   const [graderReady, setGraderReady] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [msProgress, setMsProgress] = useState<string | null>(null)
-  const [scanNote, setScanNote] = useState<string | null>(null)
   const [cached, setCached] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     api()
@@ -83,14 +89,16 @@ export function SetupStep({
       onJobEvent((e) => {
         if (e.type === 'ms_cache') setCached(e.cached)
         else if (e.type === 'ms_progress')
-          setMsProgress(`处理第 ${e.batch}/${e.total} 批…`)
+          notify('warn', `处理第 ${e.batch}/${e.total} 批…`)
         else if (e.type === 'scan')
-          setScanNote(e.ok ? '答卷解析完成' : `答卷分析失败: ${e.error}`)
+          notify(e.ok ? 'ok' : 'bad', e.ok ? '答卷解析完成' : `答卷分析失败: ${e.error}`)
         else if (e.type === 'analysis') {
-          onAnalysed(e as unknown as Analysis)
-          setMsProgress(null)
-        } else if (e.type === 'error') setError(`解析失败: ${e.message}`)
-        else if (e.type === 'finished') setBusy(false)
+          const parsed = e as unknown as Analysis
+          notify('ok', parsedSummary(parsed))
+          onAnalysed(parsed)
+        } else if (e.type === 'error' && e.job === PARSE_JOB)
+          notify('bad', `解析失败: ${e.message}`)
+        else if (e.type === 'finished' && e.job === PARSE_JOB) setBusy(false)
       }),
     [onAnalysed],
   )
@@ -116,16 +124,14 @@ export function SetupStep({
   const isMcq = paperType === 'mcq'
   const canParse = !busy && msPath !== '' && (isMcq || graderReady)
 
-  const pick = async (set: (p: string) => void, title: string) => {
-    const p = await (await api()).pick_pdf(title)
+  const pick = async (set: (p: string) => void) => {
+    const p = await (await api()).pick_pdf()
     if (p) set(p)
   }
 
   const parse = async (force: boolean) => {
     setBusy(true)
-    setError(null)
-    setScanNote(null)
-    setMsProgress('正在解析 Mark Scheme…')
+    notify('warn', '正在解析 Mark Scheme…')
     const page = Number(startPage)
     const r = await (await api()).start_analysis(
       msPath,
@@ -135,9 +141,8 @@ export function SetupStep({
       force,
     )
     if (!r.success) {
-      setError(`解析失败: ${r.error ?? ''}`)
+      notify('bad', `解析失败: ${r.error ?? ''}`)
       setBusy(false)
-      setMsProgress(null)
     }
   }
 
@@ -222,7 +227,7 @@ export function SetupStep({
           )
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={() => pick(setUploadPath, '选择 Mark Scheme PDF')}>
+            <Button onClick={() => pick(setUploadPath)}>
               选择 MS PDF 文件
             </Button>
             <span className="min-w-0 flex-1 truncate text-caption text-muted">
@@ -247,14 +252,7 @@ export function SetupStep({
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            onClick={() =>
-              pick(
-                setAnswerPath,
-                isMcq ? '选择已批注 QP PDF' : '选择答卷 PDF (GoodNotes 导出)',
-              )
-            }
-          >
+          <Button onClick={() => pick(setAnswerPath)}>
             {isMcq ? '选择已批注 QP PDF' : '选择答卷 PDF'}
           </Button>
           <span className="min-w-0 flex-1 truncate text-caption text-muted">
@@ -267,8 +265,10 @@ export function SetupStep({
           </div>
         )}
 
+        {/* Stays on the page rather than going out as a toast: it is the
+            standing reason the button below is dead, not news. */}
         {!isMcq && !graderReady && (
-          <Banner tone="warn" title="请先在设置中配置 Grader API 凭证" />
+          <div className="text-caption text-warn">请先在设置中配置 Grader API 凭证。</div>
         )}
 
         <div className="flex flex-wrap items-center gap-3">
@@ -287,24 +287,6 @@ export function SetupStep({
         </div>
       </div>
 
-      {msProgress && <Banner tone="warn" title={msProgress} />}
-      {scanNote && <Banner tone="ok" title={scanNote} />}
-      {error && <Banner tone="bad" title={error} />}
-
-      {analysis?.ready && !busy && (
-        <Banner
-          tone="ok"
-          title={
-            `已解析 ${analysis.paper_id} — 共 ${Object.keys(analysis.questions ?? {}).length} 题, ` +
-            `总分为 ${analysis.total_marks}` +
-            (analysis.total_pages
-              ? `；答卷 ${analysis.total_pages} 页，识别 ${analysis.matched?.length ?? 0}/${
-                  Object.keys(analysis.questions ?? {}).length
-                } 题`
-              : '')
-          }
-        />
-      )}
     </div>
   )
 }

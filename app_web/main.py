@@ -20,6 +20,11 @@ from app_web.api import Api
 #: up white and flashes on every launch.
 _BACKGROUND = "#F9F9F8"
 
+#: Opening size, in logical pixels — the unit keeps the window the same
+#: apparent size on every display instead of shrinking as density rises.
+_WIDTH_DP = 1280
+_HEIGHT_DP = 720
+
 _INDEX = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"
 
 
@@ -42,8 +47,11 @@ def main() -> None:
         "CIE Helper",
         _entry(),
         js_api=Api(),
-        width=1100,
-        height=760,
+        # Logical pixels, not device ones, and they size the outer frame:
+        # measured at 144 dpi, width=1100 came out 1650 px wide. So this is
+        # 16:9, and on a 150% display it opens at exactly 1920x1080.
+        width=_WIDTH_DP,
+        height=_HEIGHT_DP,
         background_color=_BACKGROUND,
         text_select=False,  # chrome is not selectable and shows no I-beam
         zoomable=False,  # no pinch / ctrl+wheel zoom

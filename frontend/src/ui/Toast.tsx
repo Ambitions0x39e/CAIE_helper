@@ -9,6 +9,27 @@ export interface Note {
   text: string
 }
 
+/** Set by the one mounted host. Module level so any component — any depth, any
+ * tab — can say something without threading state down to it. */
+let deliver: ((note: Note) => void) | null = null
+
+/** Say one thing, bottom right, and let it take itself away. */
+export function notify(tone: Note['tone'], text: string): void {
+  deliver?.({ tone, text })
+}
+
+/** Mounted once, at the app root. */
+export function ToastHost() {
+  const [note, setNote] = useState<Note | null>(null)
+  useEffect(() => {
+    deliver = setNote
+    return () => {
+      deliver = null
+    }
+  }, [])
+  return <Toast note={note} onDismiss={() => setNote(null)} />
+}
+
 const DOT: Record<Note['tone'], string> = {
   ok: 'bg-ok',
   bad: 'bg-bad',
@@ -28,7 +49,7 @@ const TEARDOWN_MS = 340
  * a button is not a new part of the view, and giving it a slot pushes
  * everything below it down every time an action finishes.
  */
-export function Toast({ note, onDismiss }: { note: Note | null; onDismiss: () => void }) {
+function Toast({ note, onDismiss }: { note: Note | null; onDismiss: () => void }) {
   /** Held past `note` going null so the outgoing text is still there to read
    * while it slides away. */
   const [shown, setShown] = useState(note)
