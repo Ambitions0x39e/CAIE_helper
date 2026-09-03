@@ -40,12 +40,13 @@ class _SegWord:
 
     text may contain garbled ``(cid:N)`` glyphs — passed to
     :func:`_parse_codepoints` unchanged. Coordinates are in points:
-    ``x0`` from the page left, ``top`` from the page top.
+    ``x0`` from the page left, ``top`` and ``bottom`` from the page top.
     """
 
     text: str
     x0: float
     top: float
+    bottom: float
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,7 @@ class _SegPage:
 def _line_to_words(line: LTTextLine, page_height: float) -> list[_SegWord]:
     """Group a pdfminer text line's chars into words on whitespace.
 
-    x0 = min char left edge; top = page_height - max char top edge
+    x0 = min char left edge; top/bottom = the word's box, flipped
     (pdfminer is bottom-left origin; pdfplumber ``top`` is from the top).
     """
     words: list[_SegWord] = []
@@ -74,6 +75,7 @@ def _line_to_words(line: LTTextLine, page_height: float) -> list[_SegWord]:
                     text="".join(c.get_text() for c in current),
                     x0=min(c.x0 for c in current),
                     top=page_height - max(c.y1 for c in current),
+                    bottom=page_height - min(c.y0 for c in current),
                 )
             )
             current.clear()
@@ -753,7 +755,44 @@ def _extract_boundaries(
 
     boundaries.sort(key=lambda b: (b.page_idx, b.y, _KIND_RANK[b.kind]))
     boundaries = _dedupe_boundaries(boundaries)
-    return _reconcile_main_numbers(boundaries)
+    return _snap_to_line_top(_reconcile_main_numbers(boundaries), pages)
+
+
+#: The "DO NOT WRITE IN THIS MARGIN" rail is rotated text down the right edge
+#: — its words carry tops at every y and belong to no line. Measured on
+#: 9231 s25: body text tops out at x0 526, the rail sits at 578 on a 612pt
+#: page, so anything within 50pt of the right edge is rail, not line.
+_RAIL_INSET = 50.0
+
+
+def _snap_to_line_top(
+    boundaries: list[_Boundary], pages: list[_SegPage],
+) -> list[_Boundary]:
+    """Lift each boundary to the top of the tallest thing on its own line.
+
+    A boundary's y is the top of the *marker* — the question number, or the
+    "(a)". Display maths set on that same line reaches far higher: on
+    9231 s25 P3 the summation in "(b) Use the method of differences to find
+    Σ…" starts 16pt above the "(b)" that anchors the boundary, so a clip cut
+    at the marker sliced the formula being asked about.
+
+    A word is on the line when its box spans the marker's top edge — that is
+    what separates a tall glyph hanging down onto this line from the previous
+    line's, whose box ends above it.
+    """
+    for b in boundaries:
+        if b.page_idx >= len(pages):
+            continue
+        page = pages[b.page_idx]
+        rail_x = page.width - _RAIL_INSET
+        tops = [
+            w.top
+            for w in page.words
+            if w.top <= b.y < w.bottom and w.x0 < rail_x
+        ]
+        if tops:
+            b.y = min(tops)
+    return boundaries
 
 
 def _dedupe_boundaries(boundaries: list[_Boundary]) -> list[_Boundary]:
@@ -1062,6 +1101,19 @@ def _find_last_content_page(pages: list[_SegPage], after: int = 0) -> int:
 
 _MIN_CLIP_HEIGHT = 20.0
 
+#: Lifted off the boundary before cropping, so the question's own first line
+#: cannot be sliced in half.
+#:
+#: A boundary's y is where pdfminer puts the top of the marker's glyph box,
+#: and that box does not always sit over the ink. Measured against the
+#: rendered page across four papers: normally the box is ~0.6pt *above* the
+#: ink, but on 9231 s25 P1 — a GoodNotes export — question lines print up to
+#: 8.5pt higher than the box pdfminer reports for them, so a crop starting at
+#: the boundary cut every question's first line through the middle. Twelve
+#: points clears the worst of that with margin; what it costs elsewhere is a
+#: strip of the whitespace above the question.
+_CLIP_TOP_PAD = 12.0
+
 
 def _build_regions(
     matches: list[tuple[str, int, float]],
@@ -1103,7 +1155,7 @@ def _build_regions(
             if delta >= _MIN_CLIP_HEIGHT:
                 clips.append(PageClip(
                     page_idx=start_page,
-                    y_top=start_y,
+                    y_top=max(start_y - _CLIP_TOP_PAD, 0.0),
                     y_bottom=end_y,
                 ))
             elif reasons is not None:
@@ -1114,7 +1166,7 @@ def _build_regions(
             # First page: start_y → footer
             clips.append(PageClip(
                 page_idx=start_page,
-                y_top=start_y,
+                y_top=max(start_y - _CLIP_TOP_PAD, 0.0),
                 y_bottom=footer_y,
             ))
             # Intermediate full pages
