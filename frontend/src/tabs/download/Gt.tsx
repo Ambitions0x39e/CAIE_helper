@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
 import type { DownloadSource, GradeThreshold } from '../../lib/types'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { notify } from '../../ui/Toast'
 import { sortGrades } from './columns'
 import { SessionPicker } from './SessionPicker'
 import { type Session, gtPaperId, sessionCode } from './session'
@@ -17,13 +17,10 @@ type Doc = { syllabus_id: string; session: string; options: GradeThreshold[] }
 export function Gt({ source }: { source: DownloadSource }) {
   const [session, setSession] = useState<Session | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [doc, setDoc] = useState<Doc | null>(null)
-  const [downloadedPath, setDownloadedPath] = useState<string | null>(null)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const [onDisk, setOnDisk] = useState<ReadonlySet<string>>(new Set())
   const [progress, setProgress] = useState<string | null>(null)
-  const [errors, setErrors] = useState<string[]>([])
 
   const refreshOnDisk = () =>
     api()
@@ -57,27 +54,24 @@ export function Gt({ source }: { source: DownloadSource }) {
     setBusy(true)
     setDoc(null)
     setPicked(new Set())
-    setErrors([])
-    setError(null)
-    setDownloadedPath(null)
     try {
       const a = await api()
       // The threshold PDF itself only exists on CIEFrank; the papers an option
       // pulls in are ordinary QPs and follow the tab's source.
       const dl = await a.download_paper(gtPaperId(session), 'CIEFrank')
       if (!dl.success || !dl.qp_path) {
-        setError(`下载失败: ${dl.error ?? '没有拿到文件路径'}`)
+        notify('bad', `下载失败: ${dl.error ?? '没有拿到文件路径'}`)
         return
       }
-      setDownloadedPath(dl.qp_path)
       const parsed = await a.parse_gt(dl.qp_path, sessionCode(session))
       if (!parsed.success) {
-        setError(parsed.error)
+        notify('bad', parsed.error)
         return
       }
       setDoc(parsed)
+      notify('ok', `已下载: ${gtPaperId(session)}`)
     } catch (err) {
-      setError(String(err instanceof Error ? err.message : err))
+      notify('bad', String(err instanceof Error ? err.message : err))
     } finally {
       setBusy(false)
     }
@@ -92,7 +86,6 @@ export function Gt({ source }: { source: DownloadSource }) {
   const batchDownload = async () => {
     if (busy || selectedPapers.length === 0) return
     setBusy(true)
-    setErrors([])
     const failures: string[] = []
     try {
       const a = await api()
@@ -107,7 +100,12 @@ export function Gt({ source }: { source: DownloadSource }) {
       setProgress(null)
       setBusy(false)
       setPicked(new Set())
-      setErrors(failures)
+      notify(
+        failures.length ? 'bad' : 'ok',
+        failures.length
+          ? `${failures.length}/${selectedPapers.length} 份失败 — ${failures[0]}`
+          : `已下载 ${selectedPapers.length} 份`,
+      )
       refreshOnDisk()
     }
   }
@@ -122,11 +120,6 @@ export function Gt({ source }: { source: DownloadSource }) {
           查询分数线
         </Button>
       </div>
-
-      {error && <Banner tone="bad" title={error} />}
-      {downloadedPath && !error && (
-        <Banner tone="ok" title={`已下载: ${gtPaperId(session!)}`} details={[`PDF → ${downloadedPath}`]} />
-      )}
 
       {doc && (
         <>
@@ -220,13 +213,6 @@ export function Gt({ source }: { source: DownloadSource }) {
               </tbody>
             </table>
           </div>
-
-          {errors.slice(0, 5).map((e) => (
-            <Banner key={e} tone="bad" title={e} />
-          ))}
-          {errors.length > 5 && (
-            <Banner tone="bad" title={`还有 ${errors.length - 5} 个错误未显示`} />
-          )}
         </>
       )}
     </div>

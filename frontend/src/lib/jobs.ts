@@ -23,6 +23,12 @@ export type JobEvent =
   | { type: 'error'; job: string; message: string }
   | { type: 'finished'; job: string }
 
+/** The names `error` and `finished` carry. Both events are shared by every job,
+ * so a listener that cares about one has to say which. */
+export const PARSE_JOB = '解析'
+export const GRADE_JOB = '批改'
+export const MCQ_JOB = '识别答案'
+
 type Listener = (e: JobEvent) => void
 
 const listeners = new Set<Listener>()

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { notify } from '../../ui/Toast'
 import { Row, SubPage, TextInput } from './SubPage'
 
 export function MailView({ onBack }: { onBack: () => void }) {
@@ -10,7 +10,6 @@ export function MailView({ onBack }: { onBack: () => void }) {
   const [sender, setSender] = useState('')
   const [password, setPassword] = useState('')
   const [goodnotes, setGoodnotes] = useState('')
-  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
   useEffect(() => {
     api()
@@ -29,11 +28,7 @@ export function MailView({ onBack }: { onBack: () => void }) {
     const r = await (await api()).save_mail_settings(
       server, Number(port), sender, password, goodnotes,
     )
-    setNote(
-      r.success
-        ? { tone: 'ok', text: '已保存' }
-        : { tone: 'bad', text: r.error ?? '保存失败' },
-    )
+    notify(r.success ? 'ok' : 'bad', r.success ? '已保存' : (r.error ?? '保存失败'))
   }
 
   const complete = server && port && sender && password && goodnotes
@@ -54,7 +49,6 @@ export function MailView({ onBack }: { onBack: () => void }) {
           <TextInput value={goodnotes} onChange={setGoodnotes} />
         </Row>
       </div>
-      {note && <Banner tone={note.tone} title={note.text} />}
       <Button tone="accent" onClick={save} disabled={!complete}>保存</Button>
     </SubPage>
   )

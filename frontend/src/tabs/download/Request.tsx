@@ -2,9 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { paperDigit } from '../../lib/papers'
 import type { DownloadSource, QueryEntry, SyllabusConfig } from '../../lib/types'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
 import { Skeleton } from '../../ui/Skeleton'
+import { notify } from '../../ui/Toast'
 import { SessionPicker } from './SessionPicker'
 import type { Session } from './session'
 
@@ -52,9 +52,6 @@ export function Request({ source }: { source: DownloadSource }) {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
-  const [failure, setFailure] = useState<string | null>(null)
-  const [errors, setErrors] = useState<string[]>([])
-  const [warnings, setWarnings] = useState<string[]>([])
 
   useEffect(() => {
     api()
@@ -139,15 +136,12 @@ export function Request({ source }: { source: DownloadSource }) {
     setLoading(true)
     setEntries(null)
     setPicked(new Set())
-    setErrors([])
-    setWarnings([])
-    setFailure(null)
     setStatus('查询中…')
     try {
       const a = await api()
       const result = await a.query_session(session.syllabus, session.year, session.season)
       if (!result.success) {
-        setFailure(`查询失败: ${result.error}`)
+        notify('bad', `查询失败: ${result.error}`)
         setStatus(null)
         return
       }
@@ -159,7 +153,7 @@ export function Request({ source }: { source: DownloadSource }) {
       setQueriedSyllabus(session.syllabus)
       setStatus(null)
     } catch (err) {
-      setFailure(String(err instanceof Error ? err.message : err))
+      notify('bad', String(err instanceof Error ? err.message : err))
       setStatus(null)
     } finally {
       setLoading(false)
@@ -180,8 +174,6 @@ export function Request({ source }: { source: DownloadSource }) {
     const chosen = selectable.filter((e) => picked.has(e.paper_id))
     if (busy || chosen.length === 0) return
     setBusy(true)
-    setErrors([])
-    setWarnings([])
     let ok = 0
     let skipped = 0
     const failed: string[] = []
@@ -216,9 +208,20 @@ export function Request({ source }: { source: DownloadSource }) {
         ) ?? null,
       )
       setPicked(new Set())
-      setErrors(failed)
-      setWarnings(warned)
       setStatus(`成功 ${ok} · 跳过 ${skipped} · 失败 ${failed.length}`)
+      // One line each, and only for what went wrong: the counts are already on
+      // the status line, so a toast repeating them would say nothing new.
+      if (failed.length > 0) {
+        notify(
+          'bad',
+          failed.length === 1 ? failed[0] : `${failed.length} 份失败 — ${failed[0]}`,
+        )
+      } else if (warned.length > 0) {
+        notify(
+          'warn',
+          warned.length === 1 ? warned[0] : `${warned.length} 份的 insert 没下到`,
+        )
+      }
       setBusy(false)
     }
   }
@@ -244,7 +247,6 @@ export function Request({ source }: { source: DownloadSource }) {
         </Button>
       </div>
 
-      {failure && <Banner tone="bad" title={failure} />}
 
       {(status || entries) && (
         <div className="flex flex-wrap items-center gap-2">
@@ -373,15 +375,6 @@ export function Request({ source }: { source: DownloadSource }) {
         </div>
       )}
 
-      {errors.slice(0, 5).map((e) => (
-        <Banner key={e} tone="bad" title={e} />
-      ))}
-      {errors.length > 5 && (
-        <Banner tone="bad" title={`…另有 ${errors.length - 5} 条失败`} />
-      )}
-      {warnings.slice(0, 5).map((w) => (
-        <Banner key={w} tone="warn" title={w} />
-      ))}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
-import { Banner } from '../../ui/Banner'
 import { Button } from '../../ui/Button'
+import { notify } from '../../ui/Toast'
 import { compactIds } from './compact'
 import { SubPage } from './SubPage'
 
@@ -15,7 +15,6 @@ interface Stored {
 export function SyllabusView({ onBack }: { onBack: () => void }) {
   const [items, setItems] = useState<Stored[] | null>(null)
   const [confirm, setConfirm] = useState<string | null>(null)
-  const [note, setNote] = useState<string | null>(null)
 
   const load = () =>
     api()
@@ -30,7 +29,10 @@ export function SyllabusView({ onBack }: { onBack: () => void }) {
   const forget = async (id: string) => {
     setConfirm(null)
     const r = await (await api()).forget_syllabus(id)
-    setNote(r.success ? `已删除 ${id} 的 syllabus` : `${id} 没有可删除的记录`)
+    notify(
+      r.success ? 'ok' : 'warn',
+      r.success ? `已删除 ${id} 的 syllabus` : `${id} 没有可删除的记录`,
+    )
     load()
   }
 
@@ -40,8 +42,6 @@ export function SyllabusView({ onBack }: { onBack: () => void }) {
         批改时按 topic 归类错题要靠它。删掉之后下次批改会重新解析 ——
         那是一次要花钱的视觉模型调用，所以这里不做「一键清空」。
       </p>
-
-      {note && <Banner tone="ok" title={note} />}
 
       {items === null ? (
         <div className="text-caption text-muted">读取中…</div>

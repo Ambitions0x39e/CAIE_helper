@@ -9,7 +9,7 @@ import { Button } from '../../ui/Button'
 import { Glyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
-import { type Note, Toast } from '../../ui/Toast'
+import { notify } from '../../ui/Toast'
 
 const LAYOUTS = [
   { id: 'icons', label: '图标' },
@@ -47,7 +47,6 @@ export function Organize({
   const [deleting, setDeleting] = useState<string | null>(null)
   const [alsoFiles, setAlsoFiles] = useState(false)
   const [mailReady, setMailReady] = useState(false)
-  const [note, setNote] = useState<Note | null>(null)
   /** The row the detail panel grows out of. */
   const [origin, setOrigin] = useState<DOMRect | null>(null)
 
@@ -75,14 +74,14 @@ export function Organize({
     void (async () => {
       try {
         const result = await fn(await api())
-        setNote(
-          result.success
-            ? { tone: 'ok', text: ok }
-            : { tone: 'bad', text: result.error ?? '操作失败' },
-        )
-        if (result.success) reload()
+        if (result.success) {
+          notify('ok', ok)
+          reload()
+        } else {
+          notify('bad', result.error ?? '操作失败')
+        }
       } catch (err) {
-        setNote({ tone: 'bad', text: String(err instanceof Error ? err.message : err) })
+        notify('bad', String(err instanceof Error ? err.message : err))
       }
     })()
   }
@@ -146,8 +145,6 @@ export function Organize({
           隐藏已完成
         </label>
       </div>
-
-      <Toast note={note} onDismiss={() => setNote(null)} />
 
       {pendingDelete && (
         <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3">

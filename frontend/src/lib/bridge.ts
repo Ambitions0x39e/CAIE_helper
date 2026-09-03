@@ -93,7 +93,7 @@ export interface PyApi {
     release_notes?: string | null
     download_url?: string | null
   }>
-  pick_pdf(title?: string): Promise<string | null>
+  pick_pdf(): Promise<string | null>
   start_analysis(
     ms_path: string, paper_type: string, answer_path: string | null,
     start_page: number | null, force: boolean,
