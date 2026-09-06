@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -541,6 +542,38 @@ class AppUpdater:
         ))
 
         return dest
+
+
+#: The bundle name 1.x installed under. This build installs as
+#: "CIE Helper.app", so the two sit side by side rather than one replacing the
+#: other — see prune_legacy_macos_app.
+_LEGACY_MACOS_APP: Final[Path] = Path("/Applications/cie-helper.app")
+
+
+def prune_legacy_macos_app(bundle: Path = _LEGACY_MACOS_APP) -> bool:
+    """Remove the ``cie-helper.app`` a 1.x install left in /Applications.
+
+    Nothing else can: an upgrade — dragged out of the image or copied by
+    ``install()`` — writes to ``CIE Helper.app``, a different path, so the old
+    bundle survives and the user is left with two apps that look alike, run
+    different code and disagree about their own data.
+
+    Called at startup rather than from the install script so it also catches
+    the hand-dragged install, and never raises: a bundle we cannot delete (a
+    read-only volume, a permissions oddity) is a cosmetic problem, not a
+    reason to refuse to open. Returns True when one was removed.
+    """
+    if not bundle.is_dir():
+        return False
+    # Never delete the bundle this process is running out of.
+    exe = current_executable()
+    if exe is not None and bundle in exe.parents:
+        return False
+    try:
+        shutil.rmtree(bundle)
+    except OSError:
+        return False
+    return True
 
 
 def current_executable() -> Path | None:

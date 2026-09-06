@@ -31,6 +31,7 @@ from modules.updater import (
     current_app_version,
     format_progress,
     platform_asset_suffix,
+    prune_legacy_macos_app,
 )
 
 _MIB = 1024 * 1024
@@ -1068,3 +1069,33 @@ def test_check_download_install_round_trip_never_raises(
     body = (updates_dir / "relaunch.cmd").read_text(encoding="mbcs")
     assert download.local_path in body
     assert str(app_exe) in body
+
+
+# ---------------------------------------------------------------------------
+# Legacy bundle cleanup
+# ---------------------------------------------------------------------------
+
+
+def test_prune_legacy_macos_app_deletes_the_old_bundle(tmp_path: Path) -> None:
+    bundle = tmp_path / "cie-helper.app"
+    (bundle / "Contents" / "MacOS").mkdir(parents=True)
+
+    assert prune_legacy_macos_app(bundle) is True
+    assert not bundle.exists()
+
+
+def test_prune_legacy_macos_app_is_a_no_op_when_absent(tmp_path: Path) -> None:
+    assert prune_legacy_macos_app(tmp_path / "cie-helper.app") is False
+
+
+def test_prune_legacy_macos_app_spares_the_bundle_it_runs_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "cie-helper.app"
+    exe = bundle / "Contents" / "MacOS" / "cie-helper"
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    monkeypatch.setattr(updater_mod, "current_executable", lambda: exe)
+
+    assert prune_legacy_macos_app(bundle) is False
+    assert bundle.is_dir()
