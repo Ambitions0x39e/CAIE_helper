@@ -15,6 +15,7 @@ from pathlib import Path
 import webview
 
 from app_web.api import Api
+from modules.updater import prune_legacy_macos_app
 
 #: Painted before the webview has anything to show. Without it the window comes
 #: up white and flashes on every launch.
@@ -42,6 +43,7 @@ def _entry() -> str:
 
 
 def main() -> None:
+    prune_legacy_macos_app()
     debug = os.environ.get("CIE_DEBUG") == "1"
     webview.create_window(
         "CIE Helper",
