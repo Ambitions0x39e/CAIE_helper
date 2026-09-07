@@ -1,5 +1,5 @@
 import { Command } from 'cmdk'
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/bridge'
 import {
   COMMANDS,
@@ -125,18 +125,6 @@ export function CommandPalette({
     close()
   }
 
-  // While an IME is composing, the browser still dispatches Enter and the
-  // arrows — typing 下载 goes through `xiazai` first, and the Enter that
-  // commits those characters would otherwise run whatever is highlighted.
-  // Capture phase, so cmdk never sees them; the IME itself is unaffected,
-  // it reads the keys below the DOM.
-  const holdForIme = (e: KeyboardEvent<HTMLDivElement>) => {
-    const composing = e.nativeEvent.isComposing || e.keyCode === 229
-    if (composing && (e.key === 'Enter' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-      e.stopPropagation()
-    }
-  }
-
   return (
     <dialog
       ref={ref}
@@ -152,57 +140,55 @@ export function CommandPalette({
                  bg-panel p-0 text-ink backdrop:bg-black/8"
       style={{ boxShadow: 'var(--shadow-command)' }}
     >
-      <div onKeyDownCapture={holdForIme}>
-        <Command shouldFilter={false} loop label="命令面板" value={value} onValueChange={setPicked}>
-          <Command.Input
-            ref={input}
-            value={q}
-            onValueChange={setQ}
-            placeholder="输入命令，或 file 加卷号"
-            className={`w-full bg-transparent px-4 py-3 text-body text-ink outline-none
-                        placeholder:text-faint ${bare ? '' : 'border-b border-hairline'}`}
-          />
-          {!bare && (
-            <Command.List className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
-              {/* Only once something has been typed: with an empty box nothing
-                  has been missed, so saying so would be a lie. */}
-              {!blank && (
-                <Command.Empty className="px-3 py-6 text-center text-caption text-muted">
-                  没有匹配的命令
-                </Command.Empty>
-              )}
-              {groups.map(([group, items]) => (
-                <Command.Group
-                  key={group}
-                  heading={group}
-                  className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pt-2
-                             [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-caption
-                             [&_[cmdk-group-heading]]:text-faint"
-                >
-                  {items.map((c) => (
-                    <Command.Item
-                      // The same command can sit under 常用 and under its own
-                      // heading; cmdk keys the highlight by value, so the
-                      // heading has to be part of it.
-                      key={`${group}:${c.id}`}
-                      value={`${group}:${c.id}`}
-                      onSelect={() => run(c)}
-                      className="flex cursor-default items-center gap-3 rounded-ui px-2.5 py-1.5
-                                 text-body data-[selected=true]:bg-raised
-                                 data-[selected=true]:text-accent"
-                    >
-                      <span className="min-w-0 flex-1 truncate">{c.label}</span>
-                      {c.intent.param !== undefined && c.intent.open === undefined && (
-                        <span className="shrink-0 text-caption text-faint">{c.intent.param}</span>
-                      )}
-                    </Command.Item>
-                  ))}
-                </Command.Group>
-              ))}
-            </Command.List>
-          )}
-        </Command>
-      </div>
+      <Command shouldFilter={false} loop label="命令面板" value={value} onValueChange={setPicked}>
+        <Command.Input
+          ref={input}
+          value={q}
+          onValueChange={setQ}
+          placeholder="输入命令，或 file 加卷号"
+          className={`w-full bg-transparent px-4 py-3 text-body text-ink outline-none
+                      placeholder:text-faint ${bare ? '' : 'border-b border-hairline'}`}
+        />
+        {!bare && (
+          <Command.List className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
+            {/* Only once something has been typed: with an empty box nothing
+                has been missed, so saying so would be a lie. */}
+            {!blank && (
+              <Command.Empty className="px-3 py-6 text-center text-caption text-muted">
+                没有匹配的命令
+              </Command.Empty>
+            )}
+            {groups.map(([group, items]) => (
+              <Command.Group
+                key={group}
+                heading={group}
+                className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pt-2
+                           [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-caption
+                           [&_[cmdk-group-heading]]:text-faint"
+              >
+                {items.map((c) => (
+                  <Command.Item
+                    // The same command can sit under 常用 and under its own
+                    // heading; cmdk keys the highlight by value, so the
+                    // heading has to be part of it.
+                    key={`${group}:${c.id}`}
+                    value={`${group}:${c.id}`}
+                    onSelect={() => run(c)}
+                    className="flex cursor-default items-center gap-3 rounded-ui px-2.5 py-1.5
+                               text-body data-[selected=true]:bg-raised
+                               data-[selected=true]:text-accent"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                    {c.intent.param !== undefined && c.intent.open === undefined && (
+                      <span className="shrink-0 text-caption text-faint">{c.intent.param}</span>
+                    )}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ))}
+          </Command.List>
+        )}
+      </Command>
     </dialog>
   )
 }
