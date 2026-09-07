@@ -78,10 +78,8 @@ Output: `dist/cie-helper/` (~84 MB) and `dist/cie-helper-<version>-setup.exe`
 macOS is the same first two steps, then `./packaging/macos/build-dmg.sh`, which
 stages `dist/CIE Helper.app` next to an `/Applications` symlink and calls
 `hdiutil`. **It has to run on a Mac** — a `.app` cannot be cross-compiled, and
-`hdiutil` is macOS-only. Two things it does not have yet: `packaging/macos/
-app.icns` (absent, so the bundle takes the generic application icon) and a
-signing identity (so recipients clear the quarantine flag by hand once — the
-script prints the line).
+`hdiutil` is macOS-only. What it lacks is a signing identity, so recipients
+clear the quarantine flag by hand once — the script prints the line.
 
 - **No path handling in the app needs to know it is frozen.** All three runtime
   lookups (`core/config_store.py`'s `data/`, `modules/updater.py`'s
