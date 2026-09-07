@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
+import type { Intent } from '../../lib/commands'
 import type { MistakeRecord } from '../../lib/types'
 import { notify } from '../../ui/Toast'
 import { Button } from '../../ui/Button'
@@ -88,7 +89,7 @@ function TopicPicker({
   )
 }
 
-export function Mistakes() {
+export function Mistakes({ intent }: { intent?: Intent | null }) {
   const [records, setRecords] = useState<MistakeRecord[] | null>(null)
   const [view, setView] = useState<ViewId>('paper')
   const [keys, setKeys] = useState<ReadonlySet<string>>(new Set())
@@ -106,6 +107,16 @@ export function Mistakes() {
   useEffect(() => {
     load()
   }, [])
+
+  // Arriving from the palette: `sub` picks the grouping, `param` is a topic
+  // key, which is exactly what `keys` filters by. Keyed on the intent object
+  // so the same jump asked for twice lands twice.
+  useEffect(() => {
+    if (!intent) return
+    const asked = VIEWS.find((v) => v.id === intent.sub)?.id
+    if (asked) setView(asked)
+    if (intent.param !== undefined) setKeys(new Set([intent.param]))
+  }, [intent])
 
   /** Every key present, sorted, with 未分类 last — it is a leftover bucket
    * rather than a topic, so it sits at the end instead of wherever collation

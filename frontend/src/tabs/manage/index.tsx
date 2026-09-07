@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
+import type { Intent } from '../../lib/commands'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { PushTrack } from '../../ui/PushTrack'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
@@ -14,11 +15,21 @@ const SECTIONS = [
 ] as const
 type SectionId = (typeof SECTIONS)[number]['id']
 
-export function ManageTab() {
+export function ManageTab({
+  intent,
+  onConsumed,
+}: {
+  intent?: Intent | null
+  onConsumed?: () => void
+}) {
   const [section, setSection] = useState<SectionId>('overview')
   const [dir, setDir] = useState(1)
   const [papers, setPapers] = useState<PaperRecord[]>([])
   const [syllabuses, setSyllabuses] = useState<SyllabusConfig[]>([])
+  /** The palette's request, held for whichever sub-view is on screen: 整理
+   * reads the layout out of it, 错题 the grouping and the topic. Held as the
+   * object so asking twice for the same thing is two distinct requests. */
+  const [sub, setSub] = useState<Intent | null>(null)
 
   const index = SECTIONS.findIndex((s) => s.id === section)
 
@@ -46,6 +57,15 @@ export function ManageTab() {
     setSection(id)
   }
 
+  useEffect(() => {
+    if (!intent || intent.tab !== 'manage') return
+    const target = SECTIONS.find((s) => s.id === intent.view)?.id
+    if (target) go(target)
+    setSub(intent)
+    onConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent])
+
   return (
     <div className="space-y-4">
       <SegmentedStrip items={SECTIONS} value={section} onChange={go} />
@@ -53,9 +73,14 @@ export function ManageTab() {
         {section === 'overview' ? (
           <Overview papers={papers} syllabuses={syllabuses} />
         ) : section === 'organize' ? (
-          <Organize papers={papers} syllabuses={syllabuses} reload={reload} />
+          <Organize
+            papers={papers}
+            syllabuses={syllabuses}
+            reload={reload}
+            intent={sub}
+          />
         ) : (
-          <Mistakes />
+          <Mistakes intent={sub} />
         )}
       </PushTrack>
     </div>

@@ -8,8 +8,12 @@ import { notify } from '../../ui/Toast'
 /** The last paper this panel put on disk — what 发送到 GoodNotes attaches. */
 type Outcome = { kind: 'downloaded' | 'recorded'; result: DownloadResult } | null
 
-export function ById({ source }: { source: DownloadSource }) {
-  const [paperId, setPaperId] = useState('')
+/** `prefill` is what the palette arrived with. It only seeds the box — the
+ * download itself stays a deliberate click, because it has a side effect. The
+ * parent remounts this by key when a new one turns up, so the seed is simply
+ * the initial state. */
+export function ById({ source, prefill = '' }: { source: DownloadSource; prefill?: string }) {
+  const [paperId, setPaperId] = useState(prefill)
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<Outcome>(null)
   const [mailReady, setMailReady] = useState(false)

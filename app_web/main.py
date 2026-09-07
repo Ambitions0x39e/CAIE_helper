@@ -15,6 +15,7 @@ from pathlib import Path
 import webview
 
 from app_web.api import Api
+from core.settings import app_settings
 from modules.updater import prune_legacy_macos_app
 
 #: Painted before the webview has anything to show. Without it the window comes
@@ -59,7 +60,16 @@ def main() -> None:
         zoomable=False,  # no pinch / ctrl+wheel zoom
         draggable=False,  # images and links cannot be dragged out
     )
-    webview.start(debug=debug)
+    # `private_mode` defaults to True, which throws the webview's storage away
+    # on exit — localStorage included, so anything the UI remembers between
+    # launches (the command palette's usage counts, its empty-state setting)
+    # would come back blank every time. The profile lives beside the rest of
+    # the app's data so uninstalling clears it with everything else.
+    webview.start(
+        debug=debug,
+        private_mode=False,
+        storage_path=str(app_settings.base_dir / "webview"),
+    )
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { FileText, Send, Trash2 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { api } from '../../lib/bridge'
+import type { Intent } from '../../lib/commands'
 import { subjectGlyph, syllabusIdOf } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
@@ -36,10 +37,14 @@ export function Organize({
   papers,
   syllabuses,
   reload,
+  intent,
 }: {
   papers: PaperRecord[]
   syllabuses: SyllabusConfig[]
   reload: () => void
+  /** The palette's last request. A `sub` naming no layout here is ignored, so
+   * an intent meant for a sibling view cannot knock this one over. */
+  intent?: Intent | null
 }) {
   const [layout, setLayout] = useState<LayoutId>('icons')
   const [hideCompleted, setHideCompleted] = useState(false)
@@ -49,6 +54,14 @@ export function Organize({
   const [mailReady, setMailReady] = useState(false)
   /** The row the detail panel grows out of. */
   const [origin, setOrigin] = useState<DOMRect | null>(null)
+
+  // Keyed on the intent object, not on its contents: asking for 图标视图 a
+  // second time after switching away by hand has to take effect again, and
+  // the two requests carry the same string.
+  useEffect(() => {
+    const asked = LAYOUTS.find((l) => l.id === intent?.sub)?.id
+    if (asked) setLayout(asked)
+  }, [intent])
 
   useEffect(() => {
     api()
