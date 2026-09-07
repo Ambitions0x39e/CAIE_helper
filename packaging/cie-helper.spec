@@ -122,9 +122,9 @@ coll = COLLECT(  # noqa: F821
 
 if sys.platform == "darwin":
     # `.icns` only — PyInstaller does not convert, and a `.ico` here is a build
-    # error. Absent, the bundle gets the generic application icon and the build
-    # still succeeds, which is the right trade for a target that has no
-    # released artwork yet.
+    # error. The `exists()` guard keeps the build working from a tree without
+    # the artwork: the bundle then takes the generic application icon instead
+    # of failing.
     icns = ROOT / "packaging" / "macos" / "app.icns"
     app = BUNDLE(  # noqa: F821
         coll,
