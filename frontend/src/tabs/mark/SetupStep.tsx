@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { PARSE_JOB, onJobEvent } from '../../lib/jobs'
 import { comparePaperIds, syllabusIdOf } from '../../lib/papers'
@@ -6,6 +6,7 @@ import type { PaperRecord } from '../../lib/types'
 import { Button } from '../../ui/Button'
 import { Select } from '../../ui/Select'
 import { notify } from '../../ui/Toast'
+import { nextStage } from './stage'
 import type { Analysis } from './types'
 
 const INPUT = 'rounded-ui border border-hairline bg-raised px-2 py-1.5 text-body text-ink'
@@ -71,6 +72,15 @@ export function SetupStep({
   const [graderReady, setGraderReady] = useState(true)
   const [busy, setBusy] = useState(false)
   const [cached, setCached] = useState(false)
+  const [stage, setStage] = useState('')
+
+  // The listener below is bound for the component's life, so it closes over
+  // the first render's answerPath forever. A ref is what lets it read the
+  // current pick without re-subscribing and dropping events mid-parse.
+  const hasAnswerRef = useRef(false)
+  useEffect(() => {
+    hasAnswerRef.current = answerPath !== ''
+  }, [answerPath])
 
   useEffect(() => {
     api()
@@ -88,12 +98,11 @@ export function SetupStep({
   useEffect(
     () =>
       onJobEvent((e) => {
+        setStage((s) => nextStage(s, e, { hasAnswer: hasAnswerRef.current }))
         if (e.type === 'ms_cache') setCached(e.cached)
-        else if (e.type === 'ms_progress')
-          notify('warn', `处理第 ${e.batch}/${e.total} 批…`)
-        else if (e.type === 'scan')
-          notify(e.ok ? 'ok' : 'bad', e.ok ? '答卷解析完成' : `答卷分析失败: ${e.error}`)
-        else if (e.type === 'analysis') {
+        else if (e.type === 'scan') {
+          if (!e.ok) notify('bad', `答卷分析失败: ${e.error}`)
+        } else if (e.type === 'analysis') {
           const parsed = e as unknown as Analysis
           notify('ok', parsedSummary(parsed))
           onAnalysed(parsed)
@@ -132,7 +141,7 @@ export function SetupStep({
 
   const parse = async (force: boolean) => {
     setBusy(true)
-    notify('warn', '正在解析 Mark Scheme…')
+    setStage('准备中…')
     const page = Number(startPage)
     const r = await (await api()).start_analysis(
       msPath,
@@ -144,6 +153,7 @@ export function SetupStep({
     if (!r.success) {
       notify('bad', `解析失败: ${r.error ?? ''}`)
       setBusy(false)
+      setStage('')
     }
   }
 
@@ -262,6 +272,17 @@ export function SetupStep({
           <Button tone="accent" onClick={() => parse(false)} disabled={!canParse}>
             {answerPath && !isMcq ? '解析 Mark Scheme 与答卷' : '解析 Mark Scheme'}
           </Button>
+          {/* Stands there for the whole run rather than going out as a toast:
+              a cold parse is minutes of VL calls, and a message that takes
+              itself away after four seconds leaves a greyed-out button as the
+              only sign of life — which looks exactly like a hang. */}
+          {busy && stage && (
+            <span className="flex items-center gap-2 text-caption text-muted"
+                  role="status" aria-live="polite">
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-warn" />
+              {stage}
+            </span>
+          )}
           {analysis?.ready && cached && !busy && (
             <span className="ml-auto flex items-center gap-1.5 rounded-full border border-hairline
                              bg-raised py-1 pl-3 pr-1.5 text-caption">
