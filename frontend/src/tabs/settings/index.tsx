@@ -7,11 +7,13 @@ import { GraderView } from './GraderView'
 import { MailView } from './MailView'
 import { PaletteView } from './PaletteView'
 import { SyllabusView } from './SyllabusView'
+import { ThemeView } from './ThemeView'
 
 const PAGES = [
   { id: 'mail', label: 'SMTP / GoodNotes', hint: '批改完把卷子发去 GoodNotes' },
   { id: 'grader', label: 'Grader API', hint: '批改用的视觉模型凭证' },
   { id: 'syllabus', label: '已存 syllabus', hint: '错题按 topic 归类的依据' },
+  { id: 'theme', label: '主题', hint: '浅色、深色，或跟着系统走' },
   { id: 'palette', label: '命令面板', hint: 'Ctrl+K 唤起的那个' },
   { id: 'about', label: '关于', hint: '版本与更新' },
 ] as const
@@ -68,6 +70,8 @@ export function SettingsTab({
         <GraderView onBack={back} />
       ) : page === 'syllabus' ? (
         <SyllabusView onBack={back} />
+      ) : page === 'theme' ? (
+        <ThemeView onBack={back} />
       ) : page === 'palette' ? (
         <PaletteView onBack={back} />
       ) : (
