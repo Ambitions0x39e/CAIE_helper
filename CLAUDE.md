@@ -84,11 +84,23 @@ it, so a stale UI build ships without a word:
 ```bash
 npm run build --prefix frontend
 uv run pyinstaller packaging/cie-helper.spec --noconfirm
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\cie-helper.iss
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=2.0.0 packaging\windows\cie-helper.iss
 ```
 
 Output: `dist/cie-helper/` (~84 MB) and `dist/cie-helper-<version>-setup.exe`
 (~38 MB).
+
+`/DMyAppVersion` is what names the exe and what Add/Remove Programs shows, and
+the in-app updater compares against it. `[project].version` in `pyproject.toml`
+is the source of truth — the spec and `build-dmg.sh` both read it from there,
+and the `.iss` falls back to a literal only when nothing is passed.
+
+**Neither platform has to be built by hand.** `.github/workflows/build.yml`
+builds both — the Windows `setup.exe` and the macOS `.dmg` — on a `v*` tag or a
+manual dispatch, and reads the version out of `pyproject.toml` for ISCC. The
+runner image ships Inno Setup, so nothing installs it. macOS builds run on
+`macos-latest`, which is Apple Silicon; that is the only Mac architecture the
+app targets.
 
 macOS is the same first two steps, then `./packaging/macos/build-dmg.sh`, which
 stages `dist/CIE Helper.app` next to an `/Applications` symlink and calls
@@ -124,8 +136,9 @@ clear the quarantine flag by hand once — the script prints the line.
 触屏手势和小屏折叠都不用考虑；依赖要有 Windows 和 macOS 的 wheel，但不必有
 iOS 的。
 
-**目前只有 Windows 打了包。** macOS 要出货得自己写一份 PyInstaller spec 和
-dmg 流程，而且只能在 Mac 上跑 —— 交叉编译不存在。
+**macOS 只出 Apple Silicon。** Intel 不在目标里：spec 的 `target_arch=None`
+走原生架构，CI 跑在 `macos-latest` 上，两处都是 arm64。`universal2` 要求整棵
+依赖树都是 universal，而 pypdfium2 和 pillow 只发按架构分的 wheel。
 
 ## Stack
 

@@ -7,6 +7,7 @@ import { describe, test } from 'node:test'
 import {
   FALLBACK_GLYPH,
   comparePaperIds,
+  groupBySyllabus,
   paperDigit,
   subjectGlyph,
   syllabusIdOf,
@@ -142,5 +143,23 @@ describe('paperDigit — which paper of the syllabus this is', () => {
   test('anything without a digit lands in the ? bucket', () => {
     assert.equal(paperDigit('9701_w25_gt'), '?')
     assert.equal(paperDigit('9702_s23_qp_ab'), '?')
+  })
+})
+
+describe('groupBySyllabus', () => {
+  test('buckets by code, codes ascending and each bucket chronological', () => {
+    const grouped = groupBySyllabus([
+      pending('9702_w23_qp_11'),
+      pending('9709_s24_qp_12'),
+      pending('9702_m24_qp_11'),
+      pending('9709_s23_qp_11'),
+    ])
+    assert.deepEqual(
+      grouped.map(([code, list]) => [code, list.map((p) => p.paper_id)]),
+      [
+        ['9702', ['9702_w23_qp_11', '9702_m24_qp_11']],
+        ['9709', ['9709_s23_qp_11', '9709_s24_qp_12']],
+      ],
+    )
   })
 })

@@ -121,3 +121,23 @@ export function comparePaperIds(a: string, b: string): number {
   const [by, bs] = sitting(b)
   return ay - by || as - bs || a.localeCompare(b)
 }
+
+/** Papers bucketed by syllabus code, buckets in code order and each bucket in
+ * chronological order — what both the 总览 cards and the 图标 view's subject
+ * bands are built from. Ordering by code rather than by size keeps a subject
+ * from jumping the queue the moment it overtakes another. */
+export function groupBySyllabus(
+  records: readonly PaperRecord[],
+): [string, PaperRecord[]][] {
+  const groups = new Map<string, PaperRecord[]>()
+  for (const p of records) {
+    const id = syllabusIdOf(p.paper_id)
+    groups.set(id, [...(groups.get(id) ?? []), p])
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([id, list]) => [
+      id,
+      [...list].sort((x, y) => comparePaperIds(x.paper_id, y.paper_id)),
+    ])
+}
