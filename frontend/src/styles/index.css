@@ -23,6 +23,13 @@ body {
   box-shadow: 0 0 0 2px var(--ui-accent);
 }
 
+/* A row in a listbox already shows focus as its highlight. The ring on top of
+   that would also fire on the mouse — the pointer moves focus through the
+   rows — and outline every option it passed over. */
+[role="option"]:focus-visible {
+  box-shadow: none;
+}
+
 /* Body copy opts back in. Everything else stays unselectable via the window's
    text_select=False. */
 .selectable {
@@ -63,13 +70,17 @@ body {
    that answers and one that waits to see whether you meant it. Every button
    gets it, so a control added later is not the one dead spot in the app.
 
+   A dropdown's trigger is the exception. Pressing it opens a list anchored to
+   its edges, and a box that shrinks under the pointer while the list measures
+   itself against it is one moving target too many.
+
    **On `scale`, never on `transform`.** motion animates a button by writing
    `transform` inline once a frame; a transition on `transform` re-interpolates
    every one of those writes over its own duration, so the spring arrives late,
    in steps, and then snaps when the last value lands. `scale` is an
    independent transform property — it composes with whatever `transform`
    holds, and the two animate without touching each other. */
-button:not(:disabled):active,
+button:not(:disabled):not([role="combobox"]):active,
 [role="button"]:not([aria-disabled="true"]):active {
   scale: 0.97;
 }
@@ -77,6 +88,33 @@ button:not(:disabled):active,
 button,
 [role="button"] {
   transition: scale var(--dur-fast) var(--ease-ui);
+}
+
+/* ── Popups ────────────────────────────────────────────────────────────────
+   Radix keeps a popup mounted while its closing animation runs and stamps the
+   state on the element, so both halves are CSS — no presence wrapper on the
+   React side. It grows the last fraction of the way in and gives that back on
+   the way out, from the corner it was anchored to. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+
+@keyframes pop-out {
+  to {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+
+.pop-in[data-state="open"] {
+  animation: pop-in var(--dur-base) var(--ease-ui);
+}
+
+.pop-in[data-state="closed"] {
+  animation: pop-out var(--dur-fast) var(--ease-ui);
 }
 
 /* ── Reduced motion ────────────────────────────────────────────────────────

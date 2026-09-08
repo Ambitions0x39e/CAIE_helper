@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../lib/bridge'
+import { Select } from '../../ui/Select'
 import type { QuerySeason, SyllabusConfig } from '../../lib/types'
 import { FIRST_YEAR, SEASONS, type Session } from './session'
-
-const SELECT =
-  'rounded-ui border border-hairline bg-raised px-2 py-1.5 text-body text-ink'
 
 /** Subject / year / season. Shared by 按考季 and 分数线 — they pick the same
  * thing, and building the id from the parts is what stops it being mistyped.
@@ -52,50 +50,30 @@ export function SessionPicker({ onChange }: { onChange: (s: Session) => void }) 
   // other two are a four-digit year and one word.
   return (
     <div className="flex items-end gap-2">
-      <label className="min-w-0" style={{ flex: '7 1 0' }}>
-        <span className="block text-caption text-muted">科目</span>
-        <select
-          className={`mt-1 w-full ${SELECT}`}
-          value={syllabus}
-          onChange={(e) => setSyllabus(e.target.value)}
-        >
-          {syllabuses.map((s) => (
-            <option key={s.syllabus_id} value={s.syllabus_id}>
-              {s.syllabus_id} — {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="min-w-0" style={{ flex: '1 1 0' }}>
-        <span className="block text-caption text-muted">年份</span>
-        <select
-          className={`mt-1 w-full ${SELECT}`}
-          value={year}
-          onChange={(e) => setYear(e.target.value)}
-        >
-          {years.map((y) => (
-            <option key={y} value={String(y)}>
-              {y}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="min-w-0" style={{ flex: '2 1 0' }}>
-        <span className="block text-caption text-muted">考季</span>
-        <select
-          className={`mt-1 w-full ${SELECT}`}
-          value={season}
-          onChange={(e) => setSeason(e.target.value as QuerySeason)}
-        >
-          {SEASONS.map((s) => (
-            <option key={s.code} value={s.code}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Select
+        className="min-w-0 grow-[7] basis-0"
+        label="科目"
+        value={syllabus}
+        onChange={setSyllabus}
+        options={syllabuses.map((s) => ({
+          value: s.syllabus_id,
+          label: `${s.syllabus_id} — ${s.name}`,
+        }))}
+      />
+      <Select
+        className="min-w-0 grow basis-0"
+        label="年份"
+        value={year}
+        onChange={setYear}
+        options={years.map((y) => ({ value: String(y), label: String(y) }))}
+      />
+      <Select
+        className="min-w-0 grow-[2] basis-0"
+        label="考季"
+        value={season}
+        onChange={(v) => setSeason(v as QuerySeason)}
+        options={SEASONS.map((s) => ({ value: s.code, label: s.label }))}
+      />
     </div>
   )
 }
