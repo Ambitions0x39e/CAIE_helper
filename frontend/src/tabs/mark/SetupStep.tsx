@@ -5,10 +5,9 @@ import { comparePaperIds, syllabusIdOf } from '../../lib/papers'
 import type { PaperRecord } from '../../lib/types'
 import { Button } from '../../ui/Button'
 import { Select } from '../../ui/Select'
+import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
 import type { Analysis } from './types'
-
-const INPUT = 'rounded-ui border border-hairline bg-raised px-2 py-1.5 text-body text-ink'
 
 type Source = 'downloaded' | 'upload'
 type PaperTypeId = 'mcq' | 'math'
@@ -119,6 +118,12 @@ export function SetupStep({
     [papers, syllabus, codes],
   )
 
+  /** The answer paper this step will parse: the one just picked, or — after a
+   * reload — the one the stored analysis was made against. The analysis lives
+   * on the Python side and outlives the page, so the file the user chose has
+   * to be read back off it rather than left in local state that does not. */
+  const answerPdf = answerPath || analysis?.answer_path || ''
+
   const chosenId = filtered.includes(paperId) ? paperId : (filtered[0] ?? '')
   const chosen = papers.find((p) => p.paper_id === chosenId)
   const msPath = source === 'upload' ? uploadPath : (chosen?.ms_path ?? '')
@@ -137,7 +142,7 @@ export function SetupStep({
     const r = await (await api()).start_analysis(
       msPath,
       paperType,
-      answerPath || null,
+      answerPdf || null,
       startPage !== '' && Number.isFinite(page) ? page : null,
       force,
     )
@@ -226,13 +231,12 @@ export function SetupStep({
         {!isMcq && (
           <label className="block w-50">
             <span className="block text-caption text-muted">MS 内容起始页</span>
-            <input
+            <TextInput
               value={startPage}
-              onChange={(e) => setStartPage(e.target.value)}
+              onChange={setStartPage}
               placeholder="自动"
               inputMode="numeric"
-              className={`mt-1 w-full ${INPUT}`}
-              style={{ cursor: 'text', userSelect: 'text' }}
+              className="mt-1 w-full"
             />
             <span className="mt-1 block text-micro text-muted">默认留空，自动检测</span>
           </label>
@@ -243,7 +247,7 @@ export function SetupStep({
             {isMcq ? '选择已批注 QP PDF' : '选择答卷 PDF'}
           </Button>
           <span className="min-w-0 flex-1 truncate text-caption text-muted">
-            {answerPath ? fileName(answerPath) : '未选择文件（可稍后再选）'}
+            {answerPdf ? fileName(answerPdf) : '未选择文件（可稍后再选）'}
           </span>
         </div>
         {isMcq && (
@@ -260,7 +264,7 @@ export function SetupStep({
 
         <div className="flex flex-wrap items-center gap-3">
           <Button tone="accent" onClick={() => parse(false)} disabled={!canParse}>
-            {answerPath && !isMcq ? '解析 Mark Scheme 与答卷' : '解析 Mark Scheme'}
+            {answerPdf && !isMcq ? '解析 Mark Scheme 与答卷' : '解析 Mark Scheme'}
           </Button>
           {analysis?.ready && cached && !busy && (
             <span className="ml-auto flex items-center gap-1.5 rounded-full border border-hairline

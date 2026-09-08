@@ -10,6 +10,7 @@ import { Button } from '../../ui/Button'
 import { PaperGlyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
+import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
 
 const LAYOUTS = [
@@ -438,22 +439,20 @@ function PaperDetail({
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-caption text-muted">
           得分
-          <input
+          <TextInput
             value={raw}
-            onChange={(e) => setRaw(e.target.value)}
+            onChange={setRaw}
             inputMode="decimal"
-            className="ml-2 w-20 rounded-ui border border-hairline bg-panel px-2 py-1 text-body text-ink"
-            style={{ cursor: 'text', userSelect: 'text' }}
+            className="ml-2 w-20"
           />
         </label>
         <label className="text-caption text-muted">
           满分
-          <input
+          <TextInput
             value={total}
-            onChange={(e) => setTotal(e.target.value)}
+            onChange={setTotal}
             inputMode="decimal"
-            className="ml-2 w-20 rounded-ui border border-hairline bg-panel px-2 py-1 text-body text-ink"
-            style={{ cursor: 'text', userSelect: 'text' }}
+            className="ml-2 w-20"
           />
         </label>
         <Button

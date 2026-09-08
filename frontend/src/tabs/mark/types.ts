@@ -14,10 +14,9 @@ export interface Analysis {
   answer_path?: string | null
   /** Pages in the answer PDF; 0 when none was picked. */
   total_pages?: number
-  /** Questions the segmenter located, so their region can be cropped. */
+  /** Questions the segmenter located, so their region can be cropped. The
+   * rest grade off whole pages instead. */
   matched?: string[]
-  /** The rest — they grade off whole pages instead. */
-  unmatched?: string[]
   clips?: Record<string, { page_idx: number; y_top: number; y_bottom: number }[]>
 }
 

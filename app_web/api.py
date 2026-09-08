@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 import webview
 from pydantic import ValidationError
 
-from app_web.jobs import current, push, start
+from app_web.jobs import push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
 from core.models import MistakeRecord, PaperType
@@ -455,7 +455,6 @@ class Api:
             "answer_path": a.answer_path,
             "total_pages": a.doc.page_count if a.doc is not None else 0,
             "matched": report.matched if report else [],
-            "unmatched": report.unmatched if report else list(a.config.questions),
             "clips": clips,
         }
 
@@ -516,9 +515,6 @@ class Api:
             })
 
         return start("批改", work)
-
-    def job_running(self) -> str | None:
-        return current()
 
     # -- mark: MCQ -----------------------------------------------------------
 
@@ -610,7 +606,6 @@ class Api:
         """
         if not self._results:
             return {"success": False, "error": "没有可确认的批改结果"}
-        a = self._analysis
         summary = summarise_scores(self._results, overrides or {})
         update = self.submit_score(paper_id, summary.score, summary.max_score)
         if not update.get("success"):
@@ -624,7 +619,6 @@ class Api:
             ),
         )
         self._results = []
-        self._analysis = a
         return {
             "success": True,
             "score": summary.score,

@@ -14,10 +14,6 @@ export const OVERLAY_ROOT = 'overlay-root'
  * card rather than as a new surface appearing on top of it. */
 const CORNER = 7
 
-/** Fraction of the content area the fallback origin covers, for a caller with
- * no element to grow from. */
-const CENTRED = 0.7
-
 /** Must outlast the spring, or the panel is yanked off the screen partway
  * through shrinking. */
 const TEARDOWN_MS = 460
@@ -55,7 +51,8 @@ export function Overlay({
 }: {
   open: boolean
   /** Where it grows from — the bounding rect of the element that was clicked.
-   * Omitted, it grows from the middle of the content area. */
+   * Every caller sets it in the same handler that opens the panel; without one
+   * the panel fades in at full size instead of growing. */
   origin?: DOMRect | null
   onClose: () => void
   children: ReactNode
@@ -82,16 +79,7 @@ export function Overlay({
   // leaves it there — so the same rectangle drives both directions and the
   // panel shrinks back into the thing it came out of.
   const bounds = host.getBoundingClientRect()
-  const closed = clipTo(
-    origin ??
-      new DOMRect(
-        bounds.left + (bounds.width * (1 - CENTRED)) / 2,
-        bounds.top + (bounds.height * (1 - CENTRED)) / 2,
-        bounds.width * CENTRED,
-        bounds.height * CENTRED,
-      ),
-    bounds,
-  )
+  const closed = clipTo(origin ?? bounds, bounds)
 
   return createPortal(
     <motion.div

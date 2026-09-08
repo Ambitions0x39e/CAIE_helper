@@ -51,12 +51,6 @@ def push(event: dict[str, Any]) -> None:
         _log.debug("push failed for %s", event.get("type"), exc_info=True)
 
 
-def current() -> str | None:
-    """The running job's name, or None."""
-    with _lock:
-        return _running
-
-
 def start(name: str, work: Callable[[], None]) -> dict[str, Any]:
     """Run *work* on a worker thread, or report that one is already running.
 

@@ -130,9 +130,3 @@ export interface SaveResult {
   cancelled?: boolean
   error?: string | null
 }
-
-/** Every failed js_api call looks like this, including validation failures. */
-export interface Failure {
-  success: false
-  error: string
-}
