@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { paperDigit, subjectGlyph, syllabusIdOf, tally } from '../../lib/papers'
+import { groupBySyllabus, paperDigit, subjectGlyph, tally } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
 import { Donut } from '../../ui/Donut'
@@ -74,16 +74,7 @@ export function Overview({
     [syllabuses],
   )
 
-  /** Papers bucketed by syllabus, by code — the order the cards are read in
-   * should not shuffle when one subject overtakes another. */
-  const bySyllabus = useMemo(() => {
-    const groups = new Map<string, PaperRecord[]>()
-    for (const p of papers) {
-      const id = syllabusIdOf(p.paper_id)
-      groups.set(id, [...(groups.get(id) ?? []), p])
-    }
-    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-  }, [papers])
+  const bySyllabus = useMemo(() => groupBySyllabus(papers), [papers])
 
   const overall = tally(papers)
   const completed = papers

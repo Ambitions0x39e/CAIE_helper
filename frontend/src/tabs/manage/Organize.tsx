@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FileText, Send, Trash2 } from 'lucide-react'
-import { motion } from 'motion/react'
+import { createPortal } from 'react-dom'
+import { ChevronDown, FileText, Send, Trash2 } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
 import { api } from '../../lib/bridge'
 import type { Intent } from '../../lib/commands'
-import { subjectGlyph, syllabusIdOf } from '../../lib/papers'
+import { groupBySyllabus, subjectGlyph } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
 import { Button } from '../../ui/Button'
 import { PaperGlyph } from '../../ui/Glyph'
+import { SETTLE_FAST } from '../../ui/motion'
 import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { notify } from '../../ui/Toast'
@@ -79,6 +81,17 @@ export function Organize({
     () => (hideCompleted ? papers.filter((p) => p.status !== 'Completed') : papers),
     [papers, hideCompleted],
   )
+
+  const bands = useMemo(() => groupBySyllabus(shown), [shown])
+
+  /** Which subjects are folded away, by code. */
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set())
+  const toggleFold = (code: string) =>
+    setFolded((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(code)) next.add(code)
+      return next
+    })
 
   const current = shown.find((p) => p.paper_id === selected) ?? null
   const pendingDelete = papers.find((p) => p.paper_id === deleting) ?? null
@@ -159,44 +172,91 @@ export function Organize({
         </label>
       </div>
 
-      {pendingDelete && (
-        <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3">
-          <span className="text-caption text-bad">
-            确定删除 {pendingDelete.paper_id}？
-          </span>
-          <label className="flex items-center gap-1.5 text-caption text-muted">
-            <input
-              type="checkbox"
-              checked={alsoFiles}
-              onChange={(e) => setAlsoFiles(e.target.checked)}
-            />
-            连同本地 PDF 一起删
-          </label>
-          <Button
-            onClick={() => {
-              const id = pendingDelete.paper_id
-              setDeleting(null)
-              setSelected(null)
-              call((a) => a.delete_paper(id, alsoFiles), `已删除 ${id}`)
-            }}
+      {/* Floated over the page rather than laid into it: the icon that was
+          clicked can be a thousand pixels down the scroll, and a question
+          asked at the top of the list is a question nobody answers. */}
+      {pendingDelete &&
+        createPortal(
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={SETTLE_FAST}
+            className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 flex-wrap items-center
+                       gap-2 rounded-ui border border-hairline bg-panel p-3 shadow-lg"
           >
-            确认删除
-          </Button>
-          <Button onClick={() => setDeleting(null)}>取消</Button>
-        </div>
-      )}
+            <span className="text-caption text-bad">
+              确定删除 {pendingDelete.paper_id}？
+            </span>
+            <label className="flex items-center gap-1.5 text-caption text-muted">
+              <input
+                type="checkbox"
+                checked={alsoFiles}
+                onChange={(e) => setAlsoFiles(e.target.checked)}
+              />
+              连同本地 PDF 一起删
+            </label>
+            <Button
+              onClick={() => {
+                const id = pendingDelete.paper_id
+                setDeleting(null)
+                setSelected(null)
+                call((a) => a.delete_paper(id, alsoFiles), `已删除 ${id}`)
+              }}
+            >
+              确认删除
+            </Button>
+            <Button onClick={() => setDeleting(null)}>取消</Button>
+          </motion.div>,
+          document.body,
+        )}
 
       {shown.length === 0 ? (
         <div className="text-muted">没有匹配的记录。</div>
       ) : layout === 'icons' ? (
-        <div className="flex flex-wrap gap-x-3 gap-y-5">
-          {shown.map((p) => (
-            <IconCell
-              key={p.paper_id}
-              paper={p}
-              glyph={subjectGlyph(names.get(syllabusIdOf(p.paper_id)))}
-              actions={actionsOf(p)}
-            />
+        <div className="space-y-5">
+          {bands.map(([code, list]) => (
+            <section key={code}>
+              <SubjectRule
+                code={code}
+                name={names.get(code)}
+                count={list.length}
+                folded={folded.has(code)}
+                onToggle={() => toggleFold(code)}
+              />
+              <AnimatePresence initial={false}>
+                {!folded.has(code) && (
+                  // Two motions, one fold: the box's height closes while the
+                  // icons ride up by their own height inside it. Height alone
+                  // would eat the row from the bottom; the lift is what makes
+                  // them go *under* the rule.
+                  <motion.div
+                    key="icons"
+                    initial={{ height: 0 }}
+                    animate={{ height: 'auto' }}
+                    exit={{ height: 0 }}
+                    transition={SETTLE_FAST}
+                    className="overflow-hidden"
+                  >
+                    <motion.div
+                      initial={{ y: '-100%' }}
+                      animate={{ y: 0 }}
+                      exit={{ y: '-100%' }}
+                      transition={SETTLE_FAST}
+                      className="flex flex-wrap gap-x-3 gap-y-5 pt-2"
+                    >
+                      {list.map((p) => (
+                        <IconCell
+                          key={p.paper_id}
+                          paper={p}
+                          glyph={subjectGlyph(names.get(code))}
+                          actions={actionsOf(p)}
+                        />
+                      ))}
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </section>
           ))}
         </div>
       ) : (
@@ -225,6 +285,43 @@ export function Organize({
           />
         )}
       </Overlay>
+    </div>
+  )
+}
+
+/** The band a subject's icons sit under: its code and name at the left, the
+ * rule running out to the right, and the chevron that folds the subject away
+ * at the far end. */
+function SubjectRule({
+  code,
+  name,
+  count,
+  folded,
+  onToggle,
+}: {
+  code: string
+  name?: string
+  count: number
+  folded: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="text-caption font-semibold tabular-nums">{code}</span>
+      {name && <span className="text-caption text-muted">{name}</span>}
+      <span className="text-micro text-muted tabular-nums">{count}</span>
+      <div className="h-px flex-1 self-center bg-hairline" />
+      <button
+        onClick={onToggle}
+        title={folded ? '展开' : '收起'}
+        className="flex size-5 shrink-0 items-center justify-center self-center rounded-ui
+                   text-muted hover:bg-raised hover:text-ink"
+      >
+        <ChevronDown
+          className={`size-4 transition-transform duration-150 ${folded ? 'rotate-180' : ''}`}
+          aria-hidden
+        />
+      </button>
     </div>
   )
 }
