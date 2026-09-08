@@ -8,6 +8,7 @@
 export type JobEvent =
   | { type: 'ms_cache'; cached: boolean }
   | { type: 'ms_progress'; batch: number; total: number }
+  | { type: 'ms_done' }
   | { type: 'scan'; ok: boolean; error: string }
   | { type: 'analysis'; [k: string]: unknown }
   | { type: 'mcq_progress'; batch: number; total: number }

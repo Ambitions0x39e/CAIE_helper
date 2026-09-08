@@ -411,6 +411,7 @@ class Api:
                         })
                     )
                 config = ms_future.result()
+                push({"type": "ms_done"})
                 doc = scan_future.result() if scan_future is not None else None
 
             self._analysis = _Analysis(config, doc, pt, answer_path)
