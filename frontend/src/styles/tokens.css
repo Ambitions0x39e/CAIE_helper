@@ -72,10 +72,10 @@
   --ease-ui: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Light is the default, and is also written explicitly so a subtree can force
-   it while the OS is dark. Both theme blocks are attribute selectors rather
-   than :root ones so any element can carry a theme — that is what lets the two
-   themes sit side by side on one page for comparison. */
+/* Light is the default, and is also written explicitly so `data-theme="light"`
+   holds it while the OS is dark. 设置 › 主题 stamps that attribute on <html>,
+   and 跟随系统 removes it — an unstamped root is what leaves the media query
+   below in charge. */
 :root,
 [data-theme="light"] {
   /* ── Light ──────────────────────────────────────────────────────────────
@@ -142,6 +142,7 @@
   }
 }
 
+/* Explicit dark, at any OS setting. */
 [data-theme="dark"] {
   --ui-chrome: #131316;
   --ui-page: #1a1a1e;
