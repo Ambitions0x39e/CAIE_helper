@@ -73,13 +73,19 @@ export function SetupStep({
   const [cached, setCached] = useState(false)
   const [stage, setStage] = useState('')
 
+  /** The answer paper this step will parse: the one just picked, or — after a
+   * reload — the one the stored analysis was made against. The analysis lives
+   * on the Python side and outlives the page, so the file the user chose has
+   * to be read back off it rather than left in local state that does not. */
+  const answerPdf = answerPath || analysis?.answer_path || ''
+
   // The listener below is bound for the component's life, so it closes over
-  // the first render's answerPath forever. A ref is what lets it read the
+  // the first render's answerPdf forever. A ref is what lets it read the
   // current pick without re-subscribing and dropping events mid-parse.
   const hasAnswerRef = useRef(false)
   useEffect(() => {
-    hasAnswerRef.current = answerPath !== ''
-  }, [answerPath])
+    hasAnswerRef.current = answerPdf !== ''
+  }, [answerPdf])
 
   useEffect(() => {
     api()
@@ -126,12 +132,6 @@ export function SetupStep({
         .sort(comparePaperIds),
     [papers, syllabus, codes],
   )
-
-  /** The answer paper this step will parse: the one just picked, or — after a
-   * reload — the one the stored analysis was made against. The analysis lives
-   * on the Python side and outlives the page, so the file the user chose has
-   * to be read back off it rather than left in local state that does not. */
-  const answerPdf = answerPath || analysis?.answer_path || ''
 
   const chosenId = filtered.includes(paperId) ? paperId : (filtered[0] ?? '')
   const chosen = papers.find((p) => p.paper_id === chosenId)
