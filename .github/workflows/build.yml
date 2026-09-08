@@ -1,0 +1,81 @@
+# Builds the two shippable installers: the Windows setup.exe and the macOS
+# .dmg. Neither can be cross-compiled — a .app needs a Mac and hdiutil, Inno
+# Setup needs Windows — so the matrix is the whole point of this file.
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# A second run on the same ref makes the first one's artifacts pointless.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false  # a broken Windows build should not hide a working dmg
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows-installer
+          - os: macos-latest
+            artifact: macos-dmg
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 24, not the runner's default 22: it is what the tree is developed and
+      # tested on, and a build is the wrong place to find out they differ.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # The spec bundles frontend/dist exactly as it finds it on disk, so this
+      # has to come first. It has no failure mode that stops the build — a
+      # missing dist ships an app that opens on a blank window — which is why
+      # it is a separate, visible step rather than folded into the next one.
+      - name: Build the UI
+        run: |
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+
+      # Installs the dev group too; pyinstaller lives there.
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Freeze the app
+        run: uv run pyinstaller packaging/cie-helper.spec --noconfirm
+
+      # The version is passed in rather than read from the .iss, which keeps
+      # only a fallback copy of it. Same line, same pattern the spec matches,
+      # so the exe, the .app and the updater cannot disagree about the number.
+      - name: Wrap into setup.exe
+        if: runner.os == 'Windows'
+        run: |
+          $v = [regex]::Match((Get-Content pyproject.toml -Raw), '(?m)^version = "([^"]+)"').Groups[1].Value
+          if (-not $v) { throw 'No [project].version in pyproject.toml' }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$v packaging\windows\cie-helper.iss
+
+      - name: Wrap into a .dmg
+        if: runner.os == 'macOS'
+        run: ./packaging/macos/build-dmg.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/cie-helper-*-setup.*
+          if-no-files-found: error
+          retention-days: 30
