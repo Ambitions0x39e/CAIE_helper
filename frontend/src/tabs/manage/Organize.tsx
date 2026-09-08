@@ -7,7 +7,7 @@ import { subjectGlyph, syllabusIdOf } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
 import { Button } from '../../ui/Button'
-import { Glyph } from '../../ui/Glyph'
+import { PaperGlyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { notify } from '../../ui/Toast'
@@ -284,7 +284,7 @@ function IconCell({
             ))}
           </div>
         ) : (
-          <Glyph name={glyph} className={`size-15 ${done ? 'text-ok' : 'text-muted'}`} />
+          <PaperGlyph name={glyph} className={`size-15 ${done ? 'text-ok' : 'text-muted'}`} />
         )}
       </div>
       <div className="mt-0.5 text-center text-caption tabular-nums">{paper.paper_id}</div>
