@@ -11,6 +11,7 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@radix-ui/react-select": "^2.3.7",
     "@tailwindcss/vite": "^4.3.3",
     "cmdk": "^1.1.1",
     "lucide-react": "^1.38.0",

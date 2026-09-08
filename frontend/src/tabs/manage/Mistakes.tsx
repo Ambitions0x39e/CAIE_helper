@@ -5,6 +5,7 @@ import type { MistakeRecord } from '../../lib/types'
 import { notify } from '../../ui/Toast'
 import { Button } from '../../ui/Button'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
+import { Select } from '../../ui/Select'
 
 const VIEWS = [
   { id: 'paper', label: '按卷' },
@@ -15,6 +16,11 @@ type ViewId = (typeof VIEWS)[number]['id']
 /** Matches `modules.marking.mistakes._KEY_SEP`. */
 const KEY_SEP = ' · '
 const UNCLASSIFIED = '未分类'
+
+/** Stands in for "no topic" in the picker. A dropdown option cannot carry an
+ * empty value — that is the value a listbox uses to mean *nothing is chosen*,
+ * which is a different thing from having chosen 未分类. */
+const NONE = '__none__'
 
 function subjectIdOf(paperId: string): string {
   return paperId.includes('_') ? paperId.split('_')[0] : paperId
@@ -67,25 +73,24 @@ function TopicPicker({
   }
 
   return (
-    <select
-      autoFocus
-      className="rounded-ui border border-hairline bg-panel px-1.5 py-0.5 text-caption text-ink"
-      value={record.topic_id ?? ''}
-      onChange={async (e) => {
-        const value = e.target.value || null
+    <Select
+      defaultOpen
+      onOpenChange={(open) => !open && setOpen(false)}
+      value={record.topic_id ?? NONE}
+      onChange={async (value) => {
         setOpen(false)
-        await (await api()).retag_mistake(record.paper_id, record.question_id, value)
+        await (await api()).retag_mistake(
+          record.paper_id,
+          record.question_id,
+          value === NONE ? null : value,
+        )
         onDone()
       }}
-      onBlur={() => setOpen(false)}
-    >
-      <option value="">{UNCLASSIFIED}</option>
-      {Object.entries(topics).map(([id, name]) => (
-        <option key={id} value={id}>
-          {name}
-        </option>
-      ))}
-    </select>
+      options={[
+        { value: NONE, label: UNCLASSIFIED },
+        ...Object.entries(topics).map(([id, name]) => ({ value: id, label: name })),
+      ]}
+    />
   )
 }
 

@@ -4,10 +4,11 @@ import { PARSE_JOB, onJobEvent } from '../../lib/jobs'
 import { comparePaperIds, syllabusIdOf } from '../../lib/papers'
 import type { PaperRecord } from '../../lib/types'
 import { Button } from '../../ui/Button'
+import { Select } from '../../ui/Select'
 import { notify } from '../../ui/Toast'
 import type { Analysis } from './types'
 
-const SELECT = 'rounded-ui border border-hairline bg-raised px-2 py-1.5 text-body text-ink'
+const INPUT = 'rounded-ui border border-hairline bg-raised px-2 py-1.5 text-body text-ink'
 
 type Source = 'downloaded' | 'upload'
 type PaperTypeId = 'mcq' | 'math'
@@ -192,37 +193,23 @@ export function SetupStep({
             </div>
           ) : (
             <div className="flex items-end gap-3">
-              <label className="w-40 shrink-0">
-                <span className="block text-caption text-muted">科目代码</span>
-                <select
-                  className={`mt-1 w-full ${SELECT}`}
-                  value={syllabus || codes[0]}
-                  onChange={(e) => {
-                    setSyllabus(e.target.value)
-                    setPaperId('')
-                  }}
-                >
-                  {codes.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="min-w-0 flex-1">
-                <span className="block text-caption text-muted">选择试卷</span>
-                <select
-                  className={`mt-1 w-full ${SELECT}`}
-                  value={chosenId}
-                  onChange={(e) => setPaperId(e.target.value)}
-                >
-                  {filtered.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <Select
+                className="w-40 shrink-0"
+                label="科目代码"
+                value={syllabus || codes[0]}
+                onChange={(v) => {
+                  setSyllabus(v)
+                  setPaperId('')
+                }}
+                options={codes.map((c) => ({ value: c, label: c }))}
+              />
+              <Select
+                className="min-w-0 flex-1"
+                label="选择试卷"
+                value={chosenId}
+                onChange={setPaperId}
+                options={filtered.map((id) => ({ value: id, label: id }))}
+              />
             </div>
           )
         ) : (
@@ -244,7 +231,7 @@ export function SetupStep({
               onChange={(e) => setStartPage(e.target.value)}
               placeholder="自动"
               inputMode="numeric"
-              className={`mt-1 w-full ${SELECT}`}
+              className={`mt-1 w-full ${INPUT}`}
               style={{ cursor: 'text', userSelect: 'text' }}
             />
             <span className="mt-1 block text-micro text-muted">默认留空，自动检测</span>
