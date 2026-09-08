@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { COMMANDS, matchCommands, matchPapers, parseQuery, topicCommands } from './commands.ts'
+import { COMMANDS, matchCommands, matchPapers, parseQuery, setTheme, theme, topicCommands } from './commands.ts'
 import type { PaperRecord } from './types.ts'
 
 const find = (q: string) => matchCommands(parseQuery(q))
@@ -144,5 +144,33 @@ describe('F1.4 —— 面板只能导航', () => {
         assert.notEqual(typeof v, 'function', `${c.id} 的 intent 里有可执行的东西`)
       }
     }
+  })
+})
+
+describe('主题', () => {
+  const store = new Map<string, string>()
+  globalThis.localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+  } as unknown as Storage
+  const dataset: { theme?: string } = {}
+  globalThis.document = { documentElement: { dataset } } as unknown as Document
+
+  test('浅色深色落到 <html> 上，重开还记得', () => {
+    setTheme('dark')
+    assert.equal(dataset.theme, 'dark')
+    assert.equal(theme(), 'dark')
+  })
+
+  test('跟随系统不留属性 —— 留了 prefers-color-scheme 就没得选了', () => {
+    setTheme('dark')
+    setTheme('system')
+    assert.equal(dataset.theme, undefined)
+    assert.equal(theme(), 'system')
+  })
+
+  test('存的是别的值也算跟随系统', () => {
+    store.set('cie.theme', '"neon"')
+    assert.equal(theme(), 'system')
   })
 })
