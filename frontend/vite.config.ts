@@ -9,4 +9,10 @@ export default defineConfig({
   // paths are what make the built page work under file://.
   base: './',
   plugins: [react(), tailwindcss()],
+  build: {
+    // The bundle is read off the local disk by pywebview, not fetched over a
+    // network, so the 500 kB default — a download-time heuristic for web
+    // pages — has nothing to warn about here.
+    chunkSizeWarningLimit: 1000,
+  },
 })
