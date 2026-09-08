@@ -17,6 +17,7 @@ frontend only ever reads `success`.
 from __future__ import annotations
 
 import datetime
+import logging
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -72,6 +73,8 @@ from modules.marking.workflow import (
     topics_for_paper,
 )
 from modules.updater import AppUpdater, current_app_version
+
+_log = logging.getLogger("cie_helper.api")
 
 #: What a failed call looks like. Mirrors DownloadResult/QueryResult so the
 #: frontend has exactly one shape to read.
@@ -383,6 +386,10 @@ class Api:
         while the (slower) parse is still going, and reports the moment it
         lands rather than waiting for the parse.
         """
+        _log.info(
+            "start_analysis ms=%s type=%s answer=%s page=%s force=%s",
+            ms_path, paper_type, answer_path, start_page, force,
+        )
         pt = PaperType(paper_type)
 
         def work() -> None:

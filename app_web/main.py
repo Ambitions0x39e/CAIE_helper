@@ -9,6 +9,7 @@ browser tab.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -46,6 +47,14 @@ def _entry() -> str:
 def main() -> None:
     prune_legacy_macos_app()
     debug = os.environ.get("CIE_DEBUG") == "1"
+    # Root stays at WARNING: pdfminer logs a line per glyph at DEBUG and would
+    # bury everything the app says.
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("cie_helper").setLevel(logging.DEBUG if debug else logging.INFO)
     webview.create_window(
         "CIE Helper",
         _entry(),
