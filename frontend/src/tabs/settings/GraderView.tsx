@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { Button } from '../../ui/Button'
 import { notify } from '../../ui/Toast'
-import { Row, SubPage, TextInput } from './SubPage'
+import { TextInput } from '../../ui/TextInput'
+import { Row, SubPage } from './SubPage'
 
 export function GraderView({ onBack }: { onBack: () => void }) {
   const [key, setKey] = useState('')

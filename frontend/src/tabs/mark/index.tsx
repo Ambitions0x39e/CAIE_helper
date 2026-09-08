@@ -138,7 +138,6 @@ export function MarkTab() {
             results={results}
             grading={grading}
             progress={progress}
-            onConfirmed={() => undefined}
           />
         ) : (
           <div className="text-caption text-muted">先在第一步解析一份卷子。</div>

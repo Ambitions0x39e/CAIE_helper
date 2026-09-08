@@ -20,14 +20,6 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id']
 
-function Pending({ label }: { label: string }) {
-  return (
-    <div className="rounded-ui border border-hairline bg-panel p-6 text-caption text-muted">
-      {label} —— 还没搬。
-    </div>
-  )
-}
-
 export default function App() {
   const [tab, setTab] = useState<TabId>('download')
   const [dir, setDir] = useState(1)
@@ -141,10 +133,8 @@ export default function App() {
               <ManageTab intent={intent} onConsumed={consumed} />
             ) : tab === 'mark' ? (
               <MarkTab />
-            ) : tab === 'settings' ? (
-              <SettingsTab intent={intent} onConsumed={consumed} />
             ) : (
-              <Pending label={TABS[index].label} />
+              <SettingsTab intent={intent} onConsumed={consumed} />
             )}
           </PushTrack>
         </div>

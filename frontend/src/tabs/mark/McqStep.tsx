@@ -3,6 +3,7 @@ import { api } from '../../lib/bridge'
 import { MCQ_JOB, onJobEvent } from '../../lib/jobs'
 import { Button } from '../../ui/Button'
 import { Metric } from '../../ui/Metric'
+import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
 import { compareQuestionIds } from './cells'
 import { isValidManual } from './mcq'
@@ -113,12 +114,11 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
           <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3.5">
             <Button onClick={score}>打分</Button>
             <span className="text-caption text-muted">检查上方结果，确认后记录分数。</span>
-            <input
+            <TextInput
               value={paperId}
-              onChange={(e) => setPaperId(e.target.value)}
+              onChange={setPaperId}
               placeholder="记到哪份卷子"
-              className="ml-auto w-44 rounded-ui border border-hairline bg-raised px-2 py-1 text-body text-ink"
-              style={{ cursor: 'text', userSelect: 'text' }}
+              className="ml-auto w-44"
             />
             <Button tone="accent" onClick={confirm} disabled={!paperId || !scored}>
               确认并记录分数
@@ -148,9 +148,8 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
                     onChange={(e) =>
                       setManual({ ...manual, [q]: e.target.value.toUpperCase() })
                     }
-                    className={`w-8 rounded border border-hairline bg-raised px-1 py-0.5 text-center
-                                text-body uppercase ${mine ? 'text-ink' : 'text-faint'}`}
-                    style={{ cursor: 'text', userSelect: 'text' }}
+                    className={`selectable w-8 rounded border border-hairline bg-raised px-1 py-0.5
+                                text-center text-body uppercase ${mine ? 'text-ink' : 'text-faint'}`}
                   />
                   {scored && (
                     <span

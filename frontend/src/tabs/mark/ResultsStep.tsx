@@ -3,6 +3,7 @@ import { api } from '../../lib/bridge'
 import { Button } from '../../ui/Button'
 import { Dialog } from '../../ui/Dialog'
 import { Metric } from '../../ui/Metric'
+import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
 import { CELL_H, GRID_COLS, compareQuestionIds, scoreBand } from './cells'
 import type { Analysis, QuestionResult } from './types'
@@ -13,7 +14,6 @@ export function ResultsStep({
   results,
   grading,
   progress,
-  onConfirmed,
 }: {
   analysis: Analysis
   /** The questions this run was asked to grade. */
@@ -21,7 +21,6 @@ export function ResultsStep({
   results: QuestionResult[]
   grading: boolean
   progress: { done: number; total: number } | null
-  onConfirmed: () => void
 }) {
   const [overrides, setOverrides] = useState<Record<string, string>>({})
   const [open, setOpen] = useState<string | null>(null)
@@ -57,7 +56,6 @@ export function ResultsStep({
     const r = await (await api()).confirm_results(paperId, numeric)
     if (r.success) {
       notify('ok', '分数已记录')
-      onConfirmed()
     } else {
       notify('bad', `记录失败: ${r.error ?? ''}`)
     }
@@ -140,12 +138,11 @@ export function ResultsStep({
       {!grading && (
         <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3.5">
           <span className="text-caption text-muted">检查结果，确认后记录分数。</span>
-          <input
+          <TextInput
             value={paperId}
-            onChange={(e) => setPaperId(e.target.value)}
+            onChange={setPaperId}
             placeholder="记到哪份卷子"
-            className="ml-auto w-48 rounded-ui border border-hairline bg-raised px-2 py-1 text-body text-ink"
-            style={{ cursor: 'text', userSelect: 'text' }}
+            className="ml-auto w-48"
           />
           <Button tone="accent" onClick={confirm} disabled={!paperId}>
             确认并记录分数
@@ -179,15 +176,12 @@ export function ResultsStep({
 
             <label className="flex items-center gap-2 text-caption text-muted">
               调分
-              <input
+              <TextInput
                 value={overrides[detail.question] ?? ''}
                 placeholder={String(detail.total)}
-                onChange={(e) =>
-                  setOverrides({ ...overrides, [detail.question]: e.target.value })
-                }
+                onChange={(v) => setOverrides({ ...overrides, [detail.question]: v })}
                 inputMode="decimal"
-                className="w-20 rounded-ui border border-hairline bg-raised px-2 py-1 text-body text-ink"
-                style={{ cursor: 'text', userSelect: 'text' }}
+                className="w-20"
               />
               <span className="text-faint">留空 = 用模型给的 {detail.total}</span>
             </label>

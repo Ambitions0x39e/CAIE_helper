@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { Button } from '../../ui/Button'
 import { notify } from '../../ui/Toast'
-import { Row, SubPage, TextInput } from './SubPage'
+import { TextInput } from '../../ui/TextInput'
+import { Row, SubPage } from './SubPage'
 
 export function MailView({ onBack }: { onBack: () => void }) {
   const [server, setServer] = useState('smtp.gmail.com')
@@ -37,7 +38,7 @@ export function MailView({ onBack }: { onBack: () => void }) {
     <SubPage title="SMTP / GoodNotes" onBack={onBack}>
       <div className="rounded-ui border border-hairline bg-panel">
         <Row label="SMTP Server"><TextInput value={server} onChange={setServer} /></Row>
-        <Row label="SMTP Port"><TextInput value={port} onChange={setPort} width="w-24" /></Row>
+        <Row label="SMTP Port"><TextInput value={port} onChange={setPort} className="w-24" /></Row>
         <Row label="Sender Email"><TextInput value={sender} onChange={setSender} /></Row>
         <Row
           label="App Password"

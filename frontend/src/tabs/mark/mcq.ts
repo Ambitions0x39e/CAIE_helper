@@ -12,16 +12,3 @@ export const LETTERS = ['A', 'B', 'C', 'D'] as const
 export function isValidManual(value: string): boolean {
   return (LETTERS as readonly string[]).includes(value)
 }
-
-/** Lay hand-typed answers over the detected ones, ignoring junk.
- * Mirrors `workflow.merge_mcq_answers`. */
-export function mergeAnswers(
-  detected: Readonly<Record<string, string>>,
-  manual: Readonly<Record<string, string>>,
-): Record<string, string> {
-  const merged = { ...detected }
-  for (const [qid, value] of Object.entries(manual)) {
-    if (isValidManual(value)) merged[qid] = value
-  }
-  return merged
-}

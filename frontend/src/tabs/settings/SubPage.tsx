@@ -42,30 +42,3 @@ export function Row({
     </div>
   )
 }
-
-export function TextInput({
-  value,
-  onChange,
-  type = 'text',
-  placeholder,
-  width = 'w-64',
-}: {
-  value: string
-  onChange: (v: string) => void
-  type?: 'text' | 'password'
-  placeholder?: string
-  width?: string
-}) {
-  return (
-    <input
-      type={type}
-      value={value}
-      placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
-      className={`${width} rounded-ui border border-hairline bg-raised px-2 py-1.5 text-body text-ink placeholder:text-faint`}
-      // Required: the window runs text_select=False, which pywebview applies as
-      // an inherited rule on body. See ui/Field.tsx.
-      style={{ cursor: 'text', userSelect: 'text' }}
-    />
-  )
-}

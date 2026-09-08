@@ -114,7 +114,6 @@ export interface PyApi {
   confirm_mcq(
     paper_id: string, manual: Record<string, string>,
   ): Promise<SimpleResult & { score?: number; total?: number }>
-  job_running(): Promise<string | null>
   confirm_results(
     paper_id: string, overrides: Record<string, number>,
   ): Promise<SimpleResult & { score?: number; max_score?: number }>

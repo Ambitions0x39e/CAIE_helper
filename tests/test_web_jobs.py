@@ -36,8 +36,10 @@ def _run_to_completion(name: str, work) -> None:
     assert jobs.start(name, wrapped)["success"] is True
     assert done.wait(timeout=5), "job never ran"
     # The runner releases the lock after `work` returns, so wait for that too.
+    # `_running` rather than an accessor: the fixture already resets it by that
+    # name, and a bare attribute read is atomic against the worker's write.
     for _ in range(500):
-        if jobs.current() is None:
+        if jobs._running is None:
             return
         threading.Event().wait(0.01)
     raise AssertionError("job never released the lock")
@@ -45,7 +47,7 @@ def _run_to_completion(name: str, work) -> None:
 
 def test_a_job_runs_and_releases(captured: list[dict]) -> None:
     _run_to_completion("批改", lambda: captured.append({"type": "work"}))
-    assert jobs.current() is None
+    assert jobs._running is None
     assert captured[-1] == {"type": "finished", "job": "批改"}
 
 
@@ -76,7 +78,7 @@ def test_a_failing_job_reports_and_still_releases(captured: list[dict]) -> None:
 
     _run_to_completion("批改", boom)
 
-    assert jobs.current() is None
+    assert jobs._running is None
     kinds = [e["type"] for e in captured]
     assert kinds[-2:] == ["error", "finished"]
     assert captured[-2]["message"] == "渲染炸了"
