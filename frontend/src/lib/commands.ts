@@ -62,6 +62,7 @@ export const COMMANDS: readonly Command[] = [
   { id: 'st.about', group: '设置', label: '关于', keys: ['about', 'version'], intent: { tab: 'settings', view: 'about' } },
   // Takes you to 关于; it does not press the button for you.
   { id: 'st.update', group: '设置', label: '检查更新', keys: ['update', 'upgrade'], intent: { tab: 'settings', view: 'about' } },
+  { id: 'st.theme', group: '设置', label: '主题', keys: ['theme', 'dark', 'zt'], intent: { tab: 'settings', view: 'theme' } },
   { id: 'st.palette', group: '设置', label: '命令面板', keys: ['palette', 'mlmb'], intent: { tab: 'settings', view: 'palette' } },
 ]
 
@@ -172,6 +173,29 @@ export function emptyMode(): EmptyMode {
 
 export function setEmptyMode(mode: EmptyMode): void {
   write(MODE_KEY, mode)
+}
+
+export type Theme = 'system' | 'light' | 'dark'
+
+const THEME_KEY = 'cie.theme'
+
+export function theme(): Theme {
+  const t = read<Theme>(THEME_KEY, 'system')
+  return t === 'light' || t === 'dark' ? t : 'system'
+}
+
+export function setTheme(t: Theme): void {
+  write(THEME_KEY, t)
+  applyTheme(t)
+}
+
+/** Puts the choice where tokens.css can see it. `system` removes the attribute
+ * rather than writing one: an unstamped root is what the `prefers-color-scheme`
+ * query matches, and any other value pins the page to light on a dark desktop. */
+export function applyTheme(t: Theme): void {
+  const root = document.documentElement
+  if (t === 'system') delete root.dataset.theme
+  else root.dataset.theme = t
 }
 
 /** Only static commands are counted. Papers live behind the `file` prefix and
