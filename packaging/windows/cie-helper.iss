@@ -9,7 +9,8 @@
 ;      uv run pyinstaller packaging/cie-helper.spec --noconfirm
 ;
 ;  Compile (from anywhere — paths below are relative to THIS .iss file):
-;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\cie-helper.iss
+;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=2.0.0 ^
+;          packaging\windows\cie-helper.iss
 ;
 ;  Output: dist\cie-helper-<version>-setup.exe
 ;
@@ -18,9 +19,18 @@
 ; ============================================================================
 
 #define MyAppName "CIE Helper"
-#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Ambitions0x39e"      ; <-- edit to your name/handle
 #define MyAppExeName "cie-helper.exe"
+
+; [project].version in pyproject.toml is the source of truth — it is what the
+; spec stamps into the .app, what build-dmg.sh names the image after, and what
+; the in-app updater compares against. Pass it in rather than letting a second
+; copy of the number live here and drift:
+;     ISCC /DMyAppVersion=2.1.0 packaging\windows\cie-helper.iss
+; The fallback below only covers a bare run with no /D.
+#ifndef MyAppVersion
+  #define MyAppVersion "2.0.0"
+#endif
 
 ; Paths are relative to this .iss file (packaging\windows\).
 #ifndef BuildDir

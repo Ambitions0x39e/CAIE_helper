@@ -41,8 +41,10 @@ def push(event: dict[str, Any]) -> None:
     A push that fails must not kill the job — the work is still worth
     finishing, and the page will see the terminal event or the job's absence.
     """
+    _log.debug("push %s", event)
     window = webview.active_window()
     if window is None:
+        _log.warning("no active window; dropped %s", event.get("type"))
         return
     try:
         payload = json.dumps(event, ensure_ascii=False)
@@ -61,8 +63,10 @@ def start(name: str, work: Callable[[], None]) -> dict[str, Any]:
     global _running
     with _lock:
         if _running is not None:
+            _log.info("%s refused: %s still running", name, _running)
             return {"success": False, "error": f"{_running} 还在进行中，请稍候"}
         _running = name
+    _log.info("%s started", name)
 
     def _run() -> None:
         global _running
@@ -71,6 +75,8 @@ def start(name: str, work: Callable[[], None]) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — reported to the page
             _log.exception("%s failed", name)
             push({"type": "error", "job": name, "message": str(exc)})
+        else:
+            _log.info("%s finished", name)
         finally:
             with _lock:
                 _running = None
