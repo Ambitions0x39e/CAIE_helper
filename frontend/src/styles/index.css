@@ -30,6 +30,13 @@ body {
   box-shadow: none;
 }
 
+/* The command palette opens with its box focused and nothing else to move to;
+   a ring around it says only what the caret already says, and being square it
+   fills in the card's rounded corners. */
+[cmdk-input]:focus-visible {
+  box-shadow: none;
+}
+
 /* Body copy opts back in. Everything else stays unselectable via the window's
    text_select=False. */
 .selectable {
