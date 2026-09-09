@@ -48,3 +48,6 @@ site/
 # Spike output. Test PDFs land here while working on the parsers; none of them
 # belong in the repo.
 /*.pdf
+
+# Finder metadata. macOS writes one into every directory it has been shown.
+.DS_Store
