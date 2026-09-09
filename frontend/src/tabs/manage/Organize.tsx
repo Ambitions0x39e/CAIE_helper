@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, FileText, Send, Trash2 } from 'lucide-react'
-import { AnimatePresence, motion } from 'motion/react'
+import { motion } from 'motion/react'
 import { api } from '../../lib/bridge'
 import type { Intent } from '../../lib/commands'
 import { groupBySyllabus, subjectGlyph } from '../../lib/papers'
@@ -224,39 +224,41 @@ export function Organize({
                 folded={folded.has(code)}
                 onToggle={() => toggleFold(code)}
               />
-              <AnimatePresence initial={false}>
-                {!folded.has(code) && (
-                  // Two motions, one fold: the box's height closes while the
-                  // icons ride up by their own height inside it. Height alone
-                  // would eat the row from the bottom; the lift is what makes
-                  // them go *under* the rule.
-                  <motion.div
-                    key="icons"
-                    initial={{ height: 0 }}
-                    animate={{ height: 'auto' }}
-                    exit={{ height: 0 }}
-                    transition={SETTLE_FAST}
-                    className="overflow-hidden"
-                  >
-                    <motion.div
-                      initial={{ y: '-100%' }}
-                      animate={{ y: 0 }}
-                      exit={{ y: '-100%' }}
-                      transition={SETTLE_FAST}
-                      className="flex flex-wrap gap-x-3 gap-y-5 pt-2"
-                    >
-                      {list.map((p) => (
-                        <IconCell
-                          key={p.paper_id}
-                          paper={p}
-                          glyph={subjectGlyph(names.get(code))}
-                          actions={actionsOf(p)}
-                        />
-                      ))}
-                    </motion.div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {/* Two motions, one fold: the box's height closes while the
+                  icons ride up by their own height inside it. Height alone
+                  would eat the row from the bottom; the lift is what makes
+                  them go *under* the rule.
+
+                  The icons stay mounted and the box animates between the two
+                  heights, rather than being added and removed. A presence
+                  wrapper here would hand every motion component below it a
+                  context that blocks its own entrance — including the ring of
+                  actions inside a cell, which mounts on click, long after the
+                  band did. `inert` is what keeps a folded band out of reach
+                  of the keyboard now that its icons are still in the tree. */}
+              <motion.div
+                initial={false}
+                animate={{ height: folded.has(code) ? 0 : 'auto' }}
+                transition={SETTLE_FAST}
+                className="overflow-hidden"
+                inert={folded.has(code)}
+              >
+                <motion.div
+                  initial={false}
+                  animate={{ y: folded.has(code) ? '-100%' : 0 }}
+                  transition={SETTLE_FAST}
+                  className="flex flex-wrap gap-x-3 gap-y-5 pt-2"
+                >
+                  {list.map((p) => (
+                    <IconCell
+                      key={p.paper_id}
+                      paper={p}
+                      glyph={subjectGlyph(names.get(code))}
+                      actions={actionsOf(p)}
+                    />
+                  ))}
+                </motion.div>
+              </motion.div>
             </section>
           ))}
         </div>
