@@ -39,7 +39,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: astral-sh/setup-uv@v10
+      # Exact version: astral-sh publishes no moving `v10` tag, only the
+      # point releases under it.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
