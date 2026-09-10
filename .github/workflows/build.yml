@@ -31,6 +31,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The tag names the release; pyproject names the files inside it. Nothing
+      # else compares the two, so a tag pushed without the version bump would
+      # publish a v2.1.0 release full of 2.0.0 installers.
+      - name: Tag and pyproject version must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag is $GITHUB_REF_NAME but pyproject.toml says $v"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME matches pyproject $v"
+
       # 24, not the runner's default 22: it is what the tree is developed and
       # tested on, and a build is the wrong place to find out they differ.
       - uses: actions/setup-node@v7
@@ -61,6 +75,61 @@ jobs:
       - name: Freeze the app
         run: uv run pyinstaller packaging/cie-helper.spec --noconfirm
 
+      # The one failure a green build otherwise hides: PyInstaller follows
+      # imports statically, so a module reached only at runtime is left out of
+      # the bundle and nothing says so until someone opens the app. Both
+      # installers wrap this exact binary, so launching it here puts the blame
+      # on the freeze rather than on the packaging that comes after.
+      - name: Smoke-test the .app
+        if: runner.os == 'macOS'
+        run: |
+          "dist/CIE Helper.app/Contents/MacOS/cie-helper" > smoke.log 2>&1 &
+          pid=$!
+          sleep 20
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "::error::the frozen app exited during startup"
+            cat smoke.log
+            exit 1
+          fi
+          kill "$pid" 2>/dev/null || true
+          # Surviving is not enough on its own: the spec keeps the windowed
+          # traceback, so an unhandled exception is shown in a dialog and the
+          # process stays up behind it.
+          if grep -q "Traceback" smoke.log; then
+            echo "::error::the app stayed up but raised during startup"
+            cat smoke.log
+            exit 1
+          fi
+          cat smoke.log
+          echo "alive after 20s"
+
+      - name: Smoke-test the frozen exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\cie-helper\cie-helper.exe" -PassThru
+          # The window is waited for rather than assumed: WebView2 initialises
+          # well after the process itself is up.
+          $title = ""
+          foreach ($i in 1..20) {
+            Start-Sleep -Seconds 2
+            if ($p.HasExited) {
+              Write-Output "::error::the frozen app exited during startup (code $($p.ExitCode))"
+              exit 1
+            }
+            $p.Refresh()
+            $title = $p.MainWindowTitle
+            if ($title -eq 'CIE Helper') { break }
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          # A PyInstaller traceback dialog keeps the process alive too, so the
+          # title is what separates a running app from a crashed one.
+          if ($title -ne 'CIE Helper') {
+            Write-Output "::error::no 'CIE Helper' window after 40s (last title: '$title')"
+            exit 1
+          }
+          Write-Output "window is up: $title"
+
       # The version is passed in rather than read from the .iss, which keeps
       # only a fallback copy of it. Same line, same pattern the spec matches,
       # so the exe, the .app and the updater cannot disagree about the number.
@@ -81,3 +150,39 @@ jobs:
           path: dist/cie-helper-*-setup.*
           if-no-files-found: error
           retention-days: 30
+
+  # One release for the pair, so a tag never publishes half a platform. Both
+  # legs have to pass: `fail-fast: false` above lets a broken Windows build
+  # still hand back a working dmg as an artifact, but not as a release.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: installers
+          merge-multiple: true
+
+      # `gh` is on the runner and the token is the workflow's own, so this
+      # needs neither a third-party action nor a checkout. The updater picks an
+      # asset by suffix — `.exe` on Windows, `.dmg` on macOS — and the release
+      # carries exactly one of each.
+      #
+      # A moved tag has to update the release it already has rather than fail
+      # on it, which is what the two paths are for.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          ls -l installers
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" installers/* --clobber --repo "$REPO"
+          else
+            gh release create "$TAG" installers/* --repo "$REPO" \
+              --title "CIE Helper $TAG" --generate-notes
+          fi
