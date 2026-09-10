@@ -173,7 +173,13 @@ jobs:
       #
       # A moved tag has to update the release it already has rather than fail
       # on it, which is what the two paths are for.
-      - name: Publish the release
+      #
+      # A draft, not a live release. `updater.py` puts the release body
+      # verbatim into the dialog behind 设置 → 关于, and `--generate-notes`
+      # writes a commit list — so the notes get written by hand before anyone
+      # reads them. A draft is also absent from /releases/latest, the endpoint
+      # the updater polls, so nothing reaches users until Publish is pressed.
+      - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -183,6 +189,6 @@ jobs:
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" installers/* --clobber --repo "$REPO"
           else
-            gh release create "$TAG" installers/* --repo "$REPO" \
+            gh release create "$TAG" installers/* --repo "$REPO" --draft \
               --title "CIE Helper $TAG" --generate-notes
           fi
