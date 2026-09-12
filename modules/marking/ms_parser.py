@@ -226,7 +226,8 @@ Output ONLY valid JSON — no markdown fences, no extra text:
     {
       "id": "1(a)",
       "max_marks": 3,
-      "mark_scheme": "B1: y = x^3 + 1\\nM1: expand\\nA1: y^3 - 6y^2 + 20y - 16 = 0"
+      "mark_scheme": "B1: y = x^3 + 1\\nM1: \\\\frac{1}{2}\\\\sqrt{x}\
+ + \\\\theta\\nA1: y^3 - 6y^2 + 20y - 16 = 0"
     }
   ]
 }
@@ -241,6 +242,22 @@ as printed in the image.
 - Transcribe all algebra, equations, and working — do not summarise.
 - If a question spans multiple images, combine into one entry.
 - Do NOT invent marks — only report what is visible.
+
+MATHS — write it in LaTeX, and DOUBLE EVERY BACKSLASH:
+- Write "\\\\frac{1}{2}", "\\\\sqrt{33}", "\\\\theta", "\\\\times", \
+"\\\\int", "\\\\sum", "x^{2}", "s_{x}".
+- THE DOUBLING IS NOT OPTIONAL. A single backslash makes a JSON escape: \
+"\\f" is a form feed, "\\t" a tab, "\\b" a backspace. "\\frac" and \
+"\\theta" — the two commonest commands in maths — would arrive as \
+corrupted text with no error raised, and the marking point is then wrong \
+with nothing to show for it.
+- No "$" delimiters, no display environments, no "\\\\begin{...}". Just \
+the commands, inline in the text.
+- Only where it says something a plain character cannot: a stacked \
+fraction, a root, a Greek letter, an operator, a superscript or \
+subscript. "3/17" printed on the page as "3/17" stays "3/17".
+- Chemistry and units are ordinary text: "H_{2}O", "25 cm^{3}", \
+"\\\\rightarrow" for a reaction arrow.
 
 MARK CODES — the trailing digit is the POINT'S VALUE, not an index:
 - A code is a letter part plus a digit: B1, B2, M1, A1, DM1, DB1 …
