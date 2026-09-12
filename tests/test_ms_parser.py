@@ -131,6 +131,52 @@ def test_parse_image_ms_response_non_integer_marks() -> None:
     assert result["Q3"].max_marks == 3
 
 
+def _one_question(mark_scheme: str) -> str:
+    """A response carrying one mark scheme, verbatim — not via json.dumps,
+    because what is being tested is the escaping on the wire."""
+    return (
+        '{"questions":[{"id":"1","max_marks":3,"mark_scheme":"'
+        + mark_scheme + '"}]}'
+    )
+
+
+@pytest.mark.parametrize(("wire", "expected"), [
+    # The prompt asks for every backslash doubled. These are what arrives
+    # when one of them is not, and each would otherwise raise and take the
+    # rest of the batch — a paid vision-model call — down with it.
+    (r"A1: x = \sqrt{33}", r"A1: x = \sqrt{33}"),
+    (r"A1: \alpha + \pi", r"A1: \alpha + \pi"),
+    # "\u" is its own kind of invalid: JSON wants four hex digits after it.
+    (r"A1: \upsilon", r"A1: \upsilon"),
+    # A command that was doubled correctly must survive the repair beside
+    # one that was not — read one character at a time, the second
+    # backslash of "\\sqrt" looks exactly like a lone one.
+    (r"A1: \\sqrt{33} then \alpha", r"A1: \sqrt{33} then \alpha"),
+    (r"A1: \alpha then \\sqrt{33}", r"A1: \alpha then \sqrt{33}"),
+])
+def test_parse_image_ms_response_repairs_a_single_backslash(
+    wire: str, expected: str
+) -> None:
+    result = _parse_image_ms_response(_one_question(wire))
+    assert result["Q1"].mark_scheme == expected
+
+
+@pytest.mark.parametrize("wire", [
+    r"B1: one\nM1: two",
+    r"B1: say \"yes\"",
+    r"B1: café",
+    r"A1: \\frac{1}{2}",
+])
+def test_parse_image_ms_response_leaves_valid_escapes_alone(
+    wire: str,
+) -> None:
+    """The repair runs only after a document has failed to parse, and a
+    document that parses must come back exactly as JSON reads it."""
+    assert _parse_image_ms_response(
+        _one_question(wire)
+    )["Q1"].mark_scheme == json.loads(f'"{wire}"')
+
+
 # ── _paper_info_from_text ─────────────────────────────────────
 
 _READABLE_COVER = (
