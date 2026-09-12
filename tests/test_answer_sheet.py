@@ -18,7 +18,12 @@ from pypdf import PdfReader
 from core.models import MistakeRecord
 from modules.marking.answer_sheet import (
     _ASCII_MATHS,
+    _SYMBOL_BYTE,
+    _SYMBOL_CHAR,
     _TEXT_W,
+    _UNRENDERABLE,
+    _Stack,
+    ascent,
     atoms,
     build_answer_sheet,
     line_height,
@@ -142,10 +147,12 @@ class TestAtoms:
     def test_every_rewrite_lands_in_a_character_the_font_can_draw(
         self,
     ) -> None:
-        """The sheet is set in base-14 fonts encoded as Latin-1, so a
-        rewrite that produces anything else silently becomes "?"."""
+        """The sheet is set in two base-14 fonts — Symbol, and Helvetica
+        encoded as Latin-1. A rewrite that produces anything neither can
+        draw silently becomes "?"."""
         for source, target in _ASCII_MATHS.items():
-            target.encode("latin-1")   # raises if it cannot be drawn
+            for char in target:
+                assert char in _SYMBOL_BYTE or char.encode("latin-1")
             assert source != target
 
 
@@ -159,6 +166,131 @@ class TestAtoms:
         assert all(a.rise == 0.0 for a in laid)
 
 
+# ── LaTeX ─────────────────────────────────────────────────────────
+
+
+def _drawn(text: str, size: float = 10.0) -> str:
+    """Everything a line puts on the page, fractions flattened in."""
+    def walk(runs: object) -> str:
+        out = ""
+        for run in runs:   # type: ignore[attr-defined]
+            if isinstance(run, _Stack):
+                out += walk(run.top) + walk(run.bottom)
+            else:
+                out += (
+                    "".join(_SYMBOL_CHAR[ord(c)] for c in run.text)
+                    if run.symbol else run.text
+                )
+        return out
+    return "".join(walk(line) for line in wrap(text, size, False, _TEXT_W))
+
+
+def _stacks(text: str, size: float = 10.0) -> list[_Stack]:
+    return [
+        run for line in wrap(text, size, False, _TEXT_W)
+        for run in line if isinstance(run, _Stack)
+    ]
+
+
+class TestLatex:
+    def test_a_fraction_is_stacked_not_printed_as_source(self) -> None:
+        """The mark schemes have carried "\\frac{1}{2}" since the model
+        started writing maths in LaTeX, and the export printed the source
+        of it."""
+        boxes = _stacks("x = \\frac{19}{16}")
+
+        assert len(boxes) == 1
+        assert boxes[0].top[0].text == "19"
+        assert boxes[0].bottom[0].text == "16"
+
+    def test_no_command_leaves_a_backslash_or_a_brace_behind(self) -> None:
+        """One escaped backslash on the page is the whole bug."""
+        drawn = _drawn(
+            "\\frac{2x^2 - 5x}{2x^2 - 7x - 4} = \\frac{1}{9} "
+            "\\text{ or } \\quad \\sqrt{33} \\times \\left(\\theta\\right)"
+        )
+
+        assert "\\" not in drawn
+        assert "{" not in drawn and "}" not in drawn
+
+    def test_the_rule_spans_the_wider_of_the_two_rows(self) -> None:
+        """A rule cut to the numerator would stop halfway under a long
+        denominator, which reads as a different expression."""
+        box = _stacks("\\frac{1}{2x^2 - 7x - 4}")[0]
+
+        assert box.width > sum(run.width for run in box.top)
+        assert box.width >= sum(run.width for run in box.bottom)
+
+    def test_a_nested_fraction_stays_a_fraction(self) -> None:
+        """"s_y^2 = \\frac{1}{7}(76.98 - \\frac{1}{8}(24.8^2))" is an
+        ordinary line in these papers."""
+        box = _stacks("\\frac{1}{7 + \\frac{1}{8}}")[0]
+
+        assert any(isinstance(run, _Stack) for run in box.bottom)
+
+    def test_a_nested_fraction_is_counted_in_the_height(self) -> None:
+        """A box that under-reports its own reach is one the next line
+        gets set on top of."""
+        plain = _stacks("\\frac{1}{8}")[0]
+        nested = _stacks("\\frac{1}{7 + \\frac{1}{8}}")[0]
+
+        assert nested.span[1] < plain.span[1]
+
+    def test_a_plain_slash_is_left_alone(self) -> None:
+        """"40/3 k = 1" carries no information saying whether the k is
+        inside the fraction, so guessing would change the answer."""
+        assert _stacks("40/3 k = 1 and s = 1/9 (n + 1)") == []
+        assert "/" in _drawn("40/3 k = 1")
+
+    def test_an_unknown_command_shows_up_instead_of_vanishing(self) -> None:
+        """A silently dropped operator changes what an answer says."""
+        assert _UNRENDERABLE in _drawn("a \\rightleftharpoons b")
+
+    def test_a_greek_command_lands_in_the_symbol_font(self) -> None:
+        runs = [run for line in wrap("\\theta", 10.0, False, _TEXT_W)
+                for run in line]
+
+        assert [run.symbol for run in runs] == [True]
+        assert _drawn("\\theta") == "θ"
+
+    def test_a_sizing_command_keeps_only_its_delimiter(self) -> None:
+        assert _drawn("\\left(x\\right)") == "(x)"
+
+    def test_a_radicand_that_would_read_wrong_gets_brackets(self) -> None:
+        """"√2x" reads as √2 times x, which is a different number; "√33"
+        does not need the help."""
+        assert _drawn("\\sqrt{33}") == "√33"
+        assert _drawn("\\sqrt{2x}") == "√(2x)"
+
+    def test_a_root_keeps_its_degree(self) -> None:
+        assert _drawn("\\sqrt[3]{8}") == "3√8"
+
+    def test_an_argument_needs_no_braces(self) -> None:
+        """"\\frac12" is a half, and the model writes it that way about as
+        often as it writes the braces."""
+        assert len(_stacks("\\frac12")) == 1
+
+    def test_a_backslash_written_single_shows_up_instead_of_vanishing(
+        self,
+    ) -> None:
+        """"\\theta" written with one backslash is a JSON escape: it
+        decodes to a tab and the word "heta", with nothing raising. A tab
+        draws as nothing at all, so the corruption has to be made
+        visible."""
+        assert _drawn("\theta") == "?heta"
+
+    def test_a_form_feed_does_not_pass_for_a_line_break(self) -> None:
+        """Which is what "\\frac" written single decodes to — and what
+        ``str.splitlines()`` would have quietly turned into a new line."""
+        assert len(wrap("\frac", 9.5, False, _TEXT_W)) == 1
+        assert _drawn("\frac") == "?rac"
+
+    def test_a_brace_the_mark_scheme_meant_is_still_printed(self) -> None:
+        """A piecewise definition is written "F(x) = { 0 (x<0); … }" — a
+        brace only groups when a command reaches for it."""
+        assert "{" in _drawn("F(x) = { 0 (x<0); 1 (x>2) }")
+
+
 class TestLineHeight:
     def test_a_line_with_scripts_is_given_more_room(self) -> None:
         """Or the raised characters collide with the line above."""
@@ -166,6 +298,15 @@ class TestLineHeight:
         scripted = wrap("x^2 and u_n", 9.5, False, _TEXT_W)[0]
 
         assert line_height(scripted, 9.5) > line_height(plain, 9.5)
+
+    def test_a_fraction_reserves_room_above_the_baseline_too(self) -> None:
+        """The extra leading a tall line asks for all lands *below* its
+        baseline; a numerator reaches above it, into the line before."""
+        plain = wrap("plain text", 9.5, False, _TEXT_W)[0]
+        fraction = wrap("\\frac{19}{16}", 9.5, False, _TEXT_W)[0]
+
+        assert ascent(plain, 9.5) == 9.5
+        assert ascent(fraction, 9.5) > 9.5
 
 
 # ── Wrapping ──────────────────────────────────────────────────────
