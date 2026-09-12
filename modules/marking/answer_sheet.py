@@ -67,7 +67,7 @@ _WIDTHS = {
 _FALLBACK_WIDTH = 500.0
 
 #: Adobe's Symbol encoding: the byte each glyph sits at. Only the glyphs the
-#: mark schemes actually use — measured over the 202 questions cached on
+#: mark schemes actually use — measured over the 216 questions cached on
 #: this machine, which between them hold 41 characters Latin-1 cannot
 #: encode. Written out rather than derived because pdfminer ships Symbol's
 #: *widths* keyed by Unicode but not its code points.
@@ -117,23 +117,38 @@ _ASCII_MATHS: dict[str, str] = {
     "‘": "'", "’": "'", "“": '"', "”": '"',
     "•": "- ", "✓": "[ok]", "✗": "[x]", " ": " ",
     "μ": "µ",
+    # The vulgar fractions and radicals Latin-1 has no glyph for. ½ ¼ ¾ it
+    # has, and one glyph reads better there than three characters do.
+    "⅓": "1/3", "⅔": "2/3", "∛": "³√",
 }
 
 #: What a character becomes when neither font can draw it. Visible on
 #: purpose: a silently dropped operator changes what an answer says.
+#:
+#: Control characters go the same way, and that is the net under the
+#: notation. A backslash written single instead of double is a JSON escape
+#: — "\f" a form feed, "\t" a tab, "\b" a backspace — so "\frac" and
+#: "\theta", the two commonest commands in maths, decode to a control
+#: character and a stump of a word without anything raising. Drawn, a tab
+#: is nothing at all; drawn as "?", it is a question somebody can ask.
 _UNRENDERABLE = "?"
+
+#: What counts as the end of a line. Narrower than ``str.splitlines()``,
+#: which also breaks on a form feed — and a form feed is exactly what a
+#: single-written "\frac" leaves behind.
+_NEWLINE = re.compile("\r\n|[\r\n]")
 
 #: Symbol code point → the character it draws, for width lookup.
 _SYMBOL_CHAR = {byte: char for char, byte in _SYMBOL_BYTE.items()}
 
 # ── Maths layout ──────────────────────────────────────────────────
 #
-# The mark schemes come out of the vision model as flat ASCII maths —
-# "½ ∫_0^2π θ^2 e^(¼θ) dθ". Printed flat it is close to unreadable, so the
-# "^" and "_" are turned back into what they mean: a smaller run of type,
-# raised or lowered. Nothing here is LaTeX, because the source is not
-# LaTeX — measured over the 202 cached questions, it contains exactly zero
-# backslash commands.
+# Three notations arrive mixed, often inside one line: flat ASCII maths
+# ("∑x^2"), Unicode scripts ("H₀", "x²") and LaTeX ("\frac{9s_x^2}{7}").
+# All three are set as what they mean — "^" and "_" become a smaller run
+# of type raised or lowered, "\frac" becomes a stacked box. The mix is
+# permanent, not a migration: a cache parsed months ago does not rewrite
+# itself, and the model's notation drifts between papers anyway.
 
 #: Each level of nesting shrinks the type by this much, TeX-style.
 _SCRIPT_SCALE = 0.72
@@ -153,6 +168,72 @@ _SUB_RISE = -0.20
 #: separate things.
 _BARE_OPERAND = re.compile("[+-]?\\d+[Ͱ-Ͽ]?")
 
+#: Where a fraction's parts sit, as shares of the size of the line they
+#: are set on: the rule's height above the baseline, then the numerator's
+#: and denominator's own baselines. The two are far enough from the rule
+#: to clear a script of their own — "\frac{9s_x^2 + 7s_y^2}{10 + 8 - 2}"
+#: is an ordinary line in these mark schemes, and its subscripts hang
+#: below the numerator's baseline.
+_FRAC_BAR = 0.28
+_FRAC_RISE = 0.55
+_FRAC_DROP = 0.50
+#: Breathing room either side of the rule, and how thick the rule is.
+_FRAC_PAD = 0.10
+_RULE = 0.05
+#: How far a capital reaches above its baseline, as a share of its size.
+#: Helvetica's, rounded up — it is what decides whether a line clears the
+#: one above it.
+_CAP_HEIGHT = 0.72
+
+#: LaTeX commands that stand for a single character. The character then
+#: goes through the same font split as any other, so the Greek lands in
+#: Symbol and "\times" in Helvetica.
+_LATEX_CHAR: dict[str, str] = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+    "epsilon": "ε", "varepsilon": "ε", "zeta": "ζ", "eta": "η",
+    "theta": "θ", "vartheta": "θ", "iota": "ι", "kappa": "κ",
+    "lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ",
+    "omicron": "ο", "pi": "π", "rho": "ρ", "sigma": "σ",
+    "tau": "τ", "upsilon": "υ", "phi": "φ", "varphi": "φ",
+    "chi": "χ", "psi": "ψ", "omega": "ω",
+    "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ",
+    "Xi": "Ξ", "Pi": "Π", "Sigma": "Σ", "Phi": "Φ",
+    "Psi": "Ψ", "Omega": "Ω",
+    "int": "∫", "sum": "∑", "prod": "∏", "partial": "∂",
+    "infty": "∞", "propto": "∝", "surd": "√", "therefore": "∴",
+    "neq": "≠", "ne": "≠", "leq": "≤", "le": "≤",
+    "geq": "≥", "ge": "≥", "approx": "≈", "equiv": "≡",
+    "in": "∈", "cap": "∩", "cup": "∪",
+    "Rightarrow": "⇒", "implies": "⇒", "to": "→", "rightarrow": "→",
+    "leftarrow": "←", "gets": "←",
+    "times": "×", "cdot": "·", "div": "÷", "pm": "±",
+    "circ": "°", "degree": "°",
+    "ldots": "...", "dots": "...", "cdots": "...",
+    # The escapes, where the character is the command's whole name.
+    "{": "{", "}": "}", "%": "%", "&": "&", "#": "#",
+    "$": "$", "_": "_", "^": "^",
+}
+
+#: Spacing commands, and how many spaces each is worth.
+_LATEX_SPACE: dict[str, int] = {
+    "quad": 2, "qquad": 4, ",": 1, ":": 1, ";": 1, " ": 1, "!": 0,
+}
+
+#: Commands whose braced argument is set as ordinary text.
+_LATEX_TEXT = frozenset({"text", "textbf", "textit", "mathrm", "mathbf",
+                         "mathit", "operatorname", "mbox"})
+
+#: Commands that only size a delimiter. The delimiter itself is printed
+#: by the ordinary path; "\left." and "\right." name no delimiter at all.
+_LATEX_SIZER = frozenset({"left", "right", "big", "Big", "bigg", "Bigg"})
+
+_LATEX_NAME = re.compile("[A-Za-z]+")
+
+#: A radicand that needs no brackets around it: "\sqrt{33}" is √33, but
+#: "\sqrt{2x}" written √2x reads as √2 times x, which is a different
+#: number. Brackets are printed rather than a bar drawn over the radicand.
+_SIMPLE_RADICAND = re.compile("[A-Za-z]|[0-9]+")
+
 
 @dataclass(frozen=True)
 class _Atom:
@@ -165,6 +246,41 @@ class _Atom:
     breaks: bool = False
 
 
+@dataclass(frozen=True)
+class _Frac:
+    """A fraction: two laid-out rows that will be stacked and ruled.
+
+    *size* is the size of the line it sits on rather than of its own type,
+    because that is what the geometry above is measured in; the rows are
+    already at the shrunken size by the time they get here.
+    """
+
+    top: list[_Piece]
+    bottom: list[_Piece]
+    size: float
+    rise: float
+    #: A fraction is never a place to break a line.
+    breaks: bool = False
+
+
+_Piece = _Atom | _Frac
+
+
+def _delimited(
+    text: str, index: int, opening: str, closing: str
+) -> tuple[str, int]:
+    """What is inside the bracket at *index*, and how much it consumed."""
+    depth = 0
+    for position in range(index, len(text)):
+        if text[position] == opening:
+            depth += 1
+        elif text[position] == closing:
+            depth -= 1
+            if depth == 0:
+                return text[index + 1:position], position - index + 1
+    return text[index + 1:], len(text) - index   # unbalanced: take it all
+
+
 def _operand(text: str, index: int) -> tuple[str, int]:
     """What "^" or "_" at *index*-1 applies to, and how much it consumed.
 
@@ -174,20 +290,77 @@ def _operand(text: str, index: int) -> tuple[str, int]:
     """
     char = text[index]
     if char in "({":
-        closing = ")" if char == "(" else "}"
-        depth = 0
-        for position in range(index, len(text)):
-            if text[position] == char:
-                depth += 1
-            elif text[position] == closing:
-                depth -= 1
-                if depth == 0:
-                    return text[index + 1:position], position - index + 1
-        return text[index + 1:], len(text) - index   # unbalanced: take it all
+        return _delimited(text, index, char, ")" if char == "(" else "}")
     bare = _BARE_OPERAND.match(text, index)
     if bare:
         return bare.group(0), len(bare.group(0))
     return char, 1
+
+
+def _argument(text: str, index: int) -> tuple[str, int]:
+    """A command's argument: a braced group, or the next character alone.
+
+    A brace only groups when a command or a script reaches for it. One met
+    while scanning is a brace the mark scheme meant — a piecewise
+    definition is written "F(x) = { 0 (x<0); 3/17 x² (0≤x<1); … }", and
+    swallowing those would take the shape of the answer with them.
+    """
+    if text[index:index + 1] == "{":
+        return _delimited(text, index, "{", "}")
+    return (text[index], 1) if index < len(text) else ("", 0)
+
+
+def _command(
+    text: str, index: int, size: float, rise: float, base: float, step: float
+) -> tuple[list[_Piece], int]:
+    """The LaTeX command starting at the backslash *index* points at.
+
+    Returns what it draws and how much of *text* it ate. A command nobody
+    here knows becomes "?" and its argument is left to print: silently
+    dropping half an expression is how a mark scheme comes to say
+    something it does not say.
+    """
+    name_match = _LATEX_NAME.match(text, index + 1)
+    name = name_match.group(0) if name_match else text[index + 1:index + 2]
+    after = index + 1 + len(name)
+
+    def whole(pieces: list[_Piece], used: int) -> tuple[list[_Piece], int]:
+        return pieces, after - index + used
+
+    if name in _LATEX_CHAR:
+        return whole(
+            atoms(_LATEX_CHAR[name], size, rise, base, math=False), 0
+        )
+    if name in _LATEX_SPACE:
+        return whole(atoms(" " * _LATEX_SPACE[name], size, rise, base), 0)
+    if name in _LATEX_SIZER:
+        # "\left." and "\right." size nothing and name no delimiter.
+        return whole([], 1 if text[after:after + 1] == "." else 0)
+    if name in _LATEX_TEXT:
+        body, used = _argument(text, after)
+        return whole(atoms(body, size, rise, base, math=False), used)
+    if name in ("frac", "dfrac", "tfrac"):
+        top, used_top = _argument(text, after)
+        bottom, used_bottom = _argument(text, after + used_top)
+        return whole([_Frac(
+            atoms(top, step, 0.0, base),
+            atoms(bottom, step, 0.0, base),
+            size, rise,
+        )], used_top + used_bottom)
+    if name == "sqrt":
+        degree, used_degree = (
+            _delimited(text, after, "[", "]")
+            if text[after:after + 1] == "[" else ("", 0)
+        )
+        body, used = _argument(text, after + used_degree)
+        if not _SIMPLE_RADICAND.fullmatch(body):
+            body = f"({body})"
+        return whole(
+            atoms(f"^{{{degree}}}√{body}" if degree else f"√{body}",
+                  size, rise, base),
+            used_degree + used,
+        )
+    return whole([_Atom(_UNRENDERABLE, size, rise)], 0)
 
 
 def atoms(
@@ -197,7 +370,7 @@ def atoms(
     base: float | None = None,
     *,
     math: bool = True,
-) -> list[_Atom]:
+) -> list[_Piece]:
     """Lay a line of the mark scheme's maths out into positioned characters.
 
     Recursive, so "e^(x^2)" nests properly. *base* is the size of the line
@@ -213,10 +386,16 @@ def atoms(
     """
     base = size if base is None else base
     step = max(size * _SCRIPT_SCALE, base * _MIN_SCALE)
-    out: list[_Atom] = []
+    out: list[_Piece] = []
     index = 0
     while index < len(text):
         char = text[index]
+
+        if math and char == "\\" and index + 1 < len(text):
+            drawn, used = _command(text, index, size, rise, base, step)
+            out.extend(drawn)
+            index += used
+            continue
 
         if math and char in "^_" and index + 1 < len(text):
             body, used = _operand(text, index + 1)
@@ -272,27 +451,87 @@ class _Run:
         ) / 1000.0
 
 
-def _run_for(atom: _Atom, bold: bool) -> _Run:
-    """One atom as a run — Symbol if only Symbol has its character."""
-    if atom.char in _SYMBOL_BYTE:
-        return _Run(
-            chr(_SYMBOL_BYTE[atom.char]), True, bold, atom.size, atom.rise
+@dataclass(frozen=True)
+class _Stack:
+    """A fraction as it gets drawn: two rows and the rule between them.
+
+    Its own width is the wider row's, so the shorter one centres over the
+    other — and the rule is drawn, not set, because none of the base-14
+    fonts carries a rule that stretches.
+    """
+
+    top: list[_Piece2]
+    bottom: list[_Piece2]
+    size: float
+    rise: float = 0.0
+
+    @property
+    def width(self) -> float:
+        return max(_width(self.top), _width(self.bottom)) + (
+            2 * self.size * _FRAC_PAD
         )
-    char = atom.char
+
+    @property
+    def span(self) -> tuple[float, float]:
+        """How far the box reaches above and below the line's baseline.
+
+        Measured through the rows, not just to their baselines: a fraction
+        inside a denominator is what actually reaches furthest down, and a
+        box that under-reports its own height is one the next line is set
+        on top of.
+        """
+        high = self.rise + self.size * _FRAC_RISE
+        low = self.rise - self.size * _FRAC_DROP
+        for row, baseline in ((self.top, high), (self.bottom, low)):
+            for run in row:
+                reach = run.span if isinstance(run, _Stack) else (
+                    run.rise, run.rise
+                )
+                high = max(high, baseline + reach[0])
+                low = min(low, baseline + reach[1])
+        return high, low
+
+
+_Piece2 = _Run | _Stack
+
+
+def _width(runs: Sequence[_Piece2]) -> float:
+    return sum(run.width for run in runs)
+
+
+def _run_for(piece: _Piece, bold: bool) -> _Piece2:
+    """One laid-out piece as something drawable.
+
+    Symbol when only Symbol has the character, a stacked box for a
+    fraction, Helvetica otherwise.
+    """
+    if isinstance(piece, _Frac):
+        return _Stack(
+            _merge([_run_for(part, bold) for part in piece.top]),
+            _merge([_run_for(part, bold) for part in piece.bottom]),
+            piece.size, piece.rise,
+        )
+    if piece.char in _SYMBOL_BYTE:
+        return _Run(
+            chr(_SYMBOL_BYTE[piece.char]), True, bold, piece.size, piece.rise
+        )
+    char = piece.char
     try:
         char.encode("latin-1")
     except UnicodeEncodeError:
         char = _UNRENDERABLE
-    return _Run(char, False, bold, atom.size, atom.rise)
+    if char < " ":
+        char = _UNRENDERABLE
+    return _Run(char, False, bold, piece.size, piece.rise)
 
 
-def _merge(runs: Sequence[_Run]) -> list[_Run]:
+def _merge(runs: Sequence[_Piece2]) -> list[_Piece2]:
     """Join neighbouring runs that match, so one Tj covers them."""
-    out: list[_Run] = []
+    out: list[_Piece2] = []
     for run in runs:
         last = out[-1] if out else None
         if (
-            last is not None
+            isinstance(last, _Run) and isinstance(run, _Run)
             and (last.symbol, last.bold, last.size, last.rise)
             == (run.symbol, run.bold, run.size, run.rise)
         ):
@@ -306,7 +545,7 @@ def _merge(runs: Sequence[_Run]) -> list[_Run]:
 
 def wrap(
     text: str, size: float, bold: bool, width: float, *, math: bool = True
-) -> list[list[_Run]]:
+) -> list[list[_Piece2]]:
     """Break *text* into lines of runs that each fit inside *width*.
 
     Wrapping happens on the laid-out atoms rather than the source string,
@@ -315,21 +554,21 @@ def wrap(
     mark schemes are full of long expressions, and hyphenating
     "3n^3-6n^2+n" would change what it says.
     """
-    lines: list[list[_Run]] = []
-    for paragraph in text.splitlines() or [""]:
-        words: list[list[_Atom]] = [[]]
+    lines: list[list[_Piece2]] = []
+    for paragraph in _NEWLINE.split(text):
+        words: list[list[_Piece]] = [[]]
         for atom in atoms(paragraph, size, math=math):
             if atom.breaks:
                 words.append([])
             else:
                 words[-1].append(atom)
 
-        current: list[_Run] = []
+        current: list[_Piece2] = []
         used = 0.0
         space = _Run(" ", False, bold, size)
         for word in words:
             piece = [_run_for(atom, bold) for atom in word]
-            word_width = sum(run.width for run in piece)
+            word_width = _width(piece)
             if current and used + space.width + word_width > width:
                 lines.append(_merge(current))
                 current, used = [], 0.0
@@ -342,16 +581,36 @@ def wrap(
     return lines
 
 
-def line_height(runs: Sequence[_Run], size: float) -> float:
+def ascent(runs: Sequence[_Piece2], size: float) -> float:
+    """How far above its own baseline a line reaches.
+
+    A line is normally set one *size* below the last one, which is room
+    enough for anything Helvetica draws and for a superscript. A fraction
+    is taller than that, so it needs measuring or it prints over the line
+    above — the extra leading :func:`line_height` asks for all lands
+    *below* the baseline, and does nothing for what is above it.
+    """
+    reach = 0.0
+    for run in runs:
+        high = run.span[0] if isinstance(run, _Stack) else run.rise
+        reach = max(reach, high + run.size * _CAP_HEIGHT)
+    return max(reach, size)
+
+
+def line_height(runs: Sequence[_Piece2], size: float) -> float:
     """How much room a line needs, given how far its scripts reach.
 
     A line of plain text gets the plain leading; one carrying a superscript
     and a subscript needs the span between them on top, or the raised
-    characters collide with the line above.
+    characters collide with the line above. A fraction reports the box it
+    occupies rather than a single height, which is most of what makes a
+    line of them sit clear of its neighbours.
     """
     if not runs:
         return size * _LEADING
-    rises = [run.rise for run in runs]
+    rises: list[float] = []
+    for run in runs:
+        rises.extend(run.span if isinstance(run, _Stack) else [run.rise])
     return size * _LEADING + (max(rises) - min(rises)) * 0.5
 
 
@@ -377,7 +636,7 @@ class _Sheet:
         self.width = width
         self.height = height
         self.text_width = width - 2 * _MARGIN
-        self.pages: list[list[tuple[float, list[_Run]]]] = []
+        self.pages: list[list[tuple[float, list[_Piece2]]]] = []
         self._cursor = height
 
     def new_page(self) -> None:
@@ -392,9 +651,10 @@ class _Sheet:
         self, text: str, size: float, bold: bool = False, math: bool = True
     ) -> None:
         for line in wrap(text, size, bold, self.text_width, math=math):
-            leading = line_height(line, size)
+            top = ascent(line, size)
+            leading = line_height(line, size) + top - size
             self._room(leading)
-            self.pages[-1].append((self._cursor + size, line))
+            self.pages[-1].append((self._cursor + top, line))
             self._cursor += leading
 
     def gap(self, height: float) -> None:
@@ -436,24 +696,68 @@ def _resources() -> DictionaryObject:
     return resources
 
 
+def _show(x: float, y: float, runs: Sequence[_Run]) -> bytes:
+    """A stretch of runs set left to right from (*x*, *y*)."""
+    if not runs:
+        return b""
+    out = bytearray(b"BT %.2f %.2f Td" % (x, y))
+    for run in runs:
+        key = b"/F3" if run.symbol else (b"/F2" if run.bold else b"/F1")
+        # Ts is the text rise — how a superscript gets set above the
+        # baseline without moving the pen, so Tj keeps advancing the
+        # line normally afterwards.
+        out += b" %s %.2f Tf %.2f Ts (%s) Tj" % (
+            key, run.size, run.rise, _escape(run)
+        )
+    return bytes(out + b" ET\n")
+
+
+def _place(x: float, y: float, runs: Sequence[_Piece2]) -> bytes:
+    """A row drawn from (*x*, *y*), fractions positioned by hand.
+
+    Text advances the pen by itself, which is why a stretch of it goes out
+    as one Td and a string of Tj. A fraction cannot: its two rows sit at
+    coordinates of their own. So the run of text breaks there, the box is
+    drawn where the pen had got to, and the text picks up past its width.
+    """
+    out = bytearray()
+    pen = start = x
+    batch: list[_Run] = []
+    for run in runs:
+        if isinstance(run, _Stack):
+            out += _show(start, y, batch)
+            batch = []
+            out += _stack(pen, y, run)
+            start = pen + run.width
+        else:
+            batch.append(run)
+        pen += run.width
+    return bytes(out + _show(start, y, batch))
+
+
+def _stack(x: float, y: float, box: _Stack) -> bytes:
+    """One fraction: numerator, denominator, and the rule between them."""
+    base = y + box.rise
+    out = bytearray()
+    for row, rise in (
+        (box.top, box.size * _FRAC_RISE), (box.bottom, -box.size * _FRAC_DROP)
+    ):
+        out += _place(x + (box.width - _width(row)) / 2, base + rise, row)
+    pad = box.size * _FRAC_PAD
+    out += b"%.2f %.2f %.2f %.2f re f\n" % (
+        x + pad, base + box.size * _FRAC_BAR,
+        box.width - 2 * pad, box.size * _RULE,
+    )
+    return bytes(out)
+
+
 def _content(
-    lines: Sequence[tuple[float, list[_Run]]], page_height: float = _PAGE_H
+    lines: Sequence[tuple[float, list[_Piece2]]], page_height: float = _PAGE_H
 ) -> bytes:
     """The page's content stream. y is measured down; PDF measures up."""
     out = bytearray()
     for baseline, runs in lines:
-        if not runs:
-            continue
-        out += b"BT %.2f %.2f Td" % (_MARGIN, page_height - baseline)
-        for run in runs:
-            key = b"/F3" if run.symbol else (b"/F2" if run.bold else b"/F1")
-            # Ts is the text rise — how a superscript gets set above the
-            # baseline without moving the pen, so Tj keeps advancing the
-            # line normally afterwards.
-            out += b" %s %.2f Tf %.2f Ts (%s) Tj" % (
-                key, run.size, run.rise, _escape(run)
-            )
-        out += b" ET\n"
+        out += _place(_MARGIN, page_height - baseline, runs)
     return bytes(out)
 
 
