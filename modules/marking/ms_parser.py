@@ -327,6 +327,28 @@ def _coerce_marks(value: object) -> int:
     return int(match.group()) if match else 0
 
 
+#: An escaped backslash, or one JSON cannot read — not one of its own
+#: escapes, and not a ``\u`` with four hex digits behind it. A LaTeX
+#: command written with one backslash instead of two lands in the second
+#: case (``\sqrt``, ``\alpha``, ``\upsilon``), and there is only one thing
+#: it can have meant. The first case is matched so it can be stepped over:
+#: scanning one character at a time, the second backslash of a correct
+#: ``\\sqrt`` looks exactly like a lone one.
+_JSON_ESCAPE = re.compile(r'\\\\|\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})')
+
+
+def _double_lone_backslashes(text: str) -> str:
+    """Make a JSON document readable that a stray backslash broke.
+
+    A batch is a vision-model call the user has already paid for; one
+    command short of a backslash should not throw the other questions in
+    it away.
+    """
+    return _JSON_ESCAPE.sub(
+        lambda m: m.group() if m.group() == "\\\\" else "\\\\", text
+    )
+
+
 def _parse_image_ms_response(
     raw: str,
 ) -> dict[str, QuestionConfig]:
@@ -342,9 +364,8 @@ def _parse_image_ms_response(
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start != -1 and end != -1 and end > start:
-            data = json.loads(cleaned[start : end + 1])
-        else:
-            raise
+            cleaned = cleaned[start : end + 1]
+        data = json.loads(_double_lone_backslashes(cleaned))
 
     questions: dict[str, QuestionConfig] = {}
     for entry in data.get("questions", []):
