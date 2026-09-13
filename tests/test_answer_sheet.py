@@ -285,6 +285,48 @@ class TestLatex:
         assert len(wrap("\frac", 9.5, False, _TEXT_W)) == 1
         assert _drawn("\frac") == "?rac"
 
+    def test_an_operator_name_is_set_apart_from_its_argument(self) -> None:
+        """"\\cos\\theta" was 55 "?"s on the first live re-parse of
+        9231_s25_ms_11."""
+        assert _drawn("\\cos\\theta + 2\\sin\\theta") == "cos θ + 2 sin θ"
+        assert _drawn("2\\sin\\theta\\cos\\theta") == "2 sin θ cos θ"
+        assert _drawn("\\ln(x)") == "ln(x)"
+
+    def test_a_matrix_is_written_flat(self) -> None:
+        """The model reaches for "\\begin{pmatrix}" even when told not
+        to. Cells take commas: a cell is often an expression, and
+        "(cos θ + 2 sin θ 2 cos θ - sin θ)" does not say where one ends."""
+        assert _drawn(
+            "\\begin{vmatrix} i & j & k \\\\ 0 & 2 & 4 \\end{vmatrix}"
+        ) == "|i, j, k; 0, 2, 4|"
+        assert _drawn(
+            "\\begin{pmatrix} 3 \\\\ 2 \\\\ -1 \\end{pmatrix}"
+        ) == "(3, 2, -1)"
+
+    def test_what_is_inside_a_matrix_is_still_typeset(self) -> None:
+        drawn = _drawn(
+            "\\begin{pmatrix} \\cos\\theta & -\\sin\\theta \\end{pmatrix}"
+        )
+
+        assert drawn == "(cos θ, -sin θ)"
+        assert "\\" not in drawn and _UNRENDERABLE not in drawn
+
+    def test_a_radical_dot_is_not_a_minus_sign(self) -> None:
+        """"Cl- " is the chloride ion; the radical is Cl·."""
+        assert _drawn("Cl\\bullet + H_{2}") == "Cl· + H2"
+
+    def test_a_script_can_be_a_command_without_braces(self) -> None:
+        """"36.7^\\circ" came back from a live re-parse, and a character at
+        a time it was a raised backslash with "circ" after it."""
+        assert _shape("36.7^\\circ")[-1] == ("°", 7.2, 4.2)
+        assert _shape("x_\\alpha")[-1] == ("α", 7.2, -2.0)
+
+    def test_a_vector_keeps_its_arrow(self) -> None:
+        assert _drawn("\\overrightarrow{AB}") == "AB→"
+
+    def test_a_row_break_outside_a_matrix_is_only_a_gap(self) -> None:
+        assert _drawn("a \\\\ b") == "a   b"
+
     def test_a_brace_the_mark_scheme_meant_is_still_printed(self) -> None:
         """A piecewise definition is written "F(x) = { 0 (x<0); … }" — a
         brace only groups when a command reaches for it."""
