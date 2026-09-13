@@ -251,8 +251,15 @@ MATHS — write it in LaTeX, and DOUBLE EVERY BACKSLASH:
 "\\theta" — the two commonest commands in maths — would arrive as \
 corrupted text with no error raised, and the marking point is then wrong \
 with nothing to show for it.
+- The line break between marking points is NOT maths and is NOT \
+doubled: it stays "\\n", exactly as in the example above. "\\\\n" \
+prints a backslash and an "n" instead of starting a new line.
 - No "$" delimiters, no display environments, no "\\\\begin{...}". Just \
-the commands, inline in the text.
+the commands, inline in the text. Write a matrix flat, rows separated by \
+";": "(1 2; 3 4)", a determinant "|i j k; 0 2 4; 1 -1 1|", a column \
+vector "(3, 2, -1)".
+- Structural formulae are condensed onto one line: \
+"HOOC-CH_{2}-CH_{2}-COOH", never "\\\\overset".
 - Only where it says something a plain character cannot: a stacked \
 fraction, a root, a Greek letter, an operator, a superscript or \
 subscript. "3/17" printed on the page as "3/17" stays "3/17".
@@ -336,6 +343,13 @@ def _coerce_marks(value: object) -> int:
 #: ``\\sqrt`` looks exactly like a lone one.
 _JSON_ESCAPE = re.compile(r'\\\\|\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})')
 
+#: A line break that arrived as text. Told to double every backslash, the
+#: model doubles the one in "\n" too, and the mark scheme comes back as
+#: "NaCl\nM2 ethanol" on one line — measured on 9701_w25_ms_23, 11 of 22
+#: breaks. No LaTeX command is "\n" followed by anything but a lower-case
+#: letter ("\nu", "\neq"), so that is a break; so is "\newline", by name.
+_LITERAL_NEWLINE = re.compile(r"(?<!\\)\\(?:newline|n(?![a-z]))")
+
 
 def _double_lone_backslashes(text: str) -> str:
     """Make a JSON document readable that a stray backslash broke.
@@ -372,13 +386,17 @@ def _parse_image_ms_response(
         raw_id = str(entry.get("id", ""))
         qid = normalize_question_id(raw_id)
         max_marks = _coerce_marks(entry.get("max_marks", 0))
-        ms_text = str(entry.get("mark_scheme", ""))
+        ms_text = _LITERAL_NEWLINE.sub("\n", str(entry.get("mark_scheme", "")))
         if not ms_text:
             ms_text = "# No mark scheme extracted"
-        questions[qid] = QuestionConfig(
+        # Merged, not assigned: the model does print one id twice in a
+        # single response — 9701_w25_ms_23 came back with two "4(a)(ii)"
+        # and no "4(a)(iii)" — and assigning kept only the second, so a
+        # whole marking point went missing without a word.
+        questions = _merge_questions(questions, {qid: QuestionConfig(
             max_marks=max_marks,
             mark_scheme=ms_text,
-        )
+        )})
     return questions
 
 

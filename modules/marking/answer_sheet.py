@@ -133,10 +133,10 @@ _ASCII_MATHS: dict[str, str] = {
 #: is nothing at all; drawn as "?", it is a question somebody can ask.
 _UNRENDERABLE = "?"
 
-#: What counts as the end of a line. Narrower than ``str.splitlines()``,
-#: which also breaks on a form feed — and a form feed is exactly what a
-#: single-written "\frac" leaves behind.
-_NEWLINE = re.compile("\r\n|[\r\n]")
+#: What counts as the end of a line: a line break, or LaTeX's name for one.
+#: Narrower than ``str.splitlines()``, which also breaks on a form feed —
+#: and a form feed is exactly what a single-written "\frac" leaves behind.
+_NEWLINE = re.compile("\r\n|[\r\n]|\\\\newline")
 
 #: Symbol code point → the character it draws, for width lookup.
 _SYMBOL_CHAR = {byte: char for char, byte in _SYMBOL_BYTE.items()}
@@ -207,25 +207,63 @@ _LATEX_CHAR: dict[str, str] = {
     "Rightarrow": "⇒", "implies": "⇒", "to": "→", "rightarrow": "→",
     "leftarrow": "←", "gets": "←",
     "times": "×", "cdot": "·", "div": "÷", "pm": "±",
-    "circ": "°", "degree": "°",
+    "circ": "°", "degree": "°", "sim": "~",
+    # A radical's unpaired electron, "Cl\bullet". Not "•": that is
+    # rewritten to a list dash, and "Cl- " reads as the chloride ion.
+    "bullet": "·",
     "ldots": "...", "dots": "...", "cdots": "...",
     # The escapes, where the character is the command's whole name.
     "{": "{", "}": "}", "%": "%", "&": "&", "#": "#",
     "$": "$", "_": "_", "^": "^",
 }
 
-#: Spacing commands, and how many spaces each is worth.
+#: Spacing commands, and how many spaces each is worth. "\\" is a line
+#: break to TeX, but a line here has already been cut out of its paragraph
+#: by the time a command is read, so it can only be a gap.
 _LATEX_SPACE: dict[str, int] = {
-    "quad": 2, "qquad": 4, ",": 1, ":": 1, ";": 1, " ": 1, "!": 0,
+    "quad": 2, "qquad": 4, ",": 1, ":": 1, ";": 1, " ": 1, "!": 0, "\\": 1,
 }
 
 #: Commands whose braced argument is set as ordinary text.
 _LATEX_TEXT = frozenset({"text", "textbf", "textit", "mathrm", "mathbf",
                          "mathit", "operatorname", "mbox"})
 
+#: Operator names, which TeX sets upright and apart from what follows.
+_LATEX_OPERATOR = frozenset({
+    "sin", "cos", "tan", "sec", "csc", "cot",
+    "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh",
+    "ln", "log", "exp", "lim", "max", "min", "det",
+})
+
 #: Commands that only size a delimiter. The delimiter itself is printed
 #: by the ordinary path; "\left." and "\right." name no delimiter at all.
 _LATEX_SIZER = frozenset({"left", "right", "big", "Big", "bigg", "Bigg"})
+
+#: The brackets each matrix environment is drawn with.
+_MATRIX_FENCE = {"pmatrix": "()", "bmatrix": "[]", "vmatrix": "||",
+                 "Vmatrix": "||"}
+
+
+def _flat_matrix(env: str, body: str) -> str:
+    """A LaTeX matrix written flat on one line.
+
+    Cells take commas and rows take semicolons — "(cos θ, -sin θ; sin θ,
+    cos θ)" — because a cell is often a whole expression, and with only a
+    space between cells nothing says where one ends. A single column is a
+    column vector and reads "(3, 2, -1)", the way the mark schemes write
+    one.
+    """
+    rows = [
+        [cell.strip() for cell in row.split("&")]
+        for row in body.split("\\\\") if row.strip()
+    ]
+    inner = (
+        ", ".join(row[0] for row in rows)
+        if all(len(row) == 1 for row in rows)
+        else "; ".join(", ".join(row) for row in rows)
+    )
+    fence = _MATRIX_FENCE.get(env, "  ")
+    return f"{fence[0]}{inner}{fence[1]}".strip()
 
 _LATEX_NAME = re.compile("[A-Za-z]+")
 
@@ -291,6 +329,12 @@ def _operand(text: str, index: int) -> tuple[str, int]:
     char = text[index]
     if char in "({":
         return _delimited(text, index, char, ")" if char == "(" else "}")
+    if char == "\\":
+        # "36.7^\circ" is raised as a whole; taken a character at a time it
+        # was a raised backslash and the word "circ" on the baseline.
+        name = _LATEX_NAME.match(text, index + 1)
+        length = 1 + (len(name.group(0)) if name else 1)
+        return text[index:index + length], length
     bare = _BARE_OPERAND.match(text, index)
     if bare:
         return bare.group(0), len(bare.group(0))
@@ -330,6 +374,39 @@ def _command(
     if name in _LATEX_CHAR:
         return whole(
             atoms(_LATEX_CHAR[name], size, rise, base, math=False), 0
+        )
+    if name in _LATEX_OPERATOR:
+        # "2\sin\theta" is "2 sin θ": the spaces TeX puts there by itself.
+        following = text[after:after + 1]
+        lead = " " if index and text[index - 1].isalnum() else ""
+        trail = " " if following.isalpha() or following == "\\" else ""
+        return whole(
+            atoms(lead + name + trail, size, rise, base, math=False), 0
+        )
+    if name == "begin":
+        env, used_env = _argument(text, after)
+        start = after + used_env
+        end = text.find(f"\\end{{{env}}}", start)
+        stop = len(text) if end == -1 else end + len(f"\\end{{{env}}}")
+        body = text[start:len(text) if end == -1 else end]
+        return whole(
+            atoms(_flat_matrix(env, body), size, rise, base), stop - after
+        )
+    if name == "end":   # one with no "\begin" before it
+        return whole([], _argument(text, after)[1])
+    if name in ("overrightarrow", "vec"):
+        body, used = _argument(text, after)
+        return whole(atoms(f"{body}^→", size, rise, base), used)
+    if name == "overset":
+        # Stacked in the source, raised here: "\overset{a}{b}" is b with a
+        # above it, and a superscript is the nearest thing a single line of
+        # type has to "above".
+        over, used_over = _argument(text, after)
+        under, used_under = _argument(text, after + used_over)
+        return whole(
+            atoms(under, size, rise, base)
+            + atoms(over, step, rise + size * _SUP_RISE, base),
+            used_over + used_under,
         )
     if name in _LATEX_SPACE:
         return whole(atoms(" " * _LATEX_SPACE[name], size, rise, base), 0)

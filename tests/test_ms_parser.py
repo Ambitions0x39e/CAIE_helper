@@ -161,6 +161,37 @@ def test_parse_image_ms_response_repairs_a_single_backslash(
     assert result["Q1"].mark_scheme == expected
 
 
+@pytest.mark.parametrize(("wire", "expected"), [
+    # Told to double every backslash, the model doubles the one in "\n"
+    # as well — 11 of the 22 breaks on a live re-parse of 9701_w25_ms_23.
+    (r"NaCl\\nM2 ethanol", "NaCl\nM2 ethanol"),
+    (r"X\\nAND\\n41 is", "X\nAND\n41 is"),
+    (r"2(y+1) = -y - 2 \\newline 8(y+1)", "2(y+1) = -y - 2 \n 8(y+1)"),
+    # …but "\nu" and "\neq" are commands, and a matrix row break followed
+    # by an "n" is a row break.
+    (r"\\nu = 2 \\neq 3", r"\nu = 2 \neq 3"),
+    (r"a \\\\n", r"a \\n"),
+])
+def test_parse_image_ms_response_restores_a_doubled_line_break(
+    wire: str, expected: str
+) -> None:
+    result = _parse_image_ms_response(_one_question(wire))
+    assert result["Q1"].mark_scheme == expected
+
+
+def test_parse_image_ms_response_merges_an_id_printed_twice() -> None:
+    """9701_w25_ms_23 came back with "4(a)(ii)" twice and no "4(a)(iii)";
+    keeping only the second copy lost a marking point without a word."""
+    raw = json.dumps({"questions": [
+        {"id": "4(a)(ii)", "max_marks": 1, "mark_scheme": "PCl5 / SOCl2"},
+        {"id": "4(a)(ii)", "max_marks": 2, "mark_scheme": "M1 NaOH"},
+    ]})
+
+    entry = _parse_image_ms_response(raw)["Q4(a)(ii)"]
+
+    assert "PCl5" in entry.mark_scheme and "NaOH" in entry.mark_scheme
+
+
 @pytest.mark.parametrize("wire", [
     r"B1: one\nM1: two",
     r"B1: say \"yes\"",
