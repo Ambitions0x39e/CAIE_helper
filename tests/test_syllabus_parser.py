@@ -270,6 +270,53 @@ def _stacked_science_pdf(path: Path) -> Path:
     return _placed_pages_pdf(path, [overview, assessment])
 
 
+def _sentence_headed_science_pdf(path: Path) -> Path:
+    """The 9702 shape: one column, each list opened by a sentence, not a
+    heading. Positions read off the real 9702 pages.
+
+    The subject-content chapter page after it carries a real "A Level subject
+    content" heading over two topics — the page that wins when the sentences
+    are not recognised.
+    """
+    overview = [
+        (56.7, 34, "Content overview"),
+        (56.7, 62, "Candidates for Cambridge International AS Level Physics "
+                   "study the following topics:"),
+        (56.7, 81, "1  Physical quantities and units"),
+        (56.7, 97, "2  Kinematics"),
+        (56.7, 113, "3  Dynamics"),
+        (56.7, 139, "AS Level candidates also study practical skills."),
+        (56.7, 169, "Candidates for Cambridge International A Level Physics "
+                    "study the AS Level topics and the"),
+        (56.7, 181, "following topics:"),
+        (56.7, 200, "4  Motion in a circle"),
+        (56.7, 216, "5  Gravitational fields"),
+        (56.7, 232, "6  Temperature"),
+        (56.7, 258, "A Level candidates also study practical skills."),
+        (56.7, 306, "School feedback: 'Cambridge International AS & A Levels"),
+        (564.3, 766, "10"),
+    ]
+    assessment = [
+        (62.4, 60, "Paper 1"),
+        (319.7, 60, "Paper 4"),
+        (62.4, 80, "Multiple Choice"),
+        (319.7, 80, "A Level Structured Questions"),
+        (62.4, 100, "Questions are based on the AS Level syllabus"),
+        (319.7, 100, "Questions are based on the A Level syllabus"),
+        (62.4, 113, "content."),
+        (319.7, 113, "content; knowledge of material from the AS Level"),
+    ]
+    subject_content = [
+        (56.7, 34, "Candidates for Cambridge International AS Level should "
+                   "study topics 1-3."),
+        (56.7, 60, "A Level subject content"),
+        (62.4, 90, "4  Motion in a circle"),
+        (62.4, 114, "4.1  Kinematics of uniform circular motion"),
+        (62.4, 280, "5  Gravitational fields"),
+    ]
+    return _placed_pages_pdf(path, [overview, assessment, subject_content])
+
+
 _INDENT = " " * 46
 
 
@@ -678,6 +725,20 @@ class TestScienceGeometry:
         assert info.component_topics["1"] == ["1", "2"]
         assert info.component_topics["4"] == ["1", "2", "3"]
         assert info.topics["3"].name == "Chemical energetics"
+
+    def test_lists_opened_by_a_sentence_are_read_as_levels(
+        self, tmp_path: Path
+    ) -> None:
+        """9702 opens each list with "Candidates for … study the following
+        topics:" instead of a heading."""
+        info = parse_syllabus(
+            _sentence_headed_science_pdf(tmp_path / "9702.pdf"), "9702"
+        )
+
+        assert list(info.topics) == ["1", "2", "3", "4", "5", "6"]
+        assert info.topics["4"].name == "Motion in a circle"
+        assert info.component_topics["1"] == ["1", "2", "3"]
+        assert info.component_topics["4"] == ["1", "2", "3", "4", "5", "6"]
 
 
 # ── Which grading path each paper takes ───────────────────────────
