@@ -11,12 +11,12 @@
 // -- core.config_store -------------------------------------------------------
 
 /** `PaperType` — which grading path a paper takes, when it is known up front. */
-export type PaperType = 'mcq' | 'math'
+export type PaperType = 'mcq' | 'math' | 'physics'
 
 export interface PaperTypeConfig {
   digit: string
   name: string
-  /** null means "not recorded" — the Mark tab leaves the user's choice alone. */
+  /** null means "not recorded" — the Mark tab asks the user. */
   grading: PaperType | null
 }
 

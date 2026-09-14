@@ -26,11 +26,11 @@ class PaperTypeConfig(BaseModel):
     digit: str
     name: str
     #: Which grading path this paper takes, when it is known up front.
-    #: ``mcq`` is the deterministic answer-key path; ``math`` is the
-    #: VL-graded one, which despite the name suits any structured paper
-    #: (Chemistry Paper 2, a practical write-up) — the enum is named after
-    #: the first flow that used it. ``None`` means "not recorded", and the
-    #: Mark tab leaves whatever the user picked alone.
+    #: ``mcq`` is the deterministic answer-key path; ``math`` and ``physics``
+    #: are VL-graded, each against its subject's marking conventions, and
+    #: ``math`` also serves structured papers with no prompt of their own
+    #: (Chemistry Paper 2, a practical write-up). ``None`` means "not
+    #: recorded", and the Mark tab asks the user.
     grading: PaperType | None = None
 
     @field_validator("digit")

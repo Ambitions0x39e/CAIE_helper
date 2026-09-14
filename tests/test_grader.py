@@ -5,14 +5,29 @@ from typing import Any
 
 import pytest
 
+from core.models import PaperType
 from core.settings import GraderConfig
 from modules.marking import grader
 from modules.marking.grader import (
+    GRADING_PROMPTS,
     MarkDetail,
     QuestionResult,
     grade_question,
     parse_grading_result,
 )
+
+
+def test_every_structured_paper_type_has_a_prompt_that_formats() -> None:
+    # MCQ is scored against its answer key; every other type goes to the model.
+    for pt in PaperType:
+        if pt is PaperType.MCQ:
+            continue
+        prompt = GRADING_PROMPTS[pt].format(
+            question_id="Q1", max_marks=1, mark_scheme="B1: x", topic_block="",
+        )
+        assert "B1: x" in prompt
+    assert "C mark" in GRADING_PROMPTS[PaperType.PHYSICS]
+    assert "C mark" not in GRADING_PROMPTS[PaperType.MATH]
 
 
 def test_parse_grading_result_valid() -> None:

@@ -101,6 +101,8 @@ def _call_vl(
         model=grader_config.model,
         messages=[{"role": "user", "content": content}],  # type: ignore[list-item, misc]
         temperature=0.0,
+        # hybrid models think by default; see ms_parser._call_vl for the cost
+        extra_body={"enable_thinking": False},
     )
     raw = str(response.choices[0].message.content).strip()
 
