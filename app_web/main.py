@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import webview
@@ -74,10 +75,19 @@ def main() -> None:
     # launches (the command palette's usage counts, its empty-state setting)
     # would come back blank every time. The profile lives beside the rest of
     # the app's data so uninstalling clears it with everything else.
+    storage = app_settings.base_dir / "webview"
+    # The HTTP cache inside it has to go, though. pywebview's asset route sets
+    # no-cache, but `bottle.static_file` returns a response of its own and those
+    # headers never reach the wire — the bundle is served with Last-Modified
+    # alone, and WebView2 answers index.html from disk. Every build shares this
+    # profile and the same 127.0.0.1 origin, so a fresh build (run from source,
+    # or installed by an update) came up showing the previous build's UI.
+    # Nothing in that cache is worth keeping for files read off local disk.
+    shutil.rmtree(storage / "EBWebView" / "Default" / "Cache", ignore_errors=True)
     webview.start(
         debug=debug,
         private_mode=False,
-        storage_path=str(app_settings.base_dir / "webview"),
+        storage_path=str(storage),
     )
 
 
