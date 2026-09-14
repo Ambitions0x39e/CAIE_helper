@@ -537,8 +537,15 @@ def _parse_math_geometry(
 # by side, so "Questions are based on the AS Level syllabus content." and its
 # A Level twin land adjacent in the text with nothing to say which is whose.
 
+#: Either a heading ("AS Level subject content", 9701) or the sentence that
+#: opens the list in its place ("Candidates for Cambridge International AS
+#: Level Physics study the following topics:", 9702). Without the sentence
+#: form, 9702's overview has no heading at all and the richest page left is a
+#: subject-content chapter page holding two topics.
 _LEVEL_HEADING_LINE_RE = re.compile(
-    r"^(AS|A)\s+Level\s+subject\s+content\b", re.IGNORECASE
+    r"^(?:Candidates\s+for\s+Cambridge\s+International\s+)?(AS|A)\s+Level\b"
+    r"(?:\s+subject\s+content\b|.*\bstudy\s+the\b)",
+    re.IGNORECASE,
 )
 #: "10  Group 2" — one entry of a flat list, id and name on one line.
 _SCIENCE_TOPIC_CELL_RE = re.compile(r"^(\d{1,2})\s+(\S.*)$")
