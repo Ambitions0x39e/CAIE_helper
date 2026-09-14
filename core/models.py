@@ -10,6 +10,7 @@ from pydantic import BaseModel, computed_field, field_validator, model_validator
 class PaperType(StrEnum):
     """Paper component type — determines parser, prompt, and UI workflow."""
     MATH = "math"
+    PHYSICS = "physics"
     MCQ = "mcq"
 
 

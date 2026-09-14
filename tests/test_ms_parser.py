@@ -2,16 +2,21 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fpdf import FPDF
 
 from core.models import PaperType
+from core.settings import GraderConfig
+from modules.marking import ms_parser
 from modules.marking.ms_parser import (
     _MS_START_PAGE_FALLBACK,
     PaperConfig,
     QuestionConfig,
     _cache_path_for,
+    _call_vl,
     _load_cached,
     _merge_questions,
     _paper_info_from_text,
@@ -77,6 +82,30 @@ def test_merge_questions_with_overlap() -> None:
     assert merged["Q1"].max_marks == 5
     assert "M1: first part" in merged["Q1"].mark_scheme
     assert "A1: second part" in merged["Q1"].mark_scheme
+
+
+# ── _call_vl ─────────────────────────────────────────────────
+
+
+def test_call_vl_turns_thinking_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Hybrid models think unless the request says otherwise; left on, one
+    # batch spent 3554 of its 4475 output tokens thinking.
+    sent: dict[str, Any] = {}
+
+    def _create(**kwargs: Any) -> Any:
+        sent.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))]
+        )
+
+    class _FakeClient:
+        def __init__(self, **_kw: Any) -> None:
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
+
+    monkeypatch.setattr(ms_parser, "OpenAI", _FakeClient)
+    _call_vl(GraderConfig(api_key="test-key"), [b"png"], "prompt")
+
+    assert sent["extra_body"] == {"enable_thinking": False}
 
 
 # ── _parse_image_ms_response ─────────────────────────────────

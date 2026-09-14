@@ -28,6 +28,12 @@ def api() -> Api:
     return Api()
 
 
+def test_grading_type_reads_the_mark_scheme_file_name(api: Api) -> None:
+    assert api.grading_type("/papers/9702_s25_ms_21.pdf") == "physics"
+    assert api.grading_type("/papers/9702_s25_ms_11.pdf") == "mcq"
+    assert api.grading_type("/uploads/scan.pdf") is None
+
+
 def test_ping_round_trips(api: Api) -> None:
     assert api.ping() == "pong"
 

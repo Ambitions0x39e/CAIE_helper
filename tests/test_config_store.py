@@ -98,6 +98,10 @@ def test_real_paper_page_config_resolves_expected_values(
         ("9701_s25_qp_41", PaperType.MATH),
         ("9701_s25_qp_54", PaperType.MATH),
         ("9702_s25_qp_11", PaperType.MCQ),
+        ("9702_s25_qp_21", PaperType.PHYSICS),
+        ("9702_s25_qp_33", PaperType.PHYSICS),
+        ("9702_s25_qp_42", PaperType.PHYSICS),
+        ("9702_s25_qp_52", PaperType.PHYSICS),
         ("9709_s25_qp_12", PaperType.MATH),
         ("9709_s25_qp_61", PaperType.MATH),
         ("9231_s25_qp_43", PaperType.MATH),
@@ -115,7 +119,7 @@ def test_grading_type_for_real_paper_ids(
 @pytest.mark.parametrize(
     "paper_id",
     [
-        "9702_s25_qp_41",   # component not recorded (only papers 1-3 are)
+        "9709_s25_qp_71",   # component not recorded (9709 stops at paper 6)
         "9700_s25_qp_21",   # subject has no paper_types at all
         "9999_s25_qp_11",   # unknown subject
         "9701_s25_gt",      # not a question paper

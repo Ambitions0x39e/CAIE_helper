@@ -60,7 +60,10 @@ from modules.marking.page_segmenter import ScannedDocument, match_scanned, scan_
 from modules.marking.renderer import LocalRenderer
 from modules.marking.syllabus_parser import (
     delete_syllabus,
+    detect_subject_id,
     load_syllabus,
+    parse_syllabus,
+    resolve_grading_type,
     stored_syllabuses,
     syllabus_path,
 )
@@ -371,6 +374,15 @@ class Api:
             return None
         return chosen if isinstance(chosen, str) else chosen[0]
 
+    def grading_type(self, ms_path: str) -> str | None:
+        """The grading path recorded for this mark scheme, if any.
+
+        Read off the file name (``9702_s25_ms_21``), so an upload saved under
+        its CIE name resolves too. None leaves the choice to the user.
+        """
+        pt = resolve_grading_type(Path(ms_path).stem)
+        return pt.value if pt else None
+
     def start_analysis(
         self,
         ms_path: str,
@@ -424,7 +436,7 @@ class Api:
     ) -> PaperConfig:
         resolved = (
             resolve_ms_start_page(ms_path, start_page)
-            if pt is PaperType.MATH
+            if pt is not PaperType.MCQ
             else None
         )
         from_cache = not force and ms_cache_exists(ms_path, pt, resolved)
@@ -708,16 +720,34 @@ class Api:
             {
                 "subject_id": s.subject_id,
                 "topic_count": len(s.topics),
-                "components": sorted(s.component_topics),
+                "components": sorted(
+                    set(s.component_topics) | set(s.component_grading)
+                ),
                 "path": str(syllabus_path(s.subject_id)),
             }
             for s in stored_syllabuses()
         ]
 
     def forget_syllabus(self, subject_id: str) -> Payload:
-        """Drop a stored syllabus. Re-parsing one costs a VL call, so this is
-        the only way back to that spend — it stays an explicit action."""
+        """Drop a stored syllabus. Getting it back means picking the PDF
+        again, so it stays an explicit action."""
         return {"success": delete_syllabus(subject_id)}
+
+    def import_syllabus(self, pdf_path: str) -> Payload:
+        """Parse a syllabus PDF and store it under the code on its cover."""
+        try:
+            subject_id = detect_subject_id(pdf_path)
+            if subject_id is None:
+                return {"success": False, "error": "封面上没有认得出的科目代码"}
+            info = parse_syllabus(pdf_path, subject_id, force=True)
+        except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+            _log.exception("syllabus import failed: %s", pdf_path)
+            return {"success": False, "error": str(exc)}
+        return {
+            "success": True,
+            "subject_id": subject_id,
+            "topic_count": len(info.topics),
+        }
 
     def app_version(self) -> str:
         return current_app_version()

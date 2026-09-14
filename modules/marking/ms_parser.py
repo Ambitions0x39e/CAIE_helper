@@ -274,6 +274,15 @@ DM/DA dependent) and the DIGIT IS HOW MANY MARKS THAT ONE POINT IS WORTH. \
 - So "max_marks" is the SUM of those digits, NOT the number of lines. \
 A part printed as "B2, M1, A1" has max_marks 4 over 3 lines.
 - Keep the digit exactly as printed — never rewrite "B2" as "B1".
+- C marks (C1, C2 …) are compensatory marks in calculations. Same rule: \
+the digit is the value, and they count towards "max_marks" like M and A.
+- A code printed in brackets — "(C1)", "(A1)", "(B1)" — belongs to an \
+ALTERNATIVE route, usually under an "OR" row. Keep the brackets, open that \
+route with its own "OR" line, and do NOT add it to "max_marks": the \
+alternative earns the same marks, not extra ones. A part printed as \
+"C1, A1, OR, (C1), (A1)" has max_marks 2.
+- Working printed under a code without a code of its own belongs on that \
+code's line.
 
 GUIDANCE COLUMN — transcribe it, attached to its marking point:
 - CIE mark schemes print a "Guidance" column beside the Answer and Marks \
@@ -309,10 +318,14 @@ def _call_vl(
         api_key=grader_config.api_key.get_secret_value(),
         base_url=grader_config.base_url,
     )
+    # Hybrid models (qwen3.6-flash) think unless told not to. One 2-page batch
+    # took 20.9 s and 4475 output tokens with thinking, 7.3 s and 853 without;
+    # whole papers ran 3.5-4.8x faster and lost no question ids.
     response = client.chat.completions.create(
         model=grader_config.model,
         messages=[{"role": "user", "content": content}],  # type: ignore[list-item, misc]
         temperature=0.1,
+        extra_body={"enable_thinking": False},
     )
     return str(response.choices[0].message.content)
 
@@ -624,14 +637,14 @@ def parse_mark_scheme(
     Args:
         pdf_path: Path to the MS PDF file.
         paper_type: Determines which parsing strategy to use.
-        grader_config: API credentials for VL model (required for MATH).
+        grader_config: API credentials for VL model (required for every
+            structured paper type).
         start_page: First page with actual mark scheme content (1-indexed).
             None auto-detects it — pass a number only to override.
         on_progress: Optional callback ``(current_batch, total_batches)``.
         force: Skip the cache and re-parse (the result is re-cached).
 
     Raises:
-        NotImplementedError: If paper_type has no parser yet.
         ValueError: If grader_config is None for a VL-based paper type.
     """
     path = Path(pdf_path)
@@ -645,11 +658,8 @@ def parse_mark_scheme(
         from modules.marking.mcq_parser import parse_mcq_mark_scheme
         return parse_mcq_mark_scheme(pdf_path)
 
-    if paper_type != PaperType.MATH:
-        raise NotImplementedError(
-            f"No mark scheme parser for {paper_type.value}"
-        )
-
+    # Every structured type reads its mark scheme the same way; the subjects
+    # part company only at grading.
     # Resolve the start page BEFORE the cache lookup: the cache key
     # embeds it, so parses from different start pages never shadow each
     # other (a manual override after an auto-detect re-parses cleanly).
@@ -660,11 +670,11 @@ def parse_mark_scheme(
 
     if grader_config is None:
         raise ValueError(
-            "grader_config is required for MATH mark scheme parsing"
+            "grader_config is required for structured mark scheme parsing"
         )
     if renderer is None:
         raise ValueError(
-            "renderer is required for MATH mark scheme parsing"
+            "renderer is required for structured mark scheme parsing"
         )
 
     paper_id, total_marks = _extract_paper_info(pdf_path)

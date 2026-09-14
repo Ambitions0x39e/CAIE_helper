@@ -28,13 +28,16 @@ from pathlib import Path
 import pytest
 from fpdf import FPDF
 
+from core.models import PaperType
 from core.settings import app_settings
 from modules.marking.syllabus_parser import (
     SyllabusParseError,
     delete_syllabus,
+    detect_subject_id,
     load_syllabus,
     parse_syllabus,
     parse_syllabus_text,
+    resolve_grading_type,
     stored_syllabuses,
     syllabus_path,
 )
@@ -675,6 +678,88 @@ class TestScienceGeometry:
         assert info.component_topics["1"] == ["1", "2"]
         assert info.component_topics["4"] == ["1", "2", "3"]
         assert info.topics["3"].name == "Chemical energetics"
+
+
+# ── Which grading path each paper takes ───────────────────────────
+
+
+def _papers_only_pdf(path: Path) -> Path:
+    """An assessment overview and nothing a topic reader recognises — the
+    shape of the real 9618 document, whose content overview fits neither
+    layout. Papers side by side, as there."""
+    return _placed_pdf(path, [
+        (62, 60, "Paper 1"),
+        (320, 60, "Paper 3"),
+        (62, 80, "Multiple Choice"),
+        (320, 80, "Advanced Practical Skills"),
+        (62, 200, "Paper 2"),
+        (320, 200, "Paper 4"),
+        (62, 220, "AS Level Structured Questions"),
+        (320, 220, "A Level Structured Questions"),
+    ])
+
+
+class TestComponentGrading:
+    def test_multiple_choice_is_read_from_the_papers_own_column(
+        self, tmp_path: Path
+    ) -> None:
+        """Paper 1's "Multiple Choice" is printed level with Paper 4's name;
+        only the column says which paper it names."""
+        info = parse_syllabus(
+            _real_shaped_science_pdf(tmp_path / "9701.pdf"), "9701"
+        )
+
+        assert info.component_grading == {
+            "1": PaperType.MCQ,
+            "2": PaperType.MATH,
+            "3": PaperType.MATH,
+            "4": PaperType.MATH,
+            "5": PaperType.MATH,
+        }
+
+    def test_structured_physics_papers_take_the_physics_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        info = parse_syllabus(
+            _real_shaped_science_pdf(tmp_path / "9702.pdf"), "9702"
+        )
+
+        assert info.component_grading["1"] == PaperType.MCQ
+        assert info.component_grading["4"] == PaperType.PHYSICS
+
+    def test_papers_are_kept_when_the_topics_cannot_be_read(
+        self, tmp_path: Path
+    ) -> None:
+        info = parse_syllabus(_papers_only_pdf(tmp_path / "9700.pdf"), "9700")
+
+        assert info.topics == {}
+        assert info.component_grading["1"] == PaperType.MCQ
+        assert info.component_grading["3"] == PaperType.MATH
+        assert load_syllabus("9700") == info
+
+    def test_the_config_wins_and_the_syllabus_fills_the_rest(
+        self, tmp_path: Path
+    ) -> None:
+        parse_syllabus(_papers_only_pdf(tmp_path / "9700.pdf"), "9700")
+
+        assert resolve_grading_type("9700_s25_qp_12") == PaperType.MCQ
+        assert resolve_grading_type("9700_s25_qp_42") == PaperType.MATH
+        assert resolve_grading_type("9700_s25_qp_61") is None
+        # Written into data/syllabus_config.json; no syllabus stored for it.
+        assert resolve_grading_type("9702_s25_qp_21") == PaperType.PHYSICS
+
+
+def test_the_subject_code_comes_off_the_cover(tmp_path: Path) -> None:
+    cover = _lines_pdf(tmp_path / "cover.pdf", [[
+        "Syllabus",
+        "Cambridge International AS & A Level",
+        "Computer Science 9618",
+        "Use this syllabus for exams in 2026.",
+    ]])
+    blank = _lines_pdf(tmp_path / "blank.pdf", [["Use this syllabus in 2026."]])
+
+    assert detect_subject_id(cover) == "9618"
+    assert detect_subject_id(blank) is None
 
 
 # ── Shared behaviour ──────────────────────────────────────────────

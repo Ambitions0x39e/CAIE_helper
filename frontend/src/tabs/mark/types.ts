@@ -1,5 +1,7 @@
 /** What `analysis()` and the grading events carry. Mirrors app_web/api.py. */
 
+import type { PaperType } from '../../lib/types'
+
 export interface QuestionCfg {
   max_marks: number
   mark_scheme: string
@@ -7,7 +9,7 @@ export interface QuestionCfg {
 
 export interface Analysis {
   ready: boolean
-  paper_type?: 'math' | 'mcq'
+  paper_type?: PaperType
   paper_id?: string
   total_marks?: number
   questions?: Record<string, QuestionCfg>

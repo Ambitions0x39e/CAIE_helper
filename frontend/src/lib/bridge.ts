@@ -17,6 +17,7 @@ import type {
   MailResult,
   MistakeRecord,
   PaperRecord,
+  PaperType,
   QueryResult,
   QuerySeason,
   DownloadSource,
@@ -84,6 +85,10 @@ export interface PyApi {
     subject_id: string; topic_count: number; components: string[]; path: string
   }[]>
   forget_syllabus(subject_id: string): Promise<SimpleResult>
+  /** Parse a picked syllabus PDF and store it under the code on its cover. */
+  import_syllabus(
+    pdf_path: string,
+  ): Promise<SimpleResult & { subject_id?: string; topic_count?: number }>
   app_version(): Promise<string>
   check_update(): Promise<{
     success: boolean
@@ -94,6 +99,8 @@ export interface PyApi {
     download_url?: string | null
   }>
   pick_pdf(): Promise<string | null>
+  /** The grading path the syllabus config records for this mark scheme. */
+  grading_type(ms_path: string): Promise<PaperType | null>
   start_analysis(
     ms_path: string, paper_type: string, answer_path: string | null,
     start_page: number | null, force: boolean,

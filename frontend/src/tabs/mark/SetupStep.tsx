@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { PARSE_JOB, onJobEvent } from '../../lib/jobs'
 import { comparePaperIds, syllabusIdOf } from '../../lib/papers'
-import type { PaperRecord } from '../../lib/types'
+import type { PaperRecord, PaperType } from '../../lib/types'
 import { Button } from '../../ui/Button'
 import { Select } from '../../ui/Select'
 import { TextInput } from '../../ui/TextInput'
@@ -11,7 +11,6 @@ import { nextStage } from './stage'
 import type { Analysis } from './types'
 
 type Source = 'downloaded' | 'upload'
-type PaperTypeId = 'mcq' | 'math'
 
 /** A labelled radio in one of the two rows at the top of the step. */
 function Radio<T extends string>({
@@ -64,7 +63,11 @@ export function SetupStep({
   const [source, setSource] = useState<Source>('downloaded')
   const [syllabus, setSyllabus] = useState('')
   const [paperId, setPaperId] = useState('')
-  const [paperType, setPaperType] = useState<PaperTypeId>('math')
+  const [paperType, setPaperType] = useState<PaperType>('math')
+  const [recorded, setRecorded] = useState<{ path: string; type: PaperType | null }>({
+    path: '',
+    type: null,
+  })
   const [uploadPath, setUploadPath] = useState('')
   const [startPage, setStartPage] = useState('')
   const [answerPath, setAnswerPath] = useState('')
@@ -136,8 +139,27 @@ export function SetupStep({
   const chosenId = filtered.includes(paperId) ? paperId : (filtered[0] ?? '')
   const chosen = papers.find((p) => p.paper_id === chosenId)
   const msPath = source === 'upload' ? uploadPath : (chosen?.ms_path ?? '')
-  const isMcq = paperType === 'mcq'
-  const canParse = !busy && msPath !== '' && (isMcq || graderReady)
+
+  // A component the syllabus config records takes its grading path from there;
+  // the radios are only for one it does not. Keyed by path so an answer that
+  // lands after the pick has moved on is never applied to the wrong paper.
+  useEffect(() => {
+    if (!msPath) return
+    let current = true
+    api()
+      .then((a) => a.grading_type(msPath))
+      .catch(() => null)
+      .then((type) => {
+        if (current) setRecorded({ path: msPath, type })
+      })
+    return () => {
+      current = false
+    }
+  }, [msPath])
+  const known = msPath !== '' && recorded.path === msPath
+  const type = known && recorded.type ? recorded.type : paperType
+  const isMcq = type === 'mcq'
+  const canParse = !busy && known && (isMcq || graderReady)
 
   const pick = async (set: (p: string) => void) => {
     const p = await (await api()).pick_pdf()
@@ -150,7 +172,7 @@ export function SetupStep({
     const page = Number(startPage)
     const r = await (await api()).start_analysis(
       msPath,
-      paperType,
+      type,
       answerPdf || null,
       startPage !== '' && Number.isFinite(page) ? page : null,
       force,
@@ -181,23 +203,6 @@ export function SetupStep({
             current={source}
             onChange={setSource}
             label="上传 PDF"
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-5">
-          <Radio
-            name="paper-type"
-            value="mcq"
-            current={paperType}
-            onChange={setPaperType}
-            label="MCQ"
-          />
-          <Radio
-            name="paper-type"
-            value="math"
-            current={paperType}
-            onChange={setPaperType}
-            label="Structured / Math"
           />
         </div>
 
@@ -235,6 +240,32 @@ export function SetupStep({
             <span className="min-w-0 flex-1 truncate text-caption text-muted">
               {uploadPath ? fileName(uploadPath) : '未选择文件'}
             </span>
+          </div>
+        )}
+
+        {known && recorded.type === null && (
+          <div className="flex flex-wrap items-center gap-5">
+            <Radio
+              name="paper-type"
+              value="mcq"
+              current={paperType}
+              onChange={setPaperType}
+              label="MCQ"
+            />
+            <Radio
+              name="paper-type"
+              value="math"
+              current={paperType}
+              onChange={setPaperType}
+              label="Structured / Math"
+            />
+            <Radio
+              name="paper-type"
+              value="physics"
+              current={paperType}
+              onChange={setPaperType}
+              label="Physics"
+            />
           </div>
         )}
 

@@ -47,6 +47,8 @@ from pdfminer.high_level import extract_pages, extract_text
 from pdfminer.layout import LTTextContainer, LTTextLine
 from pydantic import BaseModel
 
+from core.config_store import ConfigStore, grading_type_for_paper
+from core.models import PaperType
 from core.settings import app_settings
 
 
@@ -68,6 +70,9 @@ class SyllabusInfo(BaseModel):
     subject_id: str
     topics: dict[str, SyllabusTopic]
     component_topics: dict[str, list[str]]
+    #: Paper number → grading path, read off each paper's own heading block.
+    #: Empty when the PDF names no papers.
+    component_grading: dict[str, PaperType] = {}
 
 
 # ── Patterns ──────────────────────────────────────────────────────
@@ -625,14 +630,14 @@ def _read_level_columns(
     return ordered, by_level
 
 
-def _paper_levels(pages: list[list[_Line]]) -> dict[str, str]:
-    """Paper number → "AS" / "A", from each paper's own block.
+def _paper_blocks(pages: list[list[_Line]]) -> dict[str, list[str]]:
+    """Paper number → the text under each of its headings, in page order.
 
     A paper's block is what sits under its heading *in its own column*, which
     is the only thing that separates Paper 1's content statement from Paper
     4's when the two are printed side by side.
     """
-    levels: dict[str, str] = {}
+    blocks: dict[str, list[str]] = {}
     for lines in pages:
         heads = [
             (line, match.group(1))
@@ -640,8 +645,6 @@ def _paper_levels(pages: list[list[_Line]]) -> dict[str, str]:
             if (match := _PAPER_HEADING_RE.match(line.text))
         ]
         for head, number in heads:
-            if number in levels:
-                continue
             floor = max(
                 (
                     other.top for other, _ in heads
@@ -650,24 +653,59 @@ def _paper_levels(pages: list[list[_Line]]) -> dict[str, str]:
                 ),
                 default=float("-inf"),
             )
-            block = " ".join(
+            blocks.setdefault(number, []).append(" ".join(
                 line.text
                 for line in sorted(lines, key=lambda ln: -ln.top)
                 if abs(line.x0 - head.x0) <= _COLUMN_TOL
                 and floor < line.top < head.top
-            )
+            ))
+    return blocks
+
+
+def _paper_levels(blocks: dict[str, list[str]]) -> dict[str, str]:
+    """Paper number → "AS" / "A", from the first of its blocks that says."""
+    levels: dict[str, str] = {}
+    for number, texts in blocks.items():
+        for block in texts:
             if _A_CONTENT_PHRASE in block:
                 levels[number] = "A"
-            elif _AS_CONTENT_PHRASE in block:
+                break
+            if _AS_CONTENT_PHRASE in block:
                 levels[number] = "AS"
+                break
     return levels
 
 
+#: How a syllabus names its answer-key paper: "Paper 1" / "Multiple Choice".
+_MULTIPLE_CHOICE_RE = re.compile(r"\bMultiple\s+Choice\b", re.IGNORECASE)
+
+
+def _component_grading(
+    blocks: dict[str, list[str]], subject_id: str
+) -> dict[str, PaperType]:
+    """Paper number → grading path, by keyword.
+
+    A paper whose block says "Multiple Choice" is scored against its answer
+    key. Every other paper is structured and takes its subject's prompt:
+    physics when the syllabus config names the subject Physics, math otherwise.
+    """
+    name = next(
+        (e.name for e in ConfigStore().load_all() if e.syllabus_id == subject_id),
+        "",
+    )
+    structured = PaperType.PHYSICS if "physics" in name.lower() else PaperType.MATH
+    return {
+        number: PaperType.MCQ
+        if any(_MULTIPLE_CHOICE_RE.search(block) for block in texts)
+        else structured
+        for number, texts in blocks.items()
+    }
+
+
 def _parse_science_geometry(
-    pdf_path: Path | str,
+    pages: list[list[_Line]], blocks: dict[str, list[str]]
 ) -> tuple[dict[str, SyllabusTopic], dict[str, list[str]]] | None:
     """Read the science content overview off the page. None if absent."""
-    pages = [_page_lines(layout) for layout in extract_pages(str(pdf_path))]
     # The richest page wins rather than the first: the contents page repeats
     # the same headings, and (dot leaders stripped) still yields a handful of
     # chapter titles that look like topics.
@@ -689,7 +727,7 @@ def _parse_science_geometry(
     )
 
     component_topics: dict[str, list[str]] = {}
-    for number, level in _paper_levels(pages).items():
+    for number, level in _paper_levels(blocks).items():
         ids = a_ids if level == "A" else as_ids
         if ids:
             component_topics[number] = ids
@@ -826,28 +864,72 @@ def parse_syllabus(
             document would be a no-op against the stored copy.
 
     Raises:
-        SyllabusParseError: The PDF matches neither known layout.
+        SyllabusParseError: The PDF matches neither known layout and names
+            no papers either.
     """
     if not force:
         stored = load_syllabus(subject_id)
         if stored is not None:
             return stored
 
+    pages = [_page_lines(layout) for layout in extract_pages(str(pdf_path))]
+    blocks = _paper_blocks(pages)
+    grading = _component_grading(blocks, subject_id)
+
     # Geometry first for both families — see this module's docstring for what
     # the flowed text gets wrong on the real documents. Text is the fallback,
     # for a layout neither geometry reader recognises.
     geometry = _parse_math_geometry(pdf_path) or _parse_science_geometry(
-        pdf_path
+        pages, blocks
     )
     if geometry is not None:
-        info = SyllabusInfo(
-            subject_id=subject_id,
-            topics=geometry[0],
-            component_topics=geometry[1],
-        )
+        topics, component_topics = geometry
     else:
-        info = parse_syllabus_text(extract_text(str(pdf_path)), subject_id)
+        try:
+            parsed = parse_syllabus_text(extract_text(str(pdf_path)), subject_id)
+        except SyllabusParseError:
+            # The papers can be named when the topics cannot be read (the real
+            # 9618 content overview fits neither layout), and which paper is
+            # multiple choice is worth keeping on its own.
+            if not grading:
+                raise
+            topics, component_topics = {}, {}
+        else:
+            topics, component_topics = parsed.topics, parsed.component_topics
+    info = SyllabusInfo(
+        subject_id=subject_id,
+        topics=topics,
+        component_topics=component_topics,
+        component_grading=grading,
+    )
     # An unwritable store must not fail the parse.
     with contextlib.suppress(OSError):
         _save(info)
     return info
+
+
+def detect_subject_id(pdf_path: Path | str) -> str | None:
+    """The syllabus code on the cover ("Computer Science 9618").
+
+    The first four-digit number on the opening pages that the syllabus config
+    knows: the exam years printed beside it are not syllabus ids.
+    """
+    known = {entry.syllabus_id for entry in ConfigStore().load_all()}
+    text = extract_text(str(pdf_path), maxpages=2)
+    return next((c for c in re.findall(r"\b\d{4}\b", text) if c in known), None)
+
+
+def resolve_grading_type(paper_id: str) -> PaperType | None:
+    """``"9700_s25_qp_12"`` → the grading path for that component.
+
+    A ``grading`` written into the syllabus config wins; otherwise the stored
+    syllabus's own reading of its papers; otherwise None.
+    """
+    recorded = grading_type_for_paper(paper_id)
+    if recorded is not None:
+        return recorded
+    parts = paper_id.split("_")
+    if len(parts) < 4 or not parts[3][:1].isdigit():
+        return None
+    info = load_syllabus(parts[0])
+    return info.component_grading.get(parts[3][0]) if info else None

@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import openai
 import pytest
 from fpdf import FPDF
 
+from core.settings import GraderConfig
 from modules.marking.mcq_parser import (
+    _call_vl,
     _extract_paper_id,
     _parse_paper_filename,
     _resolve_skip_pages,
@@ -15,6 +20,25 @@ from modules.marking.mcq_parser import (
 )
 
 ANSWER_CYCLE = "BDAC"
+
+
+def test_call_vl_turns_thinking_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: dict[str, Any] = {}
+
+    def _create(**kwargs: Any) -> Any:
+        sent.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))]
+        )
+
+    class _FakeClient:
+        def __init__(self, **_kw: Any) -> None:
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
+
+    monkeypatch.setattr(openai, "OpenAI", _FakeClient)
+    _call_vl(GraderConfig(api_key="test-key"), [b"png"])
+
+    assert sent["extra_body"] == {"enable_thinking": False}
 
 
 def test_parse_paper_filename_matches_qp() -> None:
