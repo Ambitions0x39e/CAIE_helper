@@ -1,4 +1,4 @@
-/** Run with `npm test`.
+/** Run with `pnpm test`.
  *
  * Ported out of Python, and it fails quietly: a wrong grade order draws a
  * table that looks entirely normal with its columns transposed.
