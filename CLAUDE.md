@@ -48,7 +48,8 @@ Windows 的浅色深色走」「选定后一直有效，关掉窗口也记得」
 ## Commands
 
 ```bash
-# Run the app (needs `npm run build --prefix frontend` once, for the UI)
+# Run the app (needs `pnpm -C frontend install` and `pnpm -C frontend build`
+# once, for the UI; the pnpm version is pinned by `packageManager`)
 uv run python -m app_web
 
 # Install dependencies
@@ -82,7 +83,7 @@ Three steps on Windows, in order — the spec bundles `frontend/dist` as it find
 it, so a stale UI build ships without a word:
 
 ```bash
-npm run build --prefix frontend
+pnpm -C frontend build
 uv run pyinstaller packaging/cie-helper.spec --noconfirm
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=2.0.0 packaging\windows\cie-helper.iss
 ```

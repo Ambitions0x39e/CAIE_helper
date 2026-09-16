@@ -2,7 +2,7 @@
 # Build a macOS .dmg from the PyInstaller output.
 #
 # Usage (on a Mac — there is no cross-compiling a .app from Windows):
-#   npm run build --prefix frontend
+#   pnpm -C frontend build
 #   uv run pyinstaller packaging/cie-helper.spec --noconfirm
 #   ./packaging/macos/build-dmg.sh
 #
@@ -38,7 +38,7 @@ fi
 # The bundled UI is the one thing a build can lose without failing, so check it
 # is actually in there before shipping an app that opens on a blank window.
 if [[ ! -f "$APP_PATH/Contents/Frameworks/frontend/dist/index.html" ]]; then
-  echo "$(basename "$APP_PATH") has no frontend/dist — run 'npm run build --prefix frontend', then re-run PyInstaller." >&2
+  echo "$(basename "$APP_PATH") has no frontend/dist — run 'pnpm -C frontend build', then re-run PyInstaller." >&2
   exit 1
 fi
 

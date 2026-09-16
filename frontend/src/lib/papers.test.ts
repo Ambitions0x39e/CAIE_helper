@@ -1,4 +1,4 @@
-/** Run with `npm test` (node --test, no framework dependency).
+/** Run with `pnpm test` (node --test, no framework dependency).
  *
  * These pin the arithmetic the 总览 donut and the subject glyphs read out.
  */

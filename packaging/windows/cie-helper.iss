@@ -5,7 +5,7 @@
 ;
 ;  Prereqs, in order — the spec bundles frontend/dist as-is, so a stale UI
 ;  build ships silently:
-;      npm run build --prefix frontend
+;      pnpm -C frontend build
 ;      uv run pyinstaller packaging/cie-helper.spec --noconfirm
 ;
 ;  Compile (from anywhere — paths below are relative to THIS .iss file):

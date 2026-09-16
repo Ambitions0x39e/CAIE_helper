@@ -34,7 +34,7 @@ VERSION = re.search(
 ).group(1)
 
 datas = [
-    # The UI. `npm run build --prefix frontend` has to have run first; the app
+    # The UI. `pnpm -C frontend build` has to have run first; the app
     # raises a plain SystemExit naming the missing path if it has not.
     (str(ROOT / "frontend" / "dist"), "frontend/dist"),
     # Syllabus names, paper-type labels and per-paper page skips. Read-only,

@@ -1,4 +1,4 @@
-/** Run with `npm test` (node --test, no framework dependency).
+/** Run with `pnpm test` (node --test, no framework dependency).
  *
  * These pin what the command palette matches. The registry is data, so the
  * interesting part is all here: which words reach which destination.

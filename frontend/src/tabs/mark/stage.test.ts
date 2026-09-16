@@ -1,4 +1,4 @@
-/** Run with `npm test` (node --test, no framework dependency). */
+/** Run with `pnpm test` (node --test, no framework dependency). */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { JobEvent } from '../../lib/jobs.ts'
