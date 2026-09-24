@@ -28,6 +28,18 @@ export interface MarkDetail {
   reason: string
 }
 
+/** Mirrors `core.models.ErrorType`. */
+export type ErrorType = 'concept' | 'method' | 'slip' | 'misread' | 'wording' | 'blank'
+
+export const ERROR_LABELS: Record<ErrorType, string> = {
+  concept: '概念',
+  method: '方法',
+  slip: '失误',
+  misread: '审题',
+  wording: '表述',
+  blank: '未作答',
+}
+
 export interface QuestionResult {
   question: string
   marks: MarkDetail[]
@@ -38,4 +50,6 @@ export interface QuestionResult {
    * available, the component is not in it, or the model could not place the
    * question — all three land in 未分类 downstream. */
   topic: string | null
+  /** Why the marks were lost; null at full marks or when unclassified. */
+  error_type: ErrorType | null
 }

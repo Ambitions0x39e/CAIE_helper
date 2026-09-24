@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import csv
 import datetime
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from core.models import MistakeRecord, PaperRecord
+from core.models import AttemptRecord, MistakeRecord, PaperRecord
 from core.settings import app_settings
 
 # Canonical column order that matches PaperRecord fields + computed percentage
@@ -74,6 +74,32 @@ def _nullable_float(value: str) -> float | None:
 
 def _nullable_dt(value: str) -> datetime.datetime | None:
     return datetime.datetime.fromisoformat(value) if value else None
+
+
+def _load_validated[T: BaseModel](
+    path: Path,
+    model: type[T],
+    to_dict: Callable[[Mapping[str, str | None]], dict[str, object]],
+) -> list[T]:
+    """Read every row of *path* into *model*, or raise naming every bad row.
+
+    All validation errors at once rather than silently dropping rows — same
+    contract as ``CSVStore.load_all``.
+    """
+    records: list[T] = []
+    errors: list[str] = []
+    with _reading(path) as fh:
+        for idx, row in enumerate(csv.DictReader(fh)):
+            try:
+                records.append(model.model_validate(to_dict(row), strict=False))
+            except ValidationError as exc:
+                errors.append(f"Row {idx}: {exc.error_count()} error(s) — {exc}")
+    if errors:
+        raise ValueError(
+            f"{path.name} contains {len(errors)} invalid row(s):\n"
+            + "\n".join(errors)
+        )
+    return records
 
 
 class CSVStore:
@@ -216,31 +242,7 @@ class MistakeStore:
 
     def load_all(self) -> list[MistakeRecord]:
         """Read CSV → validate every row → return list of MistakeRecords."""
-        records: list[MistakeRecord] = []
-        errors: list[str] = []
-
-        with _reading(self._path) as fh:
-            for idx, row in enumerate(csv.DictReader(fh)):
-                try:
-                    records.append(
-                        MistakeRecord.model_validate(
-                            self._row_to_dict(row), strict=False
-                        )
-                    )
-                except ValidationError as exc:
-                    errors.append(
-                        f"Row {idx}: {exc.error_count()} error(s) — {exc}"
-                    )
-
-        if errors:
-            # Surface all validation errors at once rather than silently
-            # dropping rows — same contract as CSVStore.load_all.
-            raise ValueError(
-                f"mistakes.csv contains {len(errors)} invalid row(s):\n"
-                + "\n".join(errors)
-            )
-
-        return records
+        return _load_validated(self._path, MistakeRecord, self._row_to_dict)
 
     def save_all(self, records: Sequence[MistakeRecord]) -> None:
         """Validate and overwrite the entire CSV with the given records."""
@@ -332,5 +334,72 @@ class MistakeStore:
             "score": record.score,
             "max_score": record.max_score,
             "comment": record.comment,
+            "timestamp": record.timestamp.isoformat(),
+        }
+
+
+_ATTEMPT_COLUMNS: list[str] = [
+    "paper_id",
+    "question_id",
+    "topic_id",
+    "topic_name",
+    "error_type",
+    "score",
+    "max_score",
+    "timestamp",
+]
+
+
+class AttemptStore:
+    """Every graded question, full marks included — ``attempts.csv``.
+
+    Kept apart from ``MistakeStore`` rather than widening it: the 错题本 reads
+    its file as "the questions I got wrong", and a full-mark row there would
+    be one it has to filter out everywhere. Append-only for the same reason
+    as its sibling: a re-grade adds a second set of rows.
+    """
+
+    def __init__(self, csv_path: Path = app_settings.attempts_csv) -> None:
+        self._path = csv_path
+        if not self._path.exists():
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            _write_rows(self._path, _ATTEMPT_COLUMNS, [])
+
+    def load_all(self) -> list[AttemptRecord]:
+        return _load_validated(self._path, AttemptRecord, self._row_to_dict)
+
+    def save_all(self, records: Sequence[AttemptRecord]) -> None:
+        _write_rows(
+            self._path, _ATTEMPT_COLUMNS, [self._record_to_row(r) for r in records]
+        )
+
+    def append_many(self, records: Sequence[AttemptRecord]) -> None:
+        """Append a whole grading run in one rewrite."""
+        if records:
+            self.save_all([*self.load_all(), *records])
+
+    @staticmethod
+    def _row_to_dict(row: Mapping[str, str | None]) -> dict[str, object]:
+        return {
+            "paper_id": _cell(row, "paper_id"),
+            "question_id": _cell(row, "question_id"),
+            "topic_id": _cell(row, "topic_id") or None,
+            "topic_name": _cell(row, "topic_name") or None,
+            "error_type": _cell(row, "error_type") or None,
+            "score": _nullable_float(_cell(row, "score")),
+            "max_score": _nullable_float(_cell(row, "max_score")),
+            "timestamp": datetime.datetime.fromisoformat(_cell(row, "timestamp")),
+        }
+
+    @staticmethod
+    def _record_to_row(record: AttemptRecord) -> dict[str, Any]:
+        return {
+            "paper_id": record.paper_id,
+            "question_id": record.question_id,
+            "topic_id": record.topic_id,
+            "topic_name": record.topic_name,
+            "error_type": record.error_type,
+            "score": record.score,
+            "max_score": record.max_score,
             "timestamp": record.timestamp.isoformat(),
         }

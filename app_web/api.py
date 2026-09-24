@@ -31,13 +31,14 @@ from pydantic import ValidationError
 from app_web.jobs import push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
-from core.models import MistakeRecord, PaperType
+from core.models import ERROR_TYPES, MistakeRecord, PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
-from core.storage import CSVStore, MistakeStore
+from core.storage import AttemptStore, CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
 from modules.marking.answer_sheet import build_answer_sheet
+from modules.marking.attempts import attempts_from_results
 from modules.marking.mcq_parser import (
     detect_student_answers,
     score_mcq_answers,
@@ -148,6 +149,7 @@ class Api:
         self._downloader = PaperDownloader(self._store)
         self._manager = PaperManager(self._store)
         self._mistakes = MistakeStore()
+        self._attempts = AttemptStore()
         self._updater = AppUpdater()
         # None when .env carries no SMTP credentials — a normal state, not an
         # error. The UI hides the GoodNotes affordance rather than failing it.
@@ -272,7 +274,9 @@ class Api:
         """Re-file one mistake under a different topic; None clears the tag.
 
         The store is append-only and has no update, so the whole file is
-        rewritten with the one row replaced.
+        rewritten with the one row replaced. The question's attempt rows are
+        re-filed with it, or a topic's loss rate would count the mistake under
+        one topic and the attempt under another.
         """
         records = self._mistakes.load_all()
         topics = self.topics_for(paper_id) or {}
@@ -290,6 +294,11 @@ class Api:
                 "error": f"找不到这条错题：{paper_id} {question_id}",
             }
         self._mistakes.save_all(rewritten)
+        self._attempts.save_all([
+            retag(a, topic_id, topics)
+            if a.paper_id == paper_id and a.question_id == question_id else a
+            for a in self._attempts.load_all()
+        ])
         return {"success": True}
 
     def _chosen_mistakes(self, indices: list[int]) -> list[MistakeRecord]:
@@ -616,9 +625,17 @@ class Api:
         }
 
     def confirm_results(
-        self, paper_id: str, overrides: dict[str, float] | None = None,
+        self,
+        paper_id: str,
+        overrides: dict[str, float] | None = None,
+        topic_overrides: dict[str, str | None] | None = None,
+        error_overrides: dict[str, str | None] | None = None,
     ) -> Payload:
-        """Write the graded scores to the paper's row and file its lost marks.
+        """Write the graded scores to the paper's row, file its lost marks and
+        record every question as an attempt.
+
+        ``topic_overrides`` / ``error_overrides`` map question → the topic id /
+        error type the student picked in place of the model's; None clears it.
 
         The mistake rows are appended, never replaced: re-grading a paper adds
         a second set rather than editing the first, which is what makes the
@@ -630,14 +647,32 @@ class Api:
         update = self.submit_score(paper_id, summary.score, summary.max_score)
         if not update.get("success"):
             return update
-        self._mistakes.append_many(
-            mistakes_from_results(
-                self._results,
-                paper_id=paper_id,
-                topics=self.topics_for(paper_id),
-                timestamp=datetime.datetime.now(datetime.UTC),
-            ),
-        )
+        topic_picks = topic_overrides or {}
+        # model_copy skips validation, so an error type the page made up
+        # would only fail when the attempt row is built — after the score
+        # was already written.
+        error_picks = {
+            q: e for q, e in (error_overrides or {}).items()
+            if e is None or e in ERROR_TYPES
+        }
+        results = []
+        for r in self._results:
+            picked: dict[str, Any] = {}
+            if r.question in topic_picks:
+                picked["topic"] = topic_picks[r.question]
+            if r.question in error_picks:
+                picked["error_type"] = error_picks[r.question]
+            results.append(r.model_copy(update=picked) if picked else r)
+        topics = self.topics_for(paper_id)
+        now = datetime.datetime.now(datetime.UTC)
+        self._mistakes.append_many(mistakes_from_results(
+            results, paper_id=paper_id, topics=topics, scores=overrides,
+            timestamp=now,
+        ))
+        self._attempts.append_many(attempts_from_results(
+            results, paper_id=paper_id, topics=topics, scores=overrides,
+            timestamp=now,
+        ))
         self._results = []
         return {
             "success": True,

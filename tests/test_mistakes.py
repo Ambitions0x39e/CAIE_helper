@@ -124,6 +124,21 @@ class TestMistakesFromResults:
         assert record.topic_id == "9.9"
         assert record.topic_name is None
 
+    def test_the_users_score_wins_over_the_models(self) -> None:
+        """Adjusted up to full marks is not a mistake; adjusted down is one,
+        at the adjusted score."""
+        records = mistakes_from_results(
+            [_result("Q1", 2, 5), _result("Q2", 3, 3), _result("Q3", 1, 4)],
+            paper_id="9709_s25_qp_12",
+            scores={"Q1": 5, "Q2": 1.5},
+            timestamp=_TS,
+        )
+
+        assert [(r.question_id, r.score) for r in records] == [
+            ("Q2", 1.5),
+            ("Q3", 1.0),
+        ]
+
     def test_a_clean_paper_produces_nothing(self) -> None:
         assert (
             mistakes_from_results(
