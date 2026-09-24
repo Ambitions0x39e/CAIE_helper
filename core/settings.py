@@ -134,6 +134,11 @@ class AppSettings(BaseSettings):
         return self.base_dir / "mistakes.csv"
 
     @property
+    def attempts_csv(self) -> Path:
+        """Every graded question, full marks included — see ``AttemptStore``."""
+        return self.base_dir / "attempts.csv"
+
+    @property
     def syllabus_dir(self) -> Path:
         """Parsed syllabus topic lists, one JSON per subject id.
 

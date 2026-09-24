@@ -122,7 +122,10 @@ export interface PyApi {
     paper_id: string, manual: Record<string, string>,
   ): Promise<SimpleResult & { score?: number; total?: number }>
   confirm_results(
-    paper_id: string, overrides: Record<string, number>,
+    paper_id: string,
+    overrides: Record<string, number>,
+    topic_overrides: Record<string, string | null>,
+    error_overrides: Record<string, string | null>,
   ): Promise<SimpleResult & { score?: number; max_score?: number }>
   mail_ready(): Promise<boolean>
   send_to_goodnotes(paper_id: string, qp_path: string): Promise<MailResult>

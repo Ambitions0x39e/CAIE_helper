@@ -1,12 +1,19 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { Button } from '../../ui/Button'
 import { Dialog } from '../../ui/Dialog'
 import { Metric } from '../../ui/Metric'
+import { Select } from '../../ui/Select'
 import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
 import { CELL_H, GRID_COLS, compareQuestionIds, scoreBand } from './cells'
-import type { Analysis, QuestionResult } from './types'
+import { ERROR_LABELS, type Analysis, type ErrorType, type QuestionResult } from './types'
+
+const UNCLASSIFIED = '未分类'
+
+/** Stands in for "no topic" in the picker: an empty option value is what a
+ * listbox uses to mean nothing is chosen, not that 未分类 was. */
+const NONE = '__none__'
 
 export function ResultsStep({
   analysis,
@@ -25,6 +32,29 @@ export function ResultsStep({
   const [overrides, setOverrides] = useState<Record<string, string>>({})
   const [open, setOpen] = useState<string | null>(null)
   const [paperId, setPaperId] = useState(analysis.paper_id ?? '')
+  /** Question → topic id the student picked; null is 未分类. Absent keeps
+   * the model's tag. */
+  const [topicOverrides, setTopicOverrides] = useState<Record<string, string | null>>({})
+  const [errorOverrides, setErrorOverrides] = useState<Record<string, ErrorType | null>>({})
+  /** Null when the paper has no topics to pick from — no syllabus, or a
+   * component it does not map. */
+  const [topics, setTopics] = useState<Record<string, string> | null>(null)
+
+  useEffect(() => {
+    api()
+      .then((a) => a.topics_for(paperId))
+      .then(setTopics)
+      .catch(() => setTopics(null))
+  }, [paperId])
+
+  const topicOf = (r: QuestionResult) =>
+    r.question in topicOverrides ? topicOverrides[r.question] : r.topic
+  const errorOf = (r: QuestionResult) =>
+    r.question in errorOverrides ? errorOverrides[r.question] : r.error_type
+  const topicName = (r: QuestionResult) => {
+    const id = topicOf(r)
+    return id ? (topics?.[id] ?? id) : UNCLASSIFIED
+  }
 
   const byId = useMemo(
     () => new Map(results.map((r) => [r.question, r])),
@@ -53,7 +83,12 @@ export function ResultsStep({
       const n = Number(v)
       if (v !== '' && Number.isFinite(n)) numeric[q] = n
     }
-    const r = await (await api()).confirm_results(paperId, numeric)
+    const r = await (await api()).confirm_results(
+      paperId,
+      numeric,
+      topicOverrides,
+      errorOverrides,
+    )
     if (r.success) {
       notify('ok', '分数已记录')
     } else {
@@ -130,6 +165,11 @@ export function ResultsStep({
               >
                 {value}
               </span>
+              {r && topics && got !== null && got < r.max && (
+                <span className="max-w-full truncate px-2 text-micro text-muted">
+                  {topicName(r)}
+                </span>
+              )}
             </button>
           )
         })}
@@ -186,8 +226,38 @@ export function ResultsStep({
               <span className="text-faint">留空 = 用模型给的 {detail.total}</span>
             </label>
 
-            {detail.topic && (
-              <div className="text-micro text-faint">topic: {detail.topic}</div>
+            {topics && (
+              <Select
+                label="topic"
+                value={topicOf(detail) ?? NONE}
+                onChange={(v) =>
+                  setTopicOverrides({
+                    ...topicOverrides,
+                    [detail.question]: v === NONE ? null : v,
+                  })
+                }
+                options={[
+                  { value: NONE, label: UNCLASSIFIED },
+                  ...Object.entries(topics).map(([id, name]) => ({ value: id, label: name })),
+                ]}
+              />
+            )}
+
+            {scoreOf(detail) < detail.max && (
+              <Select
+                label="丢分原因"
+                value={errorOf(detail) ?? NONE}
+                onChange={(v) =>
+                  setErrorOverrides({
+                    ...errorOverrides,
+                    [detail.question]: v === NONE ? null : (v as ErrorType),
+                  })
+                }
+                options={[
+                  { value: NONE, label: UNCLASSIFIED },
+                  ...Object.entries(ERROR_LABELS).map(([id, label]) => ({ value: id, label })),
+                ]}
+              />
             )}
           </div>
         )}

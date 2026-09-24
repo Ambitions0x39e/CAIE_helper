@@ -21,11 +21,18 @@ from pydantic import ValidationError
 
 from app_web.api import Api, _invalid
 from core.models import MistakeRecord
+from core.storage import AttemptStore, MistakeStore
+from modules.marking.grader import QuestionResult
 
 
 @pytest.fixture
-def api() -> Api:
-    return Api()
+def api(tmp_path) -> Api:
+    """Stores under tmp_path: a test that confirms a run must not append to
+    the real ~/.cie_helper files."""
+    a = Api()
+    a._mistakes = MistakeStore(tmp_path / "mistakes.csv")
+    a._attempts = AttemptStore(tmp_path / "attempts.csv")
+    return a
 
 
 def test_grading_type_reads_the_mark_scheme_file_name(api: Api) -> None:
@@ -205,3 +212,72 @@ def test_exporting_nothing_is_a_result_not_a_save_dialog(api: Api) -> None:
         assert out["success"] is False
         assert "勾选" in out["error"]
         json.dumps(out)
+
+
+# -- confirming a graded run -------------------------------------------------
+
+
+def _graded_run(api: Api) -> None:
+    """Three questions, all tagged 7 by the model: two lost marks, one full."""
+    api._results = [
+        QuestionResult(question="1", marks=[], total=0, max=2, topic="7",
+                       error_type="slip"),
+        QuestionResult(question="2", marks=[], total=1, max=2, topic="7",
+                       error_type="concept"),
+        QuestionResult(question="3", marks=[], total=2, max=2, topic="7"),
+    ]
+    api.submit_score = lambda *_: {"success": True}  # type: ignore[method-assign]
+    api.topics_for = lambda _: {"7": "Equilibria", "8": "Kinetics"}  # type: ignore[method-assign]
+
+
+def test_a_topic_picked_on_the_results_page_is_what_both_rows_are_filed_under(
+    api: Api,
+) -> None:
+    """The student's pick wins over the model's; None means 未分类; a question
+    they left alone keeps the model's tag."""
+    _graded_run(api)
+
+    out = api.confirm_results("9701_s25_qp_22", topic_overrides={"1": "8", "2": None})
+
+    assert out["success"] is True
+    assert [(r.question_id, r.topic_name) for r in api._mistakes.load_all()] == [
+        ("1", "Kinetics"),
+        ("2", None),
+    ]
+    assert [(r.question_id, r.topic_name) for r in api._attempts.load_all()] == [
+        ("1", "Kinetics"),
+        ("2", None),
+        ("3", "Equilibria"),
+    ]
+
+
+def test_every_question_becomes_an_attempt_with_the_picked_error_type(
+    api: Api,
+) -> None:
+    """Full marks included; a picked error type wins; one the page made up is
+    ignored rather than failing the confirm after the score was written."""
+    _graded_run(api)
+
+    out = api.confirm_results(
+        "9701_s25_qp_22", error_overrides={"1": "misread", "2": "nonsense"},
+    )
+
+    assert out["success"] is True
+    assert [(a.question_id, a.error_type) for a in api._attempts.load_all()] == [
+        ("1", "misread"),
+        ("2", "concept"),
+        ("3", None),
+    ]
+
+
+def test_retagging_a_mistake_retags_its_attempts(api: Api) -> None:
+    _graded_run(api)
+    api.confirm_results("9701_s25_qp_22")
+
+    api.retag_mistake("9701_s25_qp_22", "2", "8")
+
+    assert [(a.question_id, a.topic_name) for a in api._attempts.load_all()] == [
+        ("1", "Equilibria"),
+        ("2", "Kinetics"),
+        ("3", "Equilibria"),
+    ]

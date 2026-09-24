@@ -16,7 +16,7 @@ import io
 from collections.abc import Collection, Iterable, Mapping
 from typing import TYPE_CHECKING
 
-from core.models import MistakeRecord
+from core.models import AttemptRecord, MistakeRecord
 
 if TYPE_CHECKING:
     import datetime
@@ -70,6 +70,7 @@ def mistakes_from_results(
     *,
     paper_id: str,
     topics: Mapping[str, str] | None = None,
+    scores: Mapping[str, float] | None = None,
     timestamp: datetime.datetime,
 ) -> list[MistakeRecord]:
     """Every question that did not get full marks, as records.
@@ -79,14 +80,20 @@ def mistakes_from_results(
     mapping doesn't know keeps its id and gets no name, rather than being
     dropped — the tag is still evidence of what the model thought.
 
+    ``scores`` is the user's per-question override, preferred over the
+    model's mark the same way ``summarise_scores`` prefers it — so a
+    question adjusted up to full marks is not a mistake.
+
     The caller is responsible for the "only for a downloaded mark scheme"
     gate: ``paper_id`` is required here precisely because a record without a
     real one cannot be traced back to a subject, session or component.
     """
     topics = topics or {}
+    scores = scores or {}
     records: list[MistakeRecord] = []
     for result in results:
-        if result.total >= result.max:
+        score = float(scores.get(result.question, result.total))
+        if score >= result.max:
             continue
         topic_id = result.topic or None
         records.append(
@@ -95,7 +102,7 @@ def mistakes_from_results(
                 question_id=result.question,
                 topic_id=topic_id,
                 topic_name=topics.get(topic_id) if topic_id else None,
-                score=float(result.total),
+                score=score,
                 max_score=float(result.max),
                 comment=result.comment,
                 timestamp=timestamp,
@@ -104,11 +111,11 @@ def mistakes_from_results(
     return records
 
 
-def retag(
-    record: MistakeRecord,
+def retag[R: (MistakeRecord, AttemptRecord)](
+    record: R,
     topic_id: str | None,
     topics: Mapping[str, str] | None = None,
-) -> MistakeRecord:
+) -> R:
     """A copy of *record* tagged with ``topic_id``; None clears the tag.
 
     The name is resolved from ``topics`` — the same paper→topics mapping the

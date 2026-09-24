@@ -260,3 +260,30 @@ def test_parse_grading_result_coerces_a_numeric_topic() -> None:
     })
 
     assert parse_grading_result(raw).topic == "7"
+
+
+def test_parse_grading_result_reads_the_error_type() -> None:
+    raw = json.dumps({
+        "question": "Q1", "marks": [], "total": 2, "max": 5, "error_type": "slip",
+    })
+
+    assert parse_grading_result(raw).error_type == "slip"
+
+
+@pytest.mark.parametrize("value", [None, "careless", 3])
+def test_parse_grading_result_drops_an_error_type_outside_the_list(value: Any) -> None:
+    """A category the model improvised is unclassified, not a guess."""
+    raw = json.dumps({
+        "question": "Q1", "marks": [], "total": 2, "max": 5, "error_type": value,
+    })
+
+    assert parse_grading_result(raw).error_type is None
+
+
+def test_prompt_lists_every_error_type(sent_prompts: list[str]) -> None:
+    from core.models import ERROR_TYPES
+
+    _grade(None)
+
+    for value in ERROR_TYPES:
+        assert f"- {value}:" in sent_prompts[0]

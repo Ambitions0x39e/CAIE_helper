@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Self, get_args
 
 from pydantic import BaseModel, computed_field, field_validator, model_validator
 
@@ -14,13 +14,14 @@ class PaperType(StrEnum):
     MCQ = "mcq"
 
 
-class MistakeRecord(BaseModel):
-    """One question a grading run did not award full marks for.
+#: How a question lost its marks — the grader's call, correctable on the
+#: results page. Only meaningful below full marks.
+type ErrorType = Literal["concept", "method", "slip", "misread", "wording", "blank"]
+ERROR_TYPES: frozenset[str] = frozenset(get_args(ErrorType.__value__))
 
-    Append-only: re-grading a paper writes a second set of rows rather than
-    replacing the first, and a question that later scores full marks does not
-    remove its earlier row (see the design doc's Edge Cases).
-    """
+
+class _GradedQuestion(BaseModel):
+    """One question of one grading run: what it was worth and what it got."""
 
     model_config = {"strict": True}
 
@@ -30,7 +31,6 @@ class MistakeRecord(BaseModel):
     topic_name: str | None = None
     score: float
     max_score: float
-    comment: str = ""
     timestamp: datetime.datetime
 
     @field_validator("paper_id", "question_id")
@@ -51,12 +51,34 @@ class MistakeRecord(BaseModel):
         return float(v)
 
     @model_validator(mode="after")
-    def score_must_not_exceed_max(self) -> MistakeRecord:
+    def score_must_not_exceed_max(self) -> Self:
         if self.score > self.max_score:
             raise ValueError(
                 f"score ({self.score}) cannot exceed max_score ({self.max_score})"
             )
         return self
+
+
+class MistakeRecord(_GradedQuestion):
+    """One question a grading run did not award full marks for.
+
+    Append-only: re-grading a paper writes a second set of rows rather than
+    replacing the first, and a question that later scores full marks does not
+    remove its earlier row (see the design doc's Edge Cases).
+    """
+
+    comment: str = ""
+
+
+class AttemptRecord(_GradedQuestion):
+    """One graded question, full marks included — the denominator the
+    mistake rows lack. Append-only, like ``MistakeRecord``.
+
+    ``error_type`` is None at full marks, and for a lost mark the grader
+    could not classify.
+    """
+
+    error_type: ErrorType | None = None
 
 
 class PaperRecord(BaseModel):

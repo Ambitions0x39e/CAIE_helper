@@ -16,7 +16,7 @@ import re
 from openai import OpenAI
 from pydantic import BaseModel
 
-from core.models import PaperType
+from core.models import ERROR_TYPES, ErrorType, PaperType
 from core.settings import GraderConfig
 
 # ── Prompt registry — one template per paper type ──────────────
@@ -45,8 +45,18 @@ _GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷员 (ex
   ],
   "total": <实际得分>,
   "max": {max_marks},
-  "comment": "对整题的简要评价 (1-2句话)"
+  "comment": "对整题的简要评价 (1-2句话)",
+  "error_type": "<丢分原因，见下方；满分填 null>"
 }}
+
+## 丢分原因 (error_type):
+没拿满分时，从下面选**一个**最主要的原因填进 "error_type"；拿满分填 null。
+- concept: 概念没掌握 —— 定义、原理本身理解错
+- method: 路子错 —— 懂概念，但选错了方法、公式或解题路线
+- slip: 失误 —— 思路对，算错、抄错、漏项、单位或有效数字错
+- misread: 审题 —— 漏看条件、答非所问
+- wording: 表述 —— 意思对，但没用 Mark Scheme 要求的说法或关键词
+- blank: 没作答，或没做完
 
 ## 关键约束 (必须严格遵守):
 - reason 字段必须是一句话 (不超过 40 个字)，只写结论，不要写推理过程。
@@ -159,6 +169,7 @@ class QuestionResult(BaseModel):
     # syllabus was available, the paper's component isn't in it, or the model
     # could not place the question — all three land in 未分类 downstream.
     topic: str | None = None
+    error_type: ErrorType | None = None
 
 
 
@@ -271,6 +282,7 @@ def parse_grading_result(raw: str) -> QuestionResult:
 
     marks = [MarkDetail(**m) for m in data["marks"]]
     topic = data.get("topic")
+    error_type = data.get("error_type")
     return QuestionResult(
         question=data["question"],
         marks=marks,
@@ -281,4 +293,7 @@ def parse_grading_result(raw: str) -> QuestionResult:
         # for it, and the model may answer null when it cannot place the
         # question. Anything else is coerced to str so a numeric id parses.
         topic=None if topic is None else str(topic),
+        # A value outside the list is the model improvising a category;
+        # unclassified is more honest than a guess at which one it meant.
+        error_type=error_type if error_type in ERROR_TYPES else None,
     )
