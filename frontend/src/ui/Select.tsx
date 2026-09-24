@@ -1,5 +1,6 @@
 import * as RS from '@radix-ui/react-select'
 import { ChevronDown } from 'lucide-react'
+import { useState } from 'react'
 
 /** The gap between the text and the box around it, in the text's own size, so
  * a field set in caption sits as tightly as one set in body.
@@ -46,6 +47,11 @@ export function Select({
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
 }) {
+  /** The modal `<dialog>` the trigger sits in, if any. A modal dialog is in
+   * the top layer and makes everything outside it inert, so a list portalled
+   * to the body would draw underneath it and swallow no clicks. */
+  const [layer, setLayer] = useState<HTMLDialogElement | null>(null)
+
   return (
     <div className={className}>
       {/* The label takes the same inset as the value below it, plus the 1px
@@ -65,6 +71,7 @@ export function Select({
         onOpenChange={onOpenChange}
       >
         <RS.Trigger
+          ref={(el) => setLayer(el?.closest('dialog') ?? null)}
           className={`flex w-full items-center gap-2 rounded-ui border border-hairline
                       bg-raised text-body text-ink transition-colors
                       hover:border-hairline-strong ${label ? 'mt-1' : ''}`}
@@ -78,10 +85,10 @@ export function Select({
           </RS.Icon>
         </RS.Trigger>
 
-        {/* Portalled to the body, so a picker inside a scroller or a table cell
-            is not clipped by it. `popper` is what gives the content the
-            trigger's width to match. */}
-        <RS.Portal>
+        {/* Portalled to the body — or the dialog, see `layer` — so a picker
+            inside a scroller or a table cell is not clipped by it. `popper` is
+            what gives the content the trigger's width to match. */}
+        <RS.Portal container={layer}>
           <RS.Content
             position="popper"
             sideOffset={4}
