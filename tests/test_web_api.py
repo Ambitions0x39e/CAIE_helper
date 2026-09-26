@@ -27,11 +27,13 @@ from modules.marking.grader import QuestionResult
 
 @pytest.fixture
 def api(tmp_path) -> Api:
-    """Stores under tmp_path: a test that confirms a run must not append to
-    the real ~/.cie_helper files."""
+    """Stores under tmp_path and no note rewrite: a test that confirms a run
+    must not append to the real ~/.cie_helper files, nor — on a machine whose
+    .env holds grader credentials — call the model from a background thread."""
     a = Api()
     a._mistakes = MistakeStore(tmp_path / "mistakes.csv")
     a._attempts = AttemptStore(tmp_path / "attempts.csv")
+    a._refresh_notes_later = lambda *_: None  # type: ignore[method-assign]
     return a
 
 
@@ -281,3 +283,39 @@ def test_retagging_a_mistake_retags_its_attempts(api: Api) -> None:
         ("2", "Kinetics"),
         ("3", "Equilibria"),
     ]
+
+
+def test_a_confirmed_run_rewrites_its_components_note(
+    tmp_path, monkeypatch,
+) -> None:
+    """Off the calling thread, with the run's lost marks and their comments."""
+    import threading
+
+    from core.settings import GraderConfig
+
+    a = Api()
+    a._mistakes = MistakeStore(tmp_path / "mistakes.csv")
+    a._attempts = AttemptStore(tmp_path / "attempts.csv")
+    _graded_run(a)
+    monkeypatch.setattr(
+        "app_web.api.GraderConfig.try_load", lambda: GraderConfig(api_key="k"),
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "app_web.api.refresh_notes",
+        lambda config, run, comments, **kw: calls.append(
+            {"run": [r.question_id for r in run], "comments": comments, **kw}
+        ),
+    )
+
+    a.confirm_results("9701_s25_qp_22")
+    for t in threading.enumerate():
+        if t.name == "tutor-notes":
+            t.join(timeout=5)
+
+    assert len(calls) == 1
+    assert calls[0]["run"] == ["1", "2", "3"]
+    assert set(calls[0]["comments"]) == {"1", "2"}  # type: ignore[arg-type]
+    assert calls[0]["paper_id"] == "9701_s25_qp_22"
+    profile = calls[0]["profile"]
+    assert (profile.subject_id, profile.component) == ("9701", "2")  # type: ignore[attr-defined]

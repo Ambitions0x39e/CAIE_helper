@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '../../lib/bridge'
 import { groupBySyllabus, paperDigit, subjectGlyph, tally } from '../../lib/papers'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
@@ -30,6 +31,50 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="flex items-center gap-2">
       <span className="text-caption text-muted">{label}</span>
       <span className="text-subhead font-semibold tabular-nums">{value}</span>
+    </div>
+  )
+}
+
+/** One note line with its `**bold**` runs kept bold — the model marks the
+ * topic it is talking about that way. */
+function NoteLine({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/\*\*(.+?)\*\*/).map((part, i) =>
+        i % 2 ? <strong key={i}>{part}</strong> : part,
+      )}
+    </>
+  )
+}
+
+/** The tutor's note on one component, as the list the model wrote it as.
+ * Nothing at all until one exists. */
+function TutorNote({ syllabusId, component }: { syllabusId: string; component: string }) {
+  const [note, setNote] = useState<string | null>(null)
+
+  useEffect(() => {
+    api()
+      .then((a) => a.tutor_notes(syllabusId, component))
+      .then(setNote)
+      .catch(() => setNote(null))
+  }, [syllabusId, component])
+
+  const lines = (note ?? '')
+    .split('\n')
+    .map((l) => l.replace(/^\s*[-*]\s+/, '').trim())
+    .filter(Boolean)
+  if (lines.length === 0) return null
+
+  return (
+    <div className="space-y-2">
+      <div className="text-caption text-muted">导师笔记</div>
+      <ul className="selectable list-disc space-y-1.5 pl-5 text-body">
+        {lines.map((l, i) => (
+          <li key={i}>
+            <NoteLine text={l} />
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -186,6 +231,9 @@ function SyllabusDetail({
     [records],
   )
 
+  /** The component the note is about: the one picked, or the only one. */
+  const component = paper !== ALL ? paper : digits.length === 1 ? digits[0] : null
+
   /** Completed papers oldest first; undated last, since a row written before
    * the timestamp column existed has none. */
   const attempts = useMemo(
@@ -274,13 +322,18 @@ function SyllabusDetail({
 
         {/* Bare — no panel, no heading. The strip above already names what is
             being plotted, and the line is legible against the page. */}
-        <div className="self-start">
+        <div className="min-h-0 space-y-4 self-start overflow-y-auto">
           {attempts.length >= MIN_FOR_TREND ? (
             <TrendChart attempts={attempts} />
           ) : (
             <div className="py-8 text-center text-caption italic text-muted">
               至少需要 2 次成绩才能绘制趋势图
             </div>
+          )}
+          {component && (
+            // Keyed so switching Paper starts from no note rather than
+            // showing the last one until the new one arrives.
+            <TutorNote key={component} syllabusId={syllabusId} component={component} />
           )}
         </div>
       </div>

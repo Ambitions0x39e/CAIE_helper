@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import threading
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from pydantic import ValidationError
 from app_web.jobs import push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
-from core.models import ERROR_TYPES, MistakeRecord, PaperType
+from core.models import ERROR_TYPES, AttemptRecord, MistakeRecord, PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import AttemptStore, CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
@@ -70,15 +71,22 @@ from modules.marking.syllabus_parser import (
 )
 from modules.marking.workflow import (
     collect_page_assignments,
+    component_paper_number,
     grade_paper,
     merge_mcq_answers,
     regions_to_page_map,
     summarise_scores,
     topics_for_paper,
 )
+from modules.profile import component_profile
+from modules.tutor import read_notes, refresh_notes
 from modules.updater import AppUpdater, current_app_version
 
 _log = logging.getLogger("cie_helper.api")
+
+#: Serialises note rewrites: two papers of one component confirmed back to
+#: back must not both read the same old note and race to replace it.
+_notes_lock = threading.Lock()
 
 #: What a failed call looks like. Mirrors DownloadResult/QueryResult so the
 #: frontend has exactly one shape to read.
@@ -665,20 +673,59 @@ class Api:
             results.append(r.model_copy(update=picked) if picked else r)
         topics = self.topics_for(paper_id)
         now = datetime.datetime.now(datetime.UTC)
-        self._mistakes.append_many(mistakes_from_results(
+        mistakes = mistakes_from_results(
             results, paper_id=paper_id, topics=topics, scores=overrides,
             timestamp=now,
-        ))
-        self._attempts.append_many(attempts_from_results(
+        )
+        run = attempts_from_results(
             results, paper_id=paper_id, topics=topics, scores=overrides,
             timestamp=now,
-        ))
+        )
+        self._mistakes.append_many(mistakes)
+        self._attempts.append_many(run)
         self._results = []
+        self._refresh_notes_later(
+            paper_id, run, {m.question_id: m.comment for m in mistakes},
+        )
         return {
             "success": True,
             "score": summary.score,
             "max_score": summary.max_score,
         }
+
+    def _refresh_notes_later(
+        self, paper_id: str, run: list[AttemptRecord], comments: dict[str, str],
+    ) -> None:
+        """Rewrite the component's tutor note on a thread of its own.
+
+        Not a `jobs.start` job: that allows one job at a time, and a note
+        rewrite must not block parsing the next paper. A failure is logged
+        and the old note stays — the scores are already recorded.
+        """
+        config = GraderConfig.try_load()
+        component = component_paper_number(paper_id)
+        if config is None or component is None:
+            return
+        profile = component_profile(
+            self._attempts.load_all(), subject_id_of(paper_id), component,
+        )
+        if profile is None:
+            return
+
+        def work() -> None:
+            try:
+                with _notes_lock:
+                    refresh_notes(
+                        config, run, comments, profile=profile, paper_id=paper_id,
+                    )
+            except Exception:
+                _log.exception("tutor note for %s failed", paper_id)
+
+        threading.Thread(target=work, name="tutor-notes", daemon=True).start()
+
+    def tutor_notes(self, subject_id: str, component: str) -> str | None:
+        """The tutor's note on one syllabus's Paper *component*, if written."""
+        return read_notes(subject_id, component)
 
     # -- settings ------------------------------------------------------------
 
