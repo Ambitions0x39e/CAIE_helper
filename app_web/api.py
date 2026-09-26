@@ -678,8 +678,8 @@ class Api:
             timestamp=now,
         )
         run = attempts_from_results(
-            results, paper_id=paper_id, topics=topics, scores=overrides,
-            timestamp=now,
+            results, model_results=self._results, paper_id=paper_id,
+            topics=topics, scores=overrides, timestamp=now,
         )
         self._mistakes.append_many(mistakes)
         self._attempts.append_many(run)
