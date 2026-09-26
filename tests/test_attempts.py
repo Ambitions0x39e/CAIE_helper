@@ -84,3 +84,55 @@ def test_full_marks_carry_no_error_type_even_after_an_override() -> None:
     )
 
     assert [(r.score, r.error_type) for r in rows] == [(3.0, None), (1.0, "slip")]
+
+
+def test_a_correction_is_recorded_beside_what_the_model_said() -> None:
+    model = [_result("1", 1, 3, "7", "slip"), _result("2", 0, 3, "7", "concept")]
+    corrected = [
+        model[0].model_copy(update={"topic": "5", "error_type": "misread"}),
+        model[1],
+    ]
+
+    rows = attempts_from_results(
+        corrected, model_results=model, paper_id="9701_s25_qp_22", timestamp=_TS,
+    )
+
+    assert [
+        (r.topic_id, r.model_topic_id, r.error_type, r.model_error_type)
+        for r in rows
+    ] == [("5", "7", "misread", "slip"), ("7", "7", "concept", "concept")]
+
+
+def test_without_model_results_the_run_counts_as_uncorrected() -> None:
+    row = attempts_from_results(
+        [_result("1", 1, 3, "7", "slip")], paper_id="9701_s25_qp_22", timestamp=_TS,
+    )[0]
+
+    assert (row.model_topic_id, row.model_error_type) == ("7", "slip")
+
+
+def test_full_marks_drop_the_models_error_type_too() -> None:
+    """Otherwise a question adjusted up to full would read as a correction."""
+    row = attempts_from_results(
+        [_result("1", 1, 3, error_type="slip")],
+        paper_id="9701_s25_qp_22",
+        scores={"1": 3},
+        timestamp=_TS,
+    )[0]
+
+    assert (row.error_type, row.model_error_type) == (None, None)
+
+
+def test_a_file_without_the_model_columns_still_loads(tmp_path: Path) -> None:
+    path = tmp_path / "attempts.csv"
+    path.write_text(
+        "paper_id,question_id,topic_id,topic_name,error_type,score,max_score,timestamp\n"
+        "9701_s25_qp_22,1,7,Equilibria,slip,1.0,3.0,2026-09-24T10:00:00\n",
+        encoding="utf-8",
+    )
+
+    row = AttemptStore(csv_path=path).load_all()[0]
+
+    assert (row.error_type, row.model_topic_id, row.model_error_type) == (
+        "slip", None, None,
+    )

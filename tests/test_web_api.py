@@ -265,10 +265,13 @@ def test_every_question_becomes_an_attempt_with_the_picked_error_type(
     )
 
     assert out["success"] is True
-    assert [(a.question_id, a.error_type) for a in api._attempts.load_all()] == [
-        ("1", "misread"),
-        ("2", "concept"),
-        ("3", None),
+    assert [
+        (a.question_id, a.error_type, a.model_error_type)
+        for a in api._attempts.load_all()
+    ] == [
+        ("1", "misread", "slip"),
+        ("2", "concept", "concept"),
+        ("3", None, None),
     ]
 
 

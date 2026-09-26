@@ -76,9 +76,15 @@ class AttemptRecord(_GradedQuestion):
 
     ``error_type`` is None at full marks, and for a lost mark the grader
     could not classify.
+
+    ``model_topic_id`` / ``model_error_type`` are what the grader said before
+    the student corrected it on the results page; where they differ from
+    ``topic_id`` / ``error_type``, the student overruled the model.
     """
 
     error_type: ErrorType | None = None
+    model_topic_id: str | None = None
+    model_error_type: ErrorType | None = None
 
 
 class PaperRecord(BaseModel):
