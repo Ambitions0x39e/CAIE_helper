@@ -49,6 +49,7 @@ export interface PyApi {
   mistakes(): Promise<MistakeRecord[]>
   mistake_topic_keys(): Promise<string[]>
   topics_for(paper_id: string): Promise<Record<string, string> | null>
+  tutor_notes(subject_id: string, component: string): Promise<string | null>
   retag_mistake(
     paper_id: string, question_id: string, topic_id: string | null,
   ): Promise<SimpleResult>
