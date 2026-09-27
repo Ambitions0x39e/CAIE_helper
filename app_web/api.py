@@ -61,6 +61,7 @@ from modules.marking.ms_parser import (
 )
 from modules.marking.page_segmenter import ScannedDocument, match_scanned, scan_document
 from modules.marking.renderer import LocalRenderer
+from modules.marking.syllabus_fetch import fetch_syllabus
 from modules.marking.syllabus_parser import (
     delete_syllabus,
     detect_subject_id,
@@ -529,6 +530,12 @@ class Api:
         assignments = collect_page_assignments(page_map)
 
         def work() -> None:
+            subject_id = subject_id_of(a.paper_id)
+            # A subject nobody imported a syllabus for would grade with every
+            # question 未分类, and nothing tells the student to go import one.
+            syllabus = load_syllabus(subject_id) or (
+                fetch_syllabus(subject_id) if subject_id.isdigit() else None
+            )
             outcome = grade_paper(
                 config=config,
                 paper_config=a.config,
@@ -538,7 +545,7 @@ class Api:
                 assignments=assignments,
                 clips=clips,
                 renderer=LocalRenderer(),
-                syllabus_info=load_syllabus(subject_id_of(a.paper_id)),
+                syllabus_info=syllabus,
                 paper_id=a.paper_id,
                 on_progress=lambda done, total, qid: push(
                     {"type": "progress", "done": done, "total": total, "question": qid},
