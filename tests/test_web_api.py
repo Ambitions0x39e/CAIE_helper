@@ -322,3 +322,32 @@ def test_a_confirmed_run_rewrites_its_components_note(
     assert calls[0]["paper_id"] == "9701_s25_qp_22"
     profile = calls[0]["profile"]
     assert (profile.subject_id, profile.component) == ("9701", "2")  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "cover_id,expected",
+    [
+        ("9231/43/M/J/23", "9231_s23_qp_43"),
+        ("9702/21/O/N/24", "9702_w24_qp_21"),
+        ("9709/12/F/M/25", "9709_m25_qp_12"),
+        ("9231/43", "9231/43"),
+        ("", ""),
+    ],
+)
+def test_the_analysis_is_keyed_by_the_downloaded_id(
+    api: Api, monkeypatch, cover_id: str, expected: str,
+) -> None:
+    """The store, the syllabus topics and the tutor notes all key on
+    ``9231_s23_qp_43``; a run under the cover's "9231/43/M/J/23" got no
+    topics and could not be confirmed. An id that doesn't convert passes
+    through as it is."""
+    from modules.marking.ms_parser import PaperConfig
+
+    monkeypatch.setattr("app_web.api.push", lambda _: None)
+    monkeypatch.setattr("app_web.api.start", lambda _, work: work())
+    monkeypatch.setattr(
+        api, "_parse_ms",
+        lambda *_: PaperConfig(paper_id=cover_id, total_marks=50, questions={}),
+    )
+    api.start_analysis("/uploads/scan.pdf", "math")
+    assert api.analysis()["paper_id"] == expected
