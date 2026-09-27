@@ -43,7 +43,6 @@ _GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷员 (ex
       "reason": "一句话说明"
     }}
   ],
-  "total": <实际得分>,
   "max": {max_marks},
   "comment": "对整题的简要评价 (1-2句话)",
   "error_type": "<丢分原因，见下方；满分填 null>"
@@ -65,11 +64,9 @@ _GRADING_PROMPT = """你是一个经验丰富的 CIE A-Level 考试阅卷员 (ex
 - **不要在任何字段里写 LaTeX 或反斜杠**。要写数学符号就直接用 Unicode
   (Σ、√、≤、α、²)，不要写 $\\Sigma$、\\frac{{a}}{{b}} 这类命令 ——
   反斜杠不是合法的 JSON 转义，整个回复会因此解析失败。
-- total 必须等于所有 awarded=true 的采分点的**分值之和**，
-  而不是采分点的个数之和 —— 分值就是 code 里字母后面那个数字。
-  例: 给了 B2 和 M1 → total = 2 + 1 = 3 (不是 2)。
-  marks 数组里每个采分点占一条，code 原样保留分值数字 (是 B2 就写 B2)。
-- total 不得超过 {max_marks}。
+- Mark Scheme 的每个采分点在 marks 数组里各占一条，一个都不能漏：没给分的也要列出，
+  awarded 填 false。code 原样保留分值数字 (是 B2 就写 B2)，
+  得分按 awarded=true 的 code 分值加总。
 - 如果你决定给某个 mark，awarded 必须为 true；
   如果你决定不给，awarded 必须为 false。
   不允许 reason 说"应给分"但 awarded 为 false 的矛盾。
@@ -162,6 +159,8 @@ class MarkDetail(BaseModel):
 class QuestionResult(BaseModel):
     question: str
     marks: list[MarkDetail]
+    #: Summed from ``marks`` by ``parse_grading_result``, never the model's
+    #: own figure: asked for both, it listed five points and reported six.
     total: int
     max: int
     comment: str = ""
@@ -173,6 +172,24 @@ class QuestionResult(BaseModel):
 
 
 
+def mark_value(code: str) -> int:
+    """What one marking point is worth: the digits closing its code.
+
+    ``B2`` → 2, ``M1`` → 1, ``DM1`` → 1. A code without them counts 1.
+    """
+    m = _MARK_VALUE_RE.search(code)
+    return int(m.group(1)) if m else 1
+
+
+_MARK_VALUE_RE = re.compile(r"(\d+)\s*$")
+
+
+def listed_marks(result: QuestionResult) -> int:
+    """The marks the reply accounts for, awarded or not. Short of ``max``
+    means a marking point was left out of ``marks`` altogether."""
+    return sum(mark_value(m.code) for m in result.marks)
+
+
 def grade_question(
     config: GraderConfig,
     images: list[bytes],
@@ -181,6 +198,7 @@ def grade_question(
     max_marks: int,
     paper_type: PaperType = PaperType.MATH,
     topic_list: dict[str, str] | None = None,
+    missing_marks: int | None = None,
 ) -> str:
     """Send question images + mark scheme to multimodal API for grading.
 
@@ -190,6 +208,9 @@ def grade_question(
     ``topic_list`` maps topic_id → name for the topics this paper can cover.
     When it is None or empty the prompt carries no topic section at all and
     the model is never asked for a ``"topic"`` field.
+
+    ``missing_marks`` re-asks after a reply whose ``marks`` fell short of
+    ``max_marks`` by that many, naming the gap.
     """
     template = GRADING_PROMPTS.get(paper_type)
     if template is None:
@@ -220,6 +241,11 @@ def grade_question(
         mark_scheme=mark_scheme,
         topic_block=_render_topic_block(topic_list),
     )
+    if missing_marks:
+        prompt += (
+            f"\n\n上一次的 marks 数组漏了采分点：列出的分值合计比满分 {max_marks} "
+            f"少 {missing_marks} 分。逐条对照 Mark Scheme，把漏掉的采分点补进 marks。"
+        )
     content.append({"type": "text", "text": prompt})
 
     extra_body: dict[str, object] = {
@@ -275,18 +301,19 @@ def parse_grading_result(raw: str) -> QuestionResult:
                 f"Raw response:\n{raw}"
             ) from e
 
-    required = {"question", "marks", "total", "max"}
+    required = {"question", "marks", "max"}
     missing = required - set(data.keys())
     if missing:
         raise ValueError(f"Missing fields in result: {missing}")
 
     marks = [MarkDetail(**m) for m in data["marks"]]
+    awarded = sum(mark_value(m.code) for m in marks if m.awarded)
     topic = data.get("topic")
     error_type = data.get("error_type")
     return QuestionResult(
         question=data["question"],
         marks=marks,
-        total=data["total"],
+        total=min(awarded, data["max"]),
         max=data["max"],
         comment=data.get("comment", ""),
         # "topic" is optional: prompts built without a topic list never ask

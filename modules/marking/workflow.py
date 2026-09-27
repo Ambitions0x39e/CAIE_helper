@@ -20,6 +20,7 @@ from core.models import PaperType
 from modules.marking.grader import (
     QuestionResult,
     grade_question,
+    listed_marks,
     parse_grading_result,
 )
 from modules.marking.mcq_parser import is_valid_manual_answer
@@ -292,16 +293,28 @@ def grade_paper(
                 images = renderer.render_pages(
                     pdf_source, list(assignments[qid]), config.dpi,
                 )
-            raw = grade_question(
-                config=config,
-                images=images,
-                question_id=qid,
-                mark_scheme=qcfg.mark_scheme,
-                max_marks=qcfg.max_marks,
-                paper_type=paper_type,
-                topic_list=topic_list,
-            )
-            result: QuestionResult | None = parse_grading_result(raw)
+            def ask(missing: int | None = None) -> QuestionResult:
+                return parse_grading_result(grade_question(
+                    config=config,
+                    images=images,
+                    question_id=qid,
+                    mark_scheme=qcfg.mark_scheme,
+                    max_marks=qcfg.max_marks,
+                    paper_type=paper_type,
+                    topic_list=topic_list,
+                    missing_marks=missing,
+                ))
+
+            graded = ask()
+            # A marking point left out of `marks` is a mark the student can
+            # never get. Asked again with the gap named, the reply that
+            # accounts for more of the question wins.
+            short = qcfg.max_marks - listed_marks(graded)
+            if short > 0:
+                retry = ask(short)
+                if listed_marks(retry) > listed_marks(graded):
+                    graded = retry
+            result: QuestionResult | None = graded
             failure: QuestionFailure | None = None
         except Exception as exc:  # noqa: BLE001 — reported, not swallowed
             # Log the traceback: a toast auto-dismisses, and the stack is

@@ -212,7 +212,8 @@ def _stub_grader(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     def _fake_grade(*, question_id: str, **_kw: object) -> str:
         graded.append(question_id)
         return (
-            f'{{"question": "{question_id}", "marks": [], '
+            f'{{"question": "{question_id}", "marks": '
+            '[{"code": "B5", "awarded": false, "reason": ""}], '
             f'"total": 3, "max": 5}}'
         )
 
@@ -435,7 +436,8 @@ def _grader_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     def _fake_grade(**kwargs: object) -> str:
         calls.append(kwargs)
         return (
-            f'{{"question": "{kwargs["question_id"]}", "marks": [], '
+            f'{{"question": "{kwargs["question_id"]}", "marks": '
+            '[{"code": "B5", "awarded": false, "reason": ""}], '
             f'"total": 3, "max": 5, "topic": "1.1"}}'
         )
 
@@ -526,3 +528,33 @@ class TestGradePaperTopicPlumbing:
         )
 
         assert [r.topic for r in outcome.results] == ["1.1", "1.1"]
+
+
+def test_a_reply_missing_marking_points_is_asked_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four marks listed on a five-mark question: asked once more with the gap
+    named, and the fuller reply is the one kept."""
+    asked: list[object] = []
+    replies = iter([
+        '{"question": "Q1", "max": 5, "marks": ['
+        '{"code": "B4", "awarded": true, "reason": ""}]}',
+        '{"question": "Q1", "max": 5, "marks": ['
+        '{"code": "B4", "awarded": true, "reason": ""},'
+        '{"code": "A1", "awarded": true, "reason": ""}]}',
+    ])
+
+    def _fake_grade(**kwargs: object) -> str:
+        asked.append(kwargs["missing_marks"])
+        return next(replies)
+
+    monkeypatch.setattr(workflow, "grade_question", _fake_grade)
+    outcome = TestGradePaper()._run(_FakeRenderer(), {}, qids=("Q1",))
+
+    assert asked == [None, 1]
+    assert outcome.results[0].total == 5
+
+
+def test_a_complete_reply_is_asked_once(_stub_grader: list[str]) -> None:
+    TestGradePaper()._run(_FakeRenderer(), {}, qids=("Q1",))
+    assert _stub_grader == ["Q1"]
