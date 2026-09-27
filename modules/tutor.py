@@ -29,7 +29,6 @@ _ERROR_LABELS = {
     "slip": "失误",
     "misread": "审题",
     "wording": "表述",
-    "blank": "未作答",
 }
 
 _PROMPT = """你是 CIE {subject_id} 的导师，在给学生写一份关于 Paper {component} 的备忘。
@@ -52,6 +51,7 @@ _PROMPT = """你是 CIE {subject_id} 的导师，在给学生写一份关于 Pap
   「Equilibria 7 题丢了 60% 的分，多半是审题：漏看了温度条件」。
   「注意计算」「多做练习」这类对谁都成立的话不要写。
 - 只有一两份卷子时，只写这几份卷子能看出来的东西，不要推断长期规律。
+- 原因只写上面丢分原因和评语里有的，不要揣测心理、态度或时间分配。
 - 上一次备忘里被新数据推翻的判断，直接删掉或改写；不要说明改了什么。
 - 不要写 LaTeX 或反斜杠，数学符号用 Unicode。"""
 
@@ -90,7 +90,7 @@ def build_prompt(
         f"原因 {_breakdown(t.errors)}"
         for t in profile.topics
     )
-    lost = [a for a in run if a.score < a.max_score]
+    lost = [a for a in run if a.score < a.max_score and a.error_type != "blank"]
     run_lines = "\n".join(
         "- " + " · ".join(filter(None, [
             a.question_id,
@@ -114,14 +114,25 @@ def build_prompt(
     )
 
 
-def clean_reply(raw: str) -> str:
-    """The model's reply as the note: fences stripped, capped at MAX_LINES."""
+def unfinished_line(run: Iterable[AttemptRecord]) -> str | None:
+    """The run's unanswered questions, stated rather than interpreted.
+
+    Written by code, not the model: handed to the model, "7 marks left
+    blank" came back as avoidance and poor time management.
+    """
+    blank = [a.question_id for a in run if a.error_type == "blank"]
+    return f"- 【BP/未完成】{'、'.join(blank)}" if blank else None
+
+
+def clean_reply(raw: str, reserved: int = 0) -> str:
+    """The model's reply as the note: fences stripped, capped at MAX_LINES
+    less the ``reserved`` lines code adds after it."""
     text = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", raw.strip())
     lines = [line for line in text.splitlines() if line.strip()]
-    return "\n".join(lines[:MAX_LINES]) + "\n"
+    return "\n".join(lines[:MAX_LINES - reserved]) + "\n"
 
 
-def rewrite_notes(config: GraderConfig, prompt: str) -> str:
+def rewrite_notes(config: GraderConfig, prompt: str, reserved: int = 0) -> str:
     client = OpenAI(
         api_key=config.api_key.get_secret_value(),
         base_url=config.base_url,
@@ -134,7 +145,7 @@ def rewrite_notes(config: GraderConfig, prompt: str) -> str:
         temperature=0.3,
         extra_body={"enable_thinking": False},
     )
-    return clean_reply(str(response.choices[0].message.content))
+    return clean_reply(str(response.choices[0].message.content), reserved)
 
 
 def refresh_notes(
@@ -152,7 +163,10 @@ def refresh_notes(
         read_notes(profile.subject_id, profile.component),
         paper_id=paper_id,
     )
-    note = rewrite_notes(config, prompt)
+    unfinished = unfinished_line(run)
+    note = rewrite_notes(config, prompt, reserved=1 if unfinished else 0)
+    if unfinished:
+        note += unfinished + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(note, encoding="utf-8")
     return path
