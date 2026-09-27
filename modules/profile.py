@@ -61,6 +61,17 @@ def _errors(rows: Iterable[AttemptRecord]) -> dict[str, float]:
     return dict(lost)
 
 
+def component_rows(
+    records: Iterable[AttemptRecord], subject_id: str, component: str,
+) -> list[AttemptRecord]:
+    """The latest grading of every question of one syllabus's Paper *component*."""
+    return [
+        r for r in latest_attempts(records)
+        if subject_id_of(r.paper_id) == subject_id
+        and component_paper_number(r.paper_id) == component
+    ]
+
+
 def component_profile(
     records: Iterable[AttemptRecord], subject_id: str, component: str,
 ) -> ComponentProfile | None:
@@ -73,11 +84,7 @@ def component_profile(
     ponytail: plain loss rate, every paper weighted alike — add a recency
     decay once there are months of papers for an old weakness to fade from.
     """
-    rows = [
-        r for r in latest_attempts(records)
-        if subject_id_of(r.paper_id) == subject_id
-        and component_paper_number(r.paper_id) == component
-    ]
+    rows = component_rows(records, subject_id, component)
     if not rows:
         return None
     papers = len({r.paper_id for r in rows})

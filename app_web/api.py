@@ -32,7 +32,7 @@ from pydantic import ValidationError
 from app_web.jobs import push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
-from core.models import ERROR_TYPES, AttemptRecord, MistakeRecord, PaperType
+from core.models import ERROR_TYPES, MistakeRecord, PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import AttemptStore, CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
@@ -80,7 +80,6 @@ from modules.marking.workflow import (
     summarise_scores,
     topics_for_paper,
 )
-from modules.profile import component_profile
 from modules.tutor import read_notes, refresh_notes
 from modules.updater import AppUpdater, current_app_version
 
@@ -698,19 +697,15 @@ class Api:
         self._mistakes.append_many(mistakes)
         self._attempts.append_many(run)
         self._results = []
-        self._refresh_notes_later(
-            paper_id, run, {m.question_id: m.comment for m in mistakes},
-        )
+        self._refresh_notes_later(paper_id)
         return {
             "success": True,
             "score": summary.score,
             "max_score": summary.max_score,
         }
 
-    def _refresh_notes_later(
-        self, paper_id: str, run: list[AttemptRecord], comments: dict[str, str],
-    ) -> None:
-        """Rewrite the component's tutor note on a thread of its own.
+    def _refresh_notes_later(self, paper_id: str) -> None:
+        """File the paper into its component's tutor note, on a thread of its own.
 
         Not a `jobs.start` job: that allows one job at a time, and a note
         rewrite must not block parsing the next paper. A failure is logged
@@ -720,17 +715,19 @@ class Api:
         component = component_paper_number(paper_id)
         if config is None or component is None:
             return
-        profile = component_profile(
-            self._attempts.load_all(), subject_id_of(paper_id), component,
-        )
-        if profile is None:
-            return
+        records = self._attempts.load_all()
+        # Appended in time order, so a re-graded question's latest comment wins.
+        comments = {
+            (m.paper_id, m.question_id): m.comment for m in self._mistakes.load_all()
+        }
 
         def work() -> None:
             try:
                 with _notes_lock:
                     refresh_notes(
-                        config, run, comments, profile=profile, paper_id=paper_id,
+                        config, records, comments,
+                        subject_id=subject_id_of(paper_id), component=component,
+                        paper_id=paper_id,
                     )
             except Exception:
                 _log.exception("tutor note for %s failed", paper_id)
