@@ -13,6 +13,7 @@ import contextlib
 import logging
 import os
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -91,6 +92,11 @@ def full_page_clips(source: str | bytes | Path) -> list[PageClip]:
 #: for it raises ("Crop exceeds page dimensions" when the two insets meet).
 _MIN_SLICE_PT = 1.0
 
+#: PDFium is not thread-safe, and `grade_paper` renders on several workers at
+#: once. Unserialised, four threads opening one answer paper failed 36 of 40
+#: opens with "Data format error"; one lock across the whole render fixes it.
+_PDFIUM_LOCK = threading.Lock()
+
 
 class LocalRenderer:
     """Sync, in-process renderer backed by pypdfium2 — no RPC, no event loop.
@@ -135,26 +141,27 @@ class LocalRenderer:
 
         scale = dpi / 72.0
         out: list[bytes] = []
-        doc = pdfium.PdfDocument(source)
-        try:
-            for clip in clips:
-                page = doc[clip.page_idx]
-                _, height = page.get_size()
-                # Clamp into the page: a region running past the bottom edge
-                # would otherwise become a negative inset, which PDFium honours
-                # by rendering *outside* the page.
-                top = min(max(clip.y_top, 0.0), height)
-                bottom = min(max(clip.y_bottom, 0.0), height)
-                if bottom - top < _MIN_SLICE_PT:
-                    continue
-                bitmap = page.render(
-                    scale=scale, crop=(0, height - bottom, 0, top),
-                )
-                buf = io.BytesIO()
-                bitmap.to_pil().save(buf, format="PNG")
-                out.append(buf.getvalue())
-        finally:
-            doc.close()
+        with _PDFIUM_LOCK:
+            doc = pdfium.PdfDocument(source)
+            try:
+                for clip in clips:
+                    page = doc[clip.page_idx]
+                    _, height = page.get_size()
+                    # Clamp into the page: a region running past the bottom
+                    # edge would otherwise become a negative inset, which
+                    # PDFium honours by rendering *outside* the page.
+                    top = min(max(clip.y_top, 0.0), height)
+                    bottom = min(max(clip.y_bottom, 0.0), height)
+                    if bottom - top < _MIN_SLICE_PT:
+                        continue
+                    bitmap = page.render(
+                        scale=scale, crop=(0, height - bottom, 0, top),
+                    )
+                    buf = io.BytesIO()
+                    bitmap.to_pil().save(buf, format="PNG")
+                    out.append(buf.getvalue())
+            finally:
+                doc.close()
 
         _log.info("render_regions(local): %d image(s) from %d clip(s)",
                   len(out), len(clips))

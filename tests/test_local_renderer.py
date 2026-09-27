@@ -129,3 +129,20 @@ def test_render_pages_selects_whole_pages_by_1_indexed_number() -> None:
         # A whole page carries every band, in order.
         seen = [img.getpixel((300, int((i + 0.5) * BAND_PT))) for i in range(4)]
         assert seen == BANDS
+
+
+def test_concurrent_renders_all_succeed(tmp_path: Path) -> None:
+    """``grade_paper`` renders on several workers at once; PDFium is not
+    thread-safe, so without the lock most of these opens fail."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    pdf = tmp_path / "banded.pdf"
+    pdf.write_bytes(_banded_pdf(20))
+
+    def render(i: int) -> list[bytes]:
+        clip = PageClip(page_idx=i % 20, y_top=0.0, y_bottom=BAND_PT)
+        return LocalRenderer().render_regions(pdf, [clip], dpi=144)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        pngs = list(pool.map(render, range(80)))
+    assert all(len(p) == 1 for p in pngs)
