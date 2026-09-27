@@ -204,6 +204,23 @@ def _extract_paper_info(pdf_path: str | Path) -> tuple[str, int]:
     return _paper_info_from_text(text)
 
 
+_COVER_ID_RE = re.compile(r"(\d{4})/(\d{2})/(M/J|O/N|F/M)/(\d{2})")
+_SEASON_LETTER = {"M/J": "s", "O/N": "w", "F/M": "m"}
+
+
+def downloaded_paper_id(cover_id: str) -> str | None:
+    """``"9231/43/M/J/23"`` → ``"9231_s23_qp_43"``; None for any other shape.
+
+    The cover id is what the mark scheme prints; the downloaded id is what
+    the paper store, the syllabus topics and the tutor notes key on.
+    """
+    m = _COVER_ID_RE.fullmatch(cover_id)
+    if m is None:
+        return None
+    subject, component, session, year = m.groups()
+    return f"{subject}_{_SEASON_LETTER[session]}{year}_qp_{component}"
+
+
 # ── VL extraction ────────────────────────────────────────────────
 
 _IMAGE_MS_PROMPT = """\

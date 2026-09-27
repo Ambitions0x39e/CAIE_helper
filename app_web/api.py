@@ -54,6 +54,7 @@ from modules.marking.mistakes import (
 )
 from modules.marking.ms_parser import (
     PaperConfig,
+    downloaded_paper_id,
     ms_cache_exists,
     parse_mark_scheme,
     resolve_ms_start_page,
@@ -108,6 +109,11 @@ class _Analysis:
     doc: ScannedDocument | None
     paper_type: PaperType
     answer_path: str | None
+
+    @property
+    def paper_id(self) -> str:
+        """The downloaded id when the cover id converts, else the cover id."""
+        return downloaded_paper_id(self.config.paper_id) or self.config.paper_id
 
 
 def _invalid(exc: ValidationError) -> Payload:
@@ -483,7 +489,7 @@ class Api:
         return {
             "ready": True,
             "paper_type": a.paper_type.value,
-            "paper_id": a.config.paper_id,
+            "paper_id": a.paper_id,
             "total_marks": a.config.total_marks,
             "questions": {
                 qid: {"max_marks": q.max_marks, "mark_scheme": q.mark_scheme}
@@ -532,8 +538,8 @@ class Api:
                 assignments=assignments,
                 clips=clips,
                 renderer=LocalRenderer(),
-                syllabus_info=load_syllabus(subject_id_of(a.config.paper_id)),
-                paper_id=a.config.paper_id,
+                syllabus_info=load_syllabus(subject_id_of(a.paper_id)),
+                paper_id=a.paper_id,
                 on_progress=lambda done, total, qid: push(
                     {"type": "progress", "done": done, "total": total, "question": qid},
                 ),
