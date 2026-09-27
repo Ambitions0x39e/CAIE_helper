@@ -35,20 +35,22 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-/** One note line with its `**bold**` runs kept bold — the model marks the
- * topic it is talking about that way. */
-function NoteLine({ text }: { text: string }) {
-  return (
-    <>
-      {text.split(/\*\*(.+?)\*\*/).map((part, i) =>
-        i % 2 ? <strong key={i}>{part}</strong> : part,
-      )}
-    </>
-  )
+/** A topic line and the reasons nested under it, read off the note's
+ * Markdown: `- Vectors 3题 7/16分` then indented `  - 失误 4分：…`. */
+function noteTopics(note: string): { topic: string; reasons: string[] }[] {
+  const topics: { topic: string; reasons: string[] }[] = []
+  for (const line of note.split('\n')) {
+    const m = /^(\s*)-\s+(.+)$/.exec(line)
+    if (!m) continue
+    if (m[1] && topics.length) topics[topics.length - 1].reasons.push(m[2].trim())
+    else topics.push({ topic: m[2].trim(), reasons: [] })
+  }
+  return topics
 }
 
-/** The tutor's note on one component, as the list the model wrote it as.
- * Nothing at all until one exists. */
+/** The tutor's note on one component. Takes the height the chart leaves and
+ * scrolls inside it, so a long note never lengthens the page. Nothing at all
+ * until one exists. */
 function TutorNote({ syllabusId, component }: { syllabusId: string; component: string }) {
   const [note, setNote] = useState<string | null>(null)
 
@@ -59,19 +61,23 @@ function TutorNote({ syllabusId, component }: { syllabusId: string; component: s
       .catch(() => setNote(null))
   }, [syllabusId, component])
 
-  const lines = (note ?? '')
-    .split('\n')
-    .map((l) => l.replace(/^\s*[-*]\s+/, '').trim())
-    .filter(Boolean)
-  if (lines.length === 0) return null
+  const topics = noteTopics(note ?? '')
+  if (topics.length === 0) return null
 
   return (
-    <div className="space-y-2">
-      <div className="text-caption text-muted">导师笔记</div>
-      <ul className="selectable list-disc space-y-1.5 pl-5 text-body">
-        {lines.map((l, i) => (
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div className="shrink-0 text-caption text-muted">导师笔记</div>
+      <ul className="selectable min-h-0 flex-1 list-disc space-y-1.5 overflow-y-auto pl-5 text-body">
+        {topics.map((t, i) => (
           <li key={i}>
-            <NoteLine text={l} />
+            {t.topic}
+            {t.reasons.length > 0 && (
+              <ul className="mt-1 list-[circle] space-y-1 pl-5 text-muted">
+                {t.reasons.map((r, j) => (
+                  <li key={j}>{r}</li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ul>
@@ -322,14 +328,16 @@ function SyllabusDetail({
 
         {/* Bare — no panel, no heading. The strip above already names what is
             being plotted, and the line is legible against the page. */}
-        <div className="min-h-0 space-y-4 self-start overflow-y-auto">
-          {attempts.length >= MIN_FOR_TREND ? (
-            <TrendChart attempts={attempts} />
-          ) : (
-            <div className="py-8 text-center text-caption italic text-muted">
-              至少需要 2 次成绩才能绘制趋势图
-            </div>
-          )}
+        <div className="flex min-h-0 flex-col gap-4">
+          <div className="shrink-0">
+            {attempts.length >= MIN_FOR_TREND ? (
+              <TrendChart attempts={attempts} />
+            ) : (
+              <div className="py-8 text-center text-caption italic text-muted">
+                至少需要 2 次成绩才能绘制趋势图
+              </div>
+            )}
+          </div>
           {component && (
             // Keyed so switching Paper starts from no note rather than
             // showing the last one until the new one arrives.
