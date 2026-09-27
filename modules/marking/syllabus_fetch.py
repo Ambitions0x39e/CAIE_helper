@@ -26,9 +26,6 @@ from modules.marking.syllabus_parser import SyllabusInfo, parse_syllabus
 _log = logging.getLogger("cie_helper.syllabus_fetch")
 
 _SITE = "https://www.cambridgeinternational.org"
-_TIMEOUT = 30.0
-#: The site answers a bare client with a stripped page.
-_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 _SYLLABUS_RE = re.compile(r'href="(/Images/\d+-(\d{4})-(\d{4})-syllabus\.pdf)"')
 
@@ -40,23 +37,20 @@ def subject_page_path(home_html: str, subject_id: str) -> str | None:
 
 
 def syllabus_pdf_path(subject_html: str, year: int) -> str | None:
-    """The syllabus covering *year*, else the newest one that has started.
-
-    Update notices (``…-2026-2027-syllabus-update.pdf``) are not syllabuses
-    and do not match.
-    """
-    found = sorted(
-        {(int(a), int(b), path) for path, a, b in _SYLLABUS_RE.findall(subject_html)},
+    """The syllabus covering *year*. Update notices
+    (``…-2026-2027-syllabus-update.pdf``) are not syllabuses and don't match."""
+    return next(
+        (
+            path
+            for path, start, end in _SYLLABUS_RE.findall(subject_html)
+            if int(start) <= year <= int(end)
+        ),
+        None,
     )
-    covering = [path for a, b, path in found if a <= year <= b]
-    if covering:
-        return covering[-1]
-    started = [path for a, _, path in found if a <= year]
-    return started[-1] if started else None
 
 
 def _get(path: str) -> requests.Response:
-    response = requests.get(_SITE + path, headers=_HEADERS, timeout=_TIMEOUT)
+    response = requests.get(_SITE + path, timeout=30)
     response.raise_for_status()
     return response
 
