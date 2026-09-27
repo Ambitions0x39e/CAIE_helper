@@ -170,7 +170,6 @@ def test_parse_grading_result_repairs_latex_backslashes() -> None:
 
     result = parse_grading_result(raw)
 
-    assert result.total == 2
     assert result.marks[0].awarded is True
     # The text survives with its backslashes, rather than being dropped.
     assert r"\Sigma y^2" in result.marks[0].reason
@@ -287,3 +286,24 @@ def test_prompt_lists_every_error_type(sent_prompts: list[str]) -> None:
 
     for value in ERROR_TYPES:
         assert f"- {value}:" in sent_prompts[0]
+
+
+def test_total_is_summed_from_the_awarded_codes() -> None:
+    """The model's own total is not read: asked for both, it listed five
+    marks and reported six. B2 is worth 2, and nothing passes the maximum."""
+    raw = json.dumps({
+        "question": "Q2", "max": 6, "total": 6,
+        "marks": [
+            {"code": "B2", "awarded": True, "reason": ""},
+            {"code": "M1", "awarded": True, "reason": ""},
+            {"code": "A1", "awarded": False, "reason": ""},
+            {"code": "DM1", "awarded": True, "reason": ""},
+        ],
+    })
+    assert parse_grading_result(raw).total == 4
+
+    over = json.dumps({
+        "question": "Q2", "max": 2,
+        "marks": [{"code": "B2", "awarded": True, "reason": ""}] * 2,
+    })
+    assert parse_grading_result(over).total == 2
