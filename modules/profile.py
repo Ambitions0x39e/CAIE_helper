@@ -66,6 +66,10 @@ def component_profile(
 ) -> ComponentProfile | None:
     """The profile of one syllabus's Paper *component*, or None with no rows.
 
+    Unanswered questions (``error_type == "blank"``) count toward ``papers``
+    but nowhere else: an unfinished paper says nothing about the topics it
+    never reached, and folded into a loss rate it reads as a weakness.
+
     ponytail: plain loss rate, every paper weighted alike — add a recency
     decay once there are months of papers for an old weakness to fade from.
     """
@@ -76,6 +80,8 @@ def component_profile(
     ]
     if not rows:
         return None
+    papers = len({r.paper_id for r in rows})
+    rows = [r for r in rows if r.error_type != "blank"]
 
     by_topic: dict[str | None, list[AttemptRecord]] = defaultdict(list)
     for r in rows:
@@ -98,7 +104,7 @@ def component_profile(
     return ComponentProfile(
         subject_id=subject_id,
         component=component,
-        papers=len({r.paper_id for r in rows}),
+        papers=papers,
         topics=topics,
         errors=_errors(rows),
     )
