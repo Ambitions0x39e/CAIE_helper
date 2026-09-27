@@ -1,5 +1,5 @@
-"""Tests for ``modules.tutor`` — the note's shape, the prompt its
-descriptions are asked for with, and that grading never sees the note."""
+"""Tests for ``modules.tutor`` — filing lost questions into the ledger,
+the note laid out from it, and that grading never sees either."""
 from __future__ import annotations
 
 import datetime
@@ -15,116 +15,224 @@ import pytest
 from core.models import AttemptRecord
 from core.settings import GraderConfig, app_settings
 from modules import tutor
-from modules.profile import ComponentProfile, component_profile
+from modules.profile import component_profile
+from modules.tutor import Ledger, Pattern
 
-_TS = datetime.datetime(2026, 9, 24, 10, 0)
+_S23 = "9231_s23_qp_43"
+_S25 = "9231_s25_qp_44"
 
 
-def _run() -> list[AttemptRecord]:
-    """Paper 1 of 9231: Vectors lost to a slip, a method error and one mark
-    nobody classified; Matrices full; Polar coordinates left blank."""
+def _row(
+    paper: str, q: str, topic: str | None, name: str | None, error: str | None,
+    score: float, max_score: float, day: int = 1,
+) -> AttemptRecord:
+    return AttemptRecord(
+        paper_id=paper, question_id=q, topic_id=topic, topic_name=name,
+        error_type=error,  # type: ignore[arg-type]
+        score=score, max_score=max_score,
+        timestamp=datetime.datetime(2026, 9, day, 10, 0),
+    )
+
+
+def _records() -> list[AttemptRecord]:
+    """Two Paper 4 papers. Q3a and Q2a are the same Wilcoxon slip; Q6b is
+    a one-off; Q1 is full; Q3 was left blank."""
     return [
-        AttemptRecord(
-            paper_id="9231_s25_qp_11", question_id=q, topic_id=t,
-            topic_name=n, error_type=e,  # type: ignore[arg-type]
-            score=s, max_score=m, timestamp=_TS,
-        )
-        for q, t, n, e, s, m in [
-            ("Q6a", "1.6", "Vectors", "slip", 1.0, 5.0),
-            ("Q6c", "1.6", "Vectors", "method", 2.0, 7.0),
-            ("Q6b", "1.6", "Vectors", None, 3.0, 4.0),
-            ("Q4a", "1.4", "Matrices", None, 2.0, 2.0),
-            ("Q5b", "1.5", "Polar coordinates", "blank", 0.0, 6.0),
-        ]
+        _row(_S23, "Q1", "4.1", "Continuous random variables", None, 3, 3, day=1),
+        _row(_S23, "Q3a", "4.4", "Non-parametric tests", "slip", 5, 7, day=1),
+        _row(_S23, "Q6b", "4.3", "χ²-tests", "concept", 1, 2, day=1),
+        _row(_S25, "Q2a", "4.4", "Non-parametric tests", "slip", 3, 6, day=2),
+        _row(_S25, "Q3", "4.3", "χ²-tests", "blank", 0, 7, day=2),
     ]
 
 
-def _profile() -> ComponentProfile:
-    profile = component_profile(_run(), "9231", "1")
+def _ledger() -> Ledger:
+    return Ledger(patterns=[
+        Pattern(id="p1", topic_id="4.4", text="Wilcoxon T 取错",
+                hits=[(_S23, "Q3a"), (_S25, "Q2a")]),
+        Pattern(id="p2", topic_id="4.3", text="结论与计算矛盾", hits=[(_S23, "Q6b")]),
+    ])
+
+
+def test_the_note_shows_only_what_recurs_across_papers() -> None:
+    profile = component_profile(_records(), "9231", "4")
     assert profile is not None
-    return profile
 
-
-def test_the_note_is_a_line_per_topic_and_one_per_reason() -> None:
-    note = tutor.render_note(_profile(), {"s1": "Q6c 把向量当标量代入距离公式"})
-
-    assert note == (
-        "- Vectors 3题 6/16分\n"
-        "  - 方法 5分：Q6c 把向量当标量代入距离公式\n"
-        "  - 失误 4分\n"
-        "  - 未分类 1分\n"
-        "- Matrices 1题 2/2分\n"
+    assert tutor.render_note(profile, _ledger()) == (
+        "- χ²-tests 1题 1/2分\n"
+        "- Non-parametric tests 2题 8/13分\n"
+        "  - Wilcoxon T 取错 ×2（s23_43 Q3a、s25_44 Q2a）\n"
+        "- Continuous random variables 1题 3/3分\n"
     )
 
 
-def test_an_unanswered_question_is_not_in_the_note() -> None:
-    """Left blank, a question says nothing about its topic: Polar
-    coordinates neither gets a line nor reaches the model."""
+def test_two_questions_of_one_paper_are_not_a_recurring_mistake() -> None:
+    profile = component_profile(_records(), "9231", "4")
+    assert profile is not None
+    ledger = Ledger(patterns=[Pattern(
+        id="p1", topic_id="4.4", text="Wilcoxon T 取错",
+        hits=[(_S23, "Q3a"), (_S23, "Q3b")],
+    )])
+
+    assert "Wilcoxon" not in tutor.render_note(profile, ledger)
+
+
+def test_filing_joins_a_pattern_or_opens_one_within_the_topic() -> None:
+    lost = tutor.lost_questions(r for r in _records() if r.paper_id == _S25)
+    start = Ledger(patterns=[
+        Pattern(id="p1", topic_id="4.4", text="Wilcoxon T 取错", hits=[(_S23, "Q3a")]),
+        Pattern(id="p2", topic_id="4.3", text="结论与计算矛盾", hits=[(_S23, "Q6b")]),
+    ])
+
+    joined = tutor.file_paper(start, _S25, lost, {"Q2a": "p1"})
+    assert joined.patterns[0].hits == [(_S23, "Q3a"), (_S25, "Q2a")]
+
+    # p2 is χ²'s: offered only Non-parametric patterns, the model cannot
+    # have meant it, so the question stays unfiled rather than misfiled.
+    stray = tutor.file_paper(start, _S25, lost, {"Q2a": "p2"})
+    assert [p.hits for p in stray.patterns] == [[(_S23, "Q3a")], [(_S23, "Q6b")]]
+
+    opened = tutor.file_paper(start, _S25, lost, {"Q2a": "秩和算错"})
+    assert opened.patterns[-1] == Pattern(
+        id="p3", topic_id="4.4", topic_name="Non-parametric tests",
+        text="秩和算错", hits=[(_S25, "Q2a")],
+    )
+
+
+def test_an_untagged_question_can_join_any_topics_pattern() -> None:
+    """s25 Q5b, which the grader left untagged, is the PGF slip s23 Q5b
+    made under Probability generating functions."""
+    ledger = Ledger(patterns=[Pattern(
+        id="p1", topic_id="4.5", topic_name="Probability generating functions",
+        text="展开合并同类项算错", hits=[(_S23, "Q5b")],
+    )])
+    lost = [_row(_S25, "Q5b", None, None, "slip", 2, 3)]
+
     prompt = tutor.build_prompt(
-        _profile(), _run(), {}, None, paper_id="9231_s25_qp_11",
+        ledger, lost, {}, subject_id="9231", component="4", paper_id=_S25,
+    )
+    filed = tutor.file_paper(ledger, _S25, lost, {"Q5b": "p1"})
+
+    assert "【Probability generating functions】\np1: 展开合并同类项算错" in prompt
+    assert filed.patterns[0].hits == [(_S23, "Q5b"), (_S25, "Q5b")]
+
+
+def test_one_new_description_given_twice_is_one_pattern() -> None:
+    lost = [
+        _row(_S25, "Q1", None, None, "wording", 2, 4),
+        _row(_S25, "Q6b", None, None, "concept", 7, 8),
+    ]
+
+    ledger = tutor.file_paper(
+        Ledger(), _S25, lost, {"Q1": "结论写法不规范", "Q6b": "结论写法不规范"},
     )
 
-    assert "Polar" not in tutor.render_note(_profile(), {})
-    assert "Polar" not in prompt and "Q5b" not in prompt
+    assert [(p.text, p.hits) for p in ledger.patterns] == [
+        ("结论写法不规范", [(_S25, "Q1"), (_S25, "Q6b")]),
+    ]
 
 
-def test_the_prompt_numbers_the_reasons_and_carries_the_runs_comments() -> None:
+def test_refiling_a_paper_replaces_its_old_filings() -> None:
+    """A re-grade: S25's Q2a moves to a new pattern, and p1, left with S23
+    alone, no longer recurs."""
+    lost = tutor.lost_questions(r for r in _records() if r.paper_id == _S25)
+
+    ledger = tutor.file_paper(_ledger(), _S25, lost, {"Q2a": "秩和算错"})
+
+    assert ledger.patterns[0].hits == [(_S23, "Q3a")]
+    assert ledger.patterns[-1].hits == [(_S25, "Q2a")]
+
+
+def test_a_pattern_left_with_no_questions_is_dropped() -> None:
+    ledger = Ledger(patterns=[
+        Pattern(id="p1", topic_id="4.4", text="只在 S25", hits=[(_S25, "Q2a")]),
+    ])
+    assert tutor.file_paper(ledger, _S25, [], {}).patterns == []
+
+
+def test_the_prompt_offers_the_topics_patterns_and_the_comments() -> None:
+    lost = tutor.lost_questions(r for r in _records() if r.paper_id == _S25)
+
     prompt = tutor.build_prompt(
-        _profile(), _run(), {"Q6c": "混淆向量与标量"}, None,
-        paper_id="9231_s25_qp_11",
+        _ledger(), lost, {(_S25, "Q2a"): "T 取了较大的秩和"},
+        subject_id="9231", component="4", paper_id=_S25,
     )
 
-    assert "s1: Vectors · 方法 · 5 分" in prompt
-    assert "s3: Vectors · 未分类 · 1 分" in prompt
-    assert "- Q6c · Vectors · 方法 · 得 2/7 · 混淆向量与标量" in prompt
-    assert "Q4a" not in prompt  # full marks is not a lost mark
-    assert "（还没有）" in prompt
-
-
-def test_the_prompt_hands_back_the_old_note() -> None:
-    prompt = tutor.build_prompt(
-        _profile(), _run(), {}, "- Vectors 老是漏单位\n", paper_id="9231_s25_qp_11",
-    )
-    assert "- Vectors 老是漏单位" in prompt
+    assert (
+        "【Non-parametric tests】\np1: Wilcoxon T 取错（s23_43 Q3a、s25_44 Q2a）"
+    ) in prompt
+    assert "- Q2a · Non-parametric tests · 失误 · 得 3/6 · T 取了较大的秩和" in prompt
+    assert "结论与计算矛盾" not in prompt  # χ² has no lost question to file here
+    assert "Q3 " not in prompt  # blank: nothing to say how the student goes wrong
 
 
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ('```json\n{"s1": " 算错 ", "s2": 3}\n```', {"s1": "算错"}),
+        ('```json\n{"Q1": " p3 ", "Q2": 3, "Q3": ""}\n```', {"Q1": "p3"}),
         ("不是 JSON", {}),
-        ('["s1"]', {}),
+        ('["p1"]', {}),
     ],
 )
 def test_the_reply_is_read_leniently(raw: str, expected: dict[str, str]) -> None:
     assert tutor.parse_reply(raw) == expected
 
 
-def test_refresh_replaces_the_note_on_disk(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+def _fake_model(
+    monkeypatch: pytest.MonkeyPatch, replies: list[dict[str, str]],
+) -> list[str]:
     sent: list[str] = []
+    queue = iter(replies)
 
     def _create(**kw: Any) -> Any:
         sent.append(kw["messages"][0]["content"])
         return SimpleNamespace(choices=[SimpleNamespace(
-            message=SimpleNamespace(content=json.dumps({"s2": "Q6a 点积算错"})),
+            message=SimpleNamespace(content=json.dumps(next(queue))),
         )])
 
     monkeypatch.setattr(tutor, "OpenAI", lambda **_: SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=_create)),
     ))
-    tutor.notes_path("9231", "1").parent.mkdir(parents=True)
-    tutor.notes_path("9231", "1").write_text("- 旧的判断\n", encoding="utf-8")
+    return sent
+
+
+def test_with_no_ledger_every_graded_paper_is_filed_oldest_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+    sent = _fake_model(monkeypatch, [
+        {"Q3a": "Wilcoxon T 取错", "Q6b": "结论与计算矛盾"},
+        {"Q2a": "p1"},
+    ])
 
     tutor.refresh_notes(
-        GraderConfig(api_key="k"), _run(), {}, profile=_profile(),
-        paper_id="9231_s25_qp_11",
+        GraderConfig(api_key="k"), _records(), {},
+        subject_id="9231", component="4", paper_id=_S25,
     )
 
-    assert "- 旧的判断" in sent[0]
-    assert "  - 失误 4分：Q6a 点积算错\n" in (tutor.read_notes("9231", "1") or "")
+    assert [_S23 in s for s in sent] == [True, False]
+    assert "  - Wilcoxon T 取错 ×2（s23_43 Q3a、s25_44 Q2a）\n" in (
+        tutor.read_notes("9231", "4") or ""
+    )
+
+
+def test_with_a_ledger_only_the_confirmed_paper_is_filed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+    path = tutor.ledger_path("9231", "4")
+    path.parent.mkdir(parents=True)
+    path.write_text(_ledger().model_dump_json(), encoding="utf-8")
+    sent = _fake_model(monkeypatch, [{"Q2a": "p1"}])
+
+    tutor.refresh_notes(
+        GraderConfig(api_key="k"), _records(), {},
+        subject_id="9231", component="4", paper_id=_S25,
+    )
+
+    assert len(sent) == 1
+    saved = Ledger.model_validate_json(path.read_text(encoding="utf-8"))
+    assert saved.patterns[0].hits == [(_S23, "Q3a"), (_S25, "Q2a")]
 
 
 def test_the_grading_path_cannot_reach_the_notes() -> None:

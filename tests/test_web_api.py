@@ -291,7 +291,8 @@ def test_retagging_a_mistake_retags_its_attempts(api: Api) -> None:
 def test_a_confirmed_run_rewrites_its_components_note(
     tmp_path, monkeypatch,
 ) -> None:
-    """Off the calling thread, with the run's lost marks and their comments."""
+    """Off the calling thread, with every attempt row and every grader
+    comment — the ledger may have older papers to file too."""
     import threading
 
     from core.settings import GraderConfig
@@ -306,8 +307,8 @@ def test_a_confirmed_run_rewrites_its_components_note(
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         "app_web.api.refresh_notes",
-        lambda config, run, comments, **kw: calls.append(
-            {"run": [r.question_id for r in run], "comments": comments, **kw}
+        lambda config, records, comments, **kw: calls.append(
+            {"rows": [r.question_id for r in records], "comments": comments, **kw}
         ),
     )
 
@@ -317,11 +318,12 @@ def test_a_confirmed_run_rewrites_its_components_note(
             t.join(timeout=5)
 
     assert len(calls) == 1
-    assert calls[0]["run"] == ["1", "2", "3"]
-    assert set(calls[0]["comments"]) == {"1", "2"}  # type: ignore[arg-type]
+    assert calls[0]["rows"] == ["1", "2", "3"]
+    assert set(calls[0]["comments"]) == {  # type: ignore[arg-type]
+        ("9701_s25_qp_22", "1"), ("9701_s25_qp_22", "2"),
+    }
+    assert (calls[0]["subject_id"], calls[0]["component"]) == ("9701", "2")
     assert calls[0]["paper_id"] == "9701_s25_qp_22"
-    profile = calls[0]["profile"]
-    assert (profile.subject_id, profile.component) == ("9701", "2")  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
