@@ -931,3 +931,52 @@ class TestStore:
 
         assert load_syllabus("9709") is None
         assert stored_syllabuses() == []
+
+
+# -- MathMagic Greek ----------------------------------------------------------
+
+
+class _FakeLine(list):  # type: ignore[type-arg]
+    def get_text(self) -> str:
+        return "".join(c.get_text() for c in self)
+
+
+def _glyph(text: str, x0: float, x1: float, size: float, y0: float, font: str):
+    from pdfminer.layout import LTChar
+
+    c = LTChar.__new__(LTChar)
+    c._text, c.x0, c.x1, c.size, c.y0, c.fontname = text, x0, x1, size, y0, font
+    return c
+
+
+def test_mathmagic_greek_is_decoded_in_reading_order() -> None:
+    """The 9231 syllabus's 4.3 heading, glyph for glyph as pdfminer hands it
+    over: superscript 2 first, χ as "|" in MMGreekItalic."""
+    from modules.marking.syllabus_parser import _line_text
+
+    helv = "GKSFMR+HelveticaNeueLTW1G-Lt"
+    line = _FakeLine([
+        _glyph("2", 321.6, 325.4, 7.5, 335.2, "IJGXJN+TimesNewRomanPSMT"),
+        _glyph("|", 314.6, 321.2, 10.0, 330.0, "IJGXJN+MMGreekItalic"),
+        *(
+            _glyph(ch, x, x + 3.5, 10.0, 330.1, helv)
+            for ch, x in zip(
+                "-tests", (326.5, 330.0, 332.8, 338.1, 342.9, 345.9), strict=True,
+            )
+        ),
+    ])
+    assert _line_text(line) == "χ²-tests"  # type: ignore[arg-type]
+
+
+def test_mathmagic_greek_follows_the_alphabet_from_a() -> None:
+    """Every glyph the syllabus uses: θ=i, π=r, χ=|, ω=~."""
+    from modules.marking.syllabus_parser import _MM_GREEK
+
+    assert [_MM_GREEK[c] for c in "ir|~"] == ["θ", "π", "χ", "ω"]
+
+
+def test_a_line_without_greek_is_pdfminers_own_text() -> None:
+    from modules.marking.syllabus_parser import _line_text
+
+    line = _FakeLine([_glyph(c, 0, 0, 10.0, 0, "Helvetica") for c in "4.4 Tests"])
+    assert _line_text(line) == "4.4 Tests"  # type: ignore[arg-type]
