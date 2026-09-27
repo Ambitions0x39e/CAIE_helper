@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from pdfminer.high_level import extract_pages, extract_text
-from pdfminer.layout import LTTextContainer, LTTextLine
+from pdfminer.layout import LTChar, LTTextContainer, LTTextLine
 from pydantic import BaseModel
 
 from core.config_store import ConfigStore, grading_type_for_paper
@@ -379,6 +379,52 @@ class _Line(NamedTuple):
     text: str
 
 
+#: MathMagic's Greek fonts (MMGreek, MMGreekItalic, MMGreekBoldItalic) draw
+#: lowercase Greek under the ASCII codes ``a``–``~``, in alphabetical order with
+#: the variant forms in place: the PDF names the glyphs "i", "bar", so
+#: pdfminer reads χ²-tests as "2| -tests". Every glyph in the 9231 syllabus
+#: fits this order (θ=i, π=r, χ=|, ω=~); the operators the fonts also carry
+#: (+ = < -) sit below ``a`` and pass through.
+_MM_GREEK = dict(zip(
+    map(chr, range(ord("a"), ord("~") + 1)),
+    "αβγδεϵζηθϑικλμνξοπϖρϱσςτυφϕχψω",
+    strict=True,
+))
+_SUPERSCRIPT = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def _is_mm_greek(char: LTChar) -> bool:
+    return "MMGreek" in char.fontname
+
+
+def _line_text(line: LTTextLine) -> str:
+    """The line's text, with any MathMagic Greek decoded.
+
+    Inline maths is not written left to right — "χ²" arrives as "2" then
+    "χ" — so a line carrying a Greek glyph is rebuilt from its characters in
+    x order, a smaller raised digit read as a superscript. Every other line
+    is pdfminer's own text.
+    """
+    chars = [c for c in line if isinstance(c, LTChar)]
+    if not any(_is_mm_greek(c) for c in chars):
+        return line.get_text().strip()
+    body = max(c.size for c in chars)
+    baseline = min(c.y0 for c in chars if c.size == body)
+    out: list[str] = []
+    prev: LTChar | None = None
+    for c in sorted(chars, key=lambda c: c.x0):
+        text = c.get_text()
+        if _is_mm_greek(c):
+            text = _MM_GREEK.get(text, text)
+        elif text.isdigit() and c.size < 0.85 * body and c.y0 > baseline + 1:
+            text = text.translate(_SUPERSCRIPT)
+        if prev is not None and c.x0 - prev.x1 > 0.2 * body:
+            out.append(" ")
+        out.append(text)
+        prev = c
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
 def _page_lines(layout: object) -> list[_Line]:
     lines: list[_Line] = []
     for element in layout:  # type: ignore[attr-defined]
@@ -387,7 +433,7 @@ def _page_lines(layout: object) -> list[_Line]:
         for line in element:
             if not isinstance(line, LTTextLine):
                 continue
-            text = line.get_text().strip()
+            text = _line_text(line)
             if text:
                 lines.append(_Line(x0=line.x0, top=line.y1, text=text))
     return lines
