@@ -139,18 +139,27 @@ def test_unanswered_questions_are_listed_by_code() -> None:
     assert tutor.unfinished_line(_run()) is None
 
 
-def test_the_unfinished_line_fits_under_the_cap(
+def test_the_unfinished_line_is_written_by_code_under_the_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The last note's unfinished line does not go back to the model either."""
     monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+    sent: list[str] = []
     reply = "\n".join(f"- 第 {i} 条" for i in range(30))
+
+    def _create(**kw: Any) -> Any:
+        sent.append(kw["messages"][0]["content"])
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content=reply),
+        )])
+
     monkeypatch.setattr(tutor, "OpenAI", lambda **_: SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(
-            create=lambda **_: SimpleNamespace(choices=[SimpleNamespace(
-                message=SimpleNamespace(content=reply),
-            )]),
-        )),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=_create)),
     ))
+    tutor.notes_path("9231", "4").parent.mkdir(parents=True)
+    tutor.notes_path("9231", "4").write_text(
+        "- Wilcoxon 取 T 出错\n- 【BP/未完成】Q5\n", encoding="utf-8",
+    )
     run = _unfinished_run()
     profile = component_profile(run, "9231", "4")
     assert profile is not None
@@ -159,6 +168,8 @@ def test_the_unfinished_line_fits_under_the_cap(
         GraderConfig(api_key="k"), run, {}, profile=profile, paper_id="9231_s25_qp_44",
     )
 
+    assert "- Wilcoxon 取 T 出错" in sent[0]
+    assert "BP" not in sent[0]
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == tutor.MAX_LINES
     assert lines[-1] == "- 【BP/未完成】Q2b、Q3"

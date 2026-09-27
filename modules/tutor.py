@@ -114,6 +114,9 @@ def build_prompt(
     )
 
 
+_UNFINISHED = "- 【BP/未完成】"
+
+
 def unfinished_line(run: Iterable[AttemptRecord]) -> str | None:
     """The run's unanswered questions, stated rather than interpreted.
 
@@ -121,18 +124,17 @@ def unfinished_line(run: Iterable[AttemptRecord]) -> str | None:
     blank" came back as avoidance and poor time management.
     """
     blank = [a.question_id for a in run if a.error_type == "blank"]
-    return f"- 【BP/未完成】{'、'.join(blank)}" if blank else None
+    return _UNFINISHED + "、".join(blank) if blank else None
 
 
-def clean_reply(raw: str, reserved: int = 0) -> str:
-    """The model's reply as the note: fences stripped, capped at MAX_LINES
-    less the ``reserved`` lines code adds after it."""
+def clean_reply(raw: str) -> str:
+    """The model's reply as the note: fences stripped, capped at MAX_LINES."""
     text = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", raw.strip())
     lines = [line for line in text.splitlines() if line.strip()]
-    return "\n".join(lines[:MAX_LINES - reserved]) + "\n"
+    return "\n".join(lines[:MAX_LINES]) + "\n"
 
 
-def rewrite_notes(config: GraderConfig, prompt: str, reserved: int = 0) -> str:
+def rewrite_notes(config: GraderConfig, prompt: str) -> str:
     client = OpenAI(
         api_key=config.api_key.get_secret_value(),
         base_url=config.base_url,
@@ -145,7 +147,7 @@ def rewrite_notes(config: GraderConfig, prompt: str, reserved: int = 0) -> str:
         temperature=0.3,
         extra_body={"enable_thinking": False},
     )
-    return clean_reply(str(response.choices[0].message.content), reserved)
+    return clean_reply(str(response.choices[0].message.content))
 
 
 def refresh_notes(
@@ -158,15 +160,21 @@ def refresh_notes(
 ) -> Path:
     """Rewrite the note for *profile*'s component and return where it went."""
     path = notes_path(profile.subject_id, profile.component)
-    prompt = build_prompt(
-        profile, run, comments,
-        read_notes(profile.subject_id, profile.component),
-        paper_id=paper_id,
+    # The old note goes back without its unfinished line: the model is
+    # never told which questions were left blank.
+    old = "".join(
+        line
+        for line in (
+            read_notes(profile.subject_id, profile.component) or ""
+        ).splitlines(keepends=True)
+        if not line.startswith(_UNFINISHED)
+    )
+    note = rewrite_notes(
+        config, build_prompt(profile, run, comments, old or None, paper_id=paper_id),
     )
     unfinished = unfinished_line(run)
-    note = rewrite_notes(config, prompt, reserved=1 if unfinished else 0)
     if unfinished:
-        note += unfinished + "\n"
+        note = "\n".join([*note.splitlines()[:MAX_LINES - 1], unfinished]) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(note, encoding="utf-8")
     return path

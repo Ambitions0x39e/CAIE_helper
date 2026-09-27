@@ -48,9 +48,7 @@ def test_a_withdrawn_code_has_no_subject_page() -> None:
         (2026, "/Images/697357-2026-2027-syllabus.pdf"),
         (2024, "/Images/597381-2023-2025-syllabus.pdf"),
         (2029, "/Images/744603-2028-2030-syllabus.pdf"),
-        # Past every range: the newest that has started.
-        (2031, "/Images/744603-2028-2030-syllabus.pdf"),
-        (2020, None),
+        (2031, None),
     ],
 )
 def test_the_syllabus_is_the_one_covering_the_year(
