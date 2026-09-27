@@ -8,7 +8,7 @@ import { GradeStep } from './GradeStep'
 import { McqStep } from './McqStep'
 import { ResultsStep } from './ResultsStep'
 import { SetupStep } from './SetupStep'
-import type { Analysis, QuestionResult } from './types'
+import type { Analysis, GradeProgress, QuestionResult } from './types'
 
 const STEPS = [
   { id: '0', label: '选卷' },
@@ -22,7 +22,7 @@ export function MarkTab() {
   /** The questions the running batch was asked for — what 结果 lays out. */
   const [queue, setQueue] = useState<string[]>([])
   const [grading, setGrading] = useState(false)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [progress, setProgress] = useState<GradeProgress | null>(null)
   const [step, setStep] = useState(0)
   /** How far the flow has actually got. Looking back does not undo progress,
    * so anything past this stays unreachable. */
@@ -50,6 +50,9 @@ export function MarkTab() {
     () =>
       onJobEvent((e) => {
         if (e.type === 'progress') setProgress({ done: e.done, total: e.total })
+        // Cleared by the first question's progress, which replaces the whole state.
+        else if (e.type === 'syllabus_fetch')
+          setProgress((p) => p && { ...p, fetching: e.subject_id })
         // Results arrive as each question lands, not in question order — the
         // whole point of streaming them is that the grid fills in live.
         else if (e.type === 'result')

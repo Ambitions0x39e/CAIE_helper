@@ -18,6 +18,7 @@ export type JobEvent =
       undetected: string[]
       answer_key: Record<string, string>
     }
+  | { type: 'syllabus_fetch'; subject_id: string }
   | { type: 'progress'; done: number; total: number; question: string }
   | { type: 'result'; result: Record<string, unknown> }
   | { type: 'graded'; results: unknown[]; failures: { question: string; error: string }[] }

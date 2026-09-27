@@ -7,7 +7,13 @@ import { Select } from '../../ui/Select'
 import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
 import { CELL_H, GRID_COLS, compareQuestionIds, scoreBand } from './cells'
-import { ERROR_LABELS, type Analysis, type ErrorType, type QuestionResult } from './types'
+import {
+  ERROR_LABELS,
+  type Analysis,
+  type ErrorType,
+  type GradeProgress,
+  type QuestionResult,
+} from './types'
 
 const UNCLASSIFIED = '未分类'
 
@@ -27,7 +33,7 @@ export function ResultsStep({
   queue: string[]
   results: QuestionResult[]
   grading: boolean
-  progress: { done: number; total: number } | null
+  progress: GradeProgress | null
 }) {
   const [overrides, setOverrides] = useState<Record<string, string>>({})
   const [open, setOpen] = useState<string | null>(null)
@@ -124,7 +130,9 @@ export function ResultsStep({
       {grading && progress ? (
         <div className="space-y-1">
           <div className="text-caption tabular-nums text-muted">
-            正在批改… {progress.done}/{progress.total}
+            {progress.fetching
+              ? `正在获取 ${progress.fetching} 大纲…`
+              : `正在批改… ${progress.done}/${progress.total}`}
           </div>
           <div className="h-1 overflow-hidden rounded bg-hairline">
             <div

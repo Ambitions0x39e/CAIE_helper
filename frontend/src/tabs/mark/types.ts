@@ -53,3 +53,11 @@ export interface QuestionResult {
   /** Why the marks were lost; null at full marks or when unclassified. */
   error_type: ErrorType | null
 }
+
+export interface GradeProgress {
+  done: number
+  total: number
+  /** Set while the subject's syllabus is being fetched, before any question
+   * is graded. */
+  fetching?: string
+}
