@@ -81,7 +81,7 @@ from modules.marking.workflow import (
     topics_for_paper,
 )
 from modules.tutor import read_notes, refresh_notes
-from modules.updater import AppUpdater, current_app_version
+from modules.updater import AppUpdater, current_app_version, format_progress
 
 _log = logging.getLogger("cie_helper.api")
 
@@ -165,6 +165,9 @@ class Api:
         self._mistakes = MistakeStore()
         self._attempts = AttemptStore()
         self._updater = AppUpdater()
+        #: The installer the last check pointed at. The page never names a
+        #: URL itself, so it cannot make the app download anything else.
+        self._update_url: str | None = None
         # None when .env carries no SMTP credentials — a normal state, not an
         # error. The UI hides the GoodNotes affordance rather than failing it.
         self._mail = MailConfig.try_load()
@@ -846,7 +849,39 @@ class Api:
         return current_app_version()
 
     def check_update(self) -> Payload:
-        return self._updater.check().model_dump(mode="json")
+        result = self._updater.check()
+        self._update_url = result.download_url if result.update_available else None
+        return result.model_dump(mode="json")
+
+    def install_update(self) -> Payload:
+        """Download the installer the last check found, run it, and quit.
+
+        Quitting is not optional: the installer cannot replace the app while
+        it is still running. The installer reopens it once it is done.
+        """
+        url = self._update_url
+        if url is None:
+            return {"success": False, "error": "先检查更新"}
+
+        def work() -> None:
+            downloaded = self._updater.download(
+                url,
+                lambda p: push({
+                    "type": "update_progress",
+                    "fraction": p.downloaded / p.total if p.total else None,
+                    "text": format_progress(p),
+                }),
+            )
+            if not downloaded.success or downloaded.local_path is None:
+                raise RuntimeError(downloaded.error or "下载失败")
+            installed = self._updater.install(Path(downloaded.local_path))
+            if not installed.success:
+                raise RuntimeError(installed.error or "安装程序没能启动")
+            window = webview.active_window()
+            if window is not None:
+                window.destroy()
+
+        return start("更新", work)
 
     # -- grade thresholds ----------------------------------------------------
 

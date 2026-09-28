@@ -47,6 +47,35 @@ def test_ping_round_trips(api: Api) -> None:
     assert api.ping() == "pong"
 
 
+# -- update ------------------------------------------------------------------
+
+
+def test_install_update_only_fetches_what_the_last_check_found(
+    api: Api, monkeypatch,
+) -> None:
+    from modules.updater import UpdateCheckResult
+
+    assert api.install_update() == {"success": False, "error": "先检查更新"}
+
+    started: list[str] = []
+
+    def fake_start(name: str, _work: object) -> dict[str, bool]:
+        started.append(name)
+        return {"success": True}
+
+    monkeypatch.setattr("app_web.api.start", fake_start)
+    monkeypatch.setattr(api._updater, "check", lambda: UpdateCheckResult(
+        success=True, update_available=True, download_url="https://x/setup.exe",
+    ))
+    api.check_update()
+    assert api.install_update() == {"success": True}
+    assert started == ["更新"]
+
+    monkeypatch.setattr(api._updater, "check", lambda: UpdateCheckResult(success=True))
+    api.check_update()
+    assert api.install_update()["success"] is False
+
+
 # -- open_external -----------------------------------------------------------
 
 

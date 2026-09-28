@@ -99,6 +99,8 @@ export interface PyApi {
     release_notes?: string | null
     download_url?: string | null
   }>
+  /** Download and run the installer the last check found; the app then quits. */
+  install_update(): Promise<SimpleResult>
   pick_pdf(): Promise<string | null>
   /** The grading path the syllabus config records for this mark scheme. */
   grading_type(ms_path: string): Promise<PaperType | null>
