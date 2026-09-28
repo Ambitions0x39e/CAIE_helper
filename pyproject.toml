@@ -1,6 +1,6 @@
 [project]
 name = "cie-helper"
-version = "2.0.0"
+version = "2.1.0"
 description = "CIE/AP past paper automation and tracker"
 readme = "README.md"
 # Upper bound kept deliberate: PyInstaller freezes whatever interpreter the
