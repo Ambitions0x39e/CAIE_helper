@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
+from typing import Any
 
 import webview
 
@@ -45,6 +47,83 @@ def _entry() -> str:
     return str(_INDEX)
 
 
+if sys.platform == "darwin":
+    import AppKit  # type: ignore[import-untyped]
+    import WebKit  # type: ignore[import-untyped]
+    from PyObjCTools import AppHelper  # type: ignore[import-untyped]
+    from webview.platforms.cocoa import BrowserView
+
+    class _TitlebarGrip(AppKit.NSView):  # type: ignore[misc]
+        def mouseDown_(self, event: AppKit.NSEvent) -> None:
+            window = self.window()
+            if event.clickCount() != 2:
+                window.performWindowDragWithEvent_(event)
+                return
+            # Double-click does what System Settings › Desktop & Dock says.
+            action = AppKit.NSUserDefaults.standardUserDefaults().stringForKey_(
+                "AppleActionOnDoubleClick"
+            )
+            if action == "Minimize":
+                window.performMiniaturize_(None)
+            elif action != "None":
+                window.performZoom_(None)
+
+
+def _titlebar(ns: Any) -> tuple[Any, float]:
+    """The title bar container and the height AppKit reserves for it."""
+    close = ns.standardWindowButton_(AppKit.NSWindowCloseButton)
+    container = close.superview().superview()
+    return container, ns.frame().size.height - ns.contentLayoutRect().size.height
+
+
+def _inset_titlebar(window: webview.Window) -> None:
+    """A full-height sidebar under a unified toolbar, the macOS 26 standard
+    window: title hidden, traffic lights inset in the toolbar row, the page
+    running beneath. The page learns the toolbar height as `--titlebar`, taken
+    from `contentLayoutRect` the way the HIG asks full-size content to be laid
+    out, and injected before the first paint."""
+    ns: Any = window.native
+    ns.setStyleMask_(ns.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView)
+    ns.setTitlebarAppearsTransparent_(True)
+    ns.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+    toolbar = AppKit.NSToolbar.alloc().initWithIdentifier_("main")
+    toolbar.setShowsBaselineSeparator_(False)
+    ns.setToolbar_(toolbar)
+    ns.setToolbarStyle_(AppKit.NSWindowToolbarStyleUnified)
+    container, height = _titlebar(ns)
+    # pywebview paints the container opaque; the page shows through only once
+    # that is cleared.
+    container.setBackgroundColor_(AppKit.NSColor.clearColor())
+    script = WebKit.WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
+        f"document.documentElement.style.setProperty('--titlebar', '{height}px')",
+        WebKit.WKUserScriptInjectionTimeAtDocumentStart,
+        True,
+    )
+    webkit = BrowserView.instances[window.uid].webview
+    webkit.configuration().userContentController().addUserScript_(script)
+
+
+def _add_titlebar_grip(window: webview.Window) -> None:
+    """A transparent title bar passes clicks through to the webview, so nothing
+    would move the window. This view sits between the page and the traffic
+    lights and hands the strip back to AppKit. It goes in once the webview has
+    become the content view — pywebview swaps it in when the first load
+    finishes, above anything added earlier. pywebview's JS drag region was
+    tried instead and overshoots: a 100 px drag moved the window 1050 px."""
+
+    def add() -> None:
+        ns: Any = window.native
+        container, height = _titlebar(ns)
+        frame = container.superview()
+        width, full = frame.bounds().size
+        rect = ((0, full - height), (width, height))
+        grip = _TitlebarGrip.alloc().initWithFrame_(rect)
+        grip.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewMinYMargin)
+        frame.addSubview_positioned_relativeTo_(grip, AppKit.NSWindowBelow, container)
+
+    AppHelper.callAfter(add)
+
+
 def main() -> None:
     prune_legacy_macos_app()
     debug = os.environ.get("CIE_DEBUG") == "1"
@@ -56,7 +135,7 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     logging.getLogger("cie_helper").setLevel(logging.DEBUG if debug else logging.INFO)
-    webview.create_window(
+    window = webview.create_window(
         "CIE Helper",
         _entry(),
         js_api=Api(),
@@ -70,6 +149,10 @@ def main() -> None:
         zoomable=False,  # no pinch / ctrl+wheel zoom
         draggable=False,  # images and links cannot be dragged out
     )
+    if sys.platform == "darwin" and window is not None:
+        # before_show fires on the main thread, before the page starts loading.
+        window.events.before_show += _inset_titlebar
+        window.events.loaded += _add_titlebar_grip
     # `private_mode` defaults to True, which throws the webview's storage away
     # on exit — localStorage included, so anything the UI remembers between
     # launches (the command palette's usage counts, its empty-state setting)

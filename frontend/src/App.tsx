@@ -87,7 +87,7 @@ export default function App() {
       {/* One entry is one square: icon and label are a single group, centred
           together. 设置 sits at the far end — it is the app's own settings,
           not a fourth destination alongside the three. */}
-      <nav className="flex shrink-0 flex-col items-center gap-2 border-r border-hairline px-2.5 py-3">
+      <nav className="flex shrink-0 flex-col items-center gap-2 border-r border-hairline px-2.5 pt-[calc(var(--titlebar)+0.75rem)] pb-3">
         {TABS.map((t, i) => (
           <button
             key={t.id}
@@ -116,7 +116,7 @@ export default function App() {
           redefining that one variable here scales every padding, gap and box
           inside — and the nav, which sits outside, keeps the size it has. */}
       <main
-        className="relative min-w-0 flex-1 overflow-hidden bg-page"
+        className="relative min-w-0 flex-1 overflow-hidden bg-page pt-(--titlebar)"
         style={{ '--spacing': '0.275rem' } as React.CSSProperties}
       >
         <div className="h-full overflow-y-auto px-7 py-6">
@@ -138,7 +138,7 @@ export default function App() {
             )}
           </PushTrack>
         </div>
-        <div id={OVERLAY_ROOT} className="pointer-events-none absolute inset-0 z-10" />
+        <div id={OVERLAY_ROOT} className="pointer-events-none absolute inset-x-0 top-(--titlebar) bottom-0 z-10" />
       </main>
 
       <CommandPalette open={palette} onClose={() => setPalette(false)} onRun={run} />
