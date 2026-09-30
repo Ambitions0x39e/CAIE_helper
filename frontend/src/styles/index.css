@@ -5,6 +5,11 @@
    pywebview's create_window already covers text selection, zoom and dragging.
    These are the four it has no switch for. */
 
+/* Height of the macOS toolbar the page runs under; app_web/main.py sets it. */
+:root {
+  --titlebar: 0px;
+}
+
 html,
 body {
   /* No rubber-band at the scroll edges — the single loudest browser tell. */
