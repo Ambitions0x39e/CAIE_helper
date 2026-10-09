@@ -61,6 +61,16 @@ export interface PyApi {
   export_mistakes_answers(
     indices: number[],
   ): Promise<SaveResult & { warnings?: string[] }>
+  practice_topics(
+    subject: string, component: string,
+  ): Promise<SimpleResult & { topics?: Record<string, string> }>
+  start_practice(
+    subject: string, component: string,
+    from_year: number, from_season: QuerySeason,
+    to_year: number, to_season: QuerySeason,
+    topic_ids: string[],
+  ): Promise<SimpleResult>
+  save_practice(): Promise<SaveResult>
   mail_settings(): Promise<Record<string, never> | {
     configured: boolean
     smtp_server?: string

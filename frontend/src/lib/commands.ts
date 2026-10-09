@@ -1,6 +1,6 @@
 import type { PaperRecord } from './types'
 
-export type TabId = 'download' | 'manage' | 'mark' | 'settings'
+export type TabId = 'download' | 'manage' | 'practice' | 'mark' | 'settings'
 
 /** Where a command lands you.
  *
@@ -41,6 +41,7 @@ export const COMMANDS: readonly Command[] = [
   // flow should not be entered from the middle.
   { id: 'tab.download', group: '切换', label: '下载', keys: ['dl', 'download', 'xz'], intent: { tab: 'download' } },
   { id: 'tab.manage', group: '切换', label: '管理', keys: ['manage', 'papers', 'gl'], intent: { tab: 'manage' } },
+  { id: 'tab.practice', group: '切换', label: '练习', keys: ['practice', 'drill', 'lx'], intent: { tab: 'practice' } },
   { id: 'tab.mark', group: '切换', label: '批改', keys: ['mark', 'grade', 'pg'], intent: { tab: 'mark' } },
   { id: 'tab.settings', group: '切换', label: '设置', keys: ['settings', 'prefs', 'sz'], intent: { tab: 'settings' } },
 

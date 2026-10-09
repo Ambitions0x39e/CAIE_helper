@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Download, LayoutGrid, Pencil, Settings } from 'lucide-react'
+import { Download, LayoutGrid, Pencil, Settings, Target } from 'lucide-react'
 import { BRIDGE_ABSENT, api, bridge } from './lib/bridge'
 import type { Intent } from './lib/commands'
 import { DownloadTab } from './tabs/download'
 import { ManageTab } from './tabs/manage'
 import { MarkTab } from './tabs/mark'
+import { PracticeTab } from './tabs/practice'
 import { SettingsTab } from './tabs/settings'
 import { CommandPalette } from './ui/CommandPalette'
 import { OVERLAY_ROOT } from './ui/Overlay'
@@ -14,6 +15,7 @@ import { ToastHost, notify } from './ui/Toast'
 const TABS = [
   { id: 'download', label: '下载', Icon: Download },
   { id: 'manage', label: '管理', Icon: LayoutGrid },
+  { id: 'practice', label: '练习', Icon: Target },
   { id: 'mark', label: '批改', Icon: Pencil },
   { id: 'settings', label: '设置', Icon: Settings },
 ] as const
@@ -131,6 +133,8 @@ export default function App() {
               <DownloadTab intent={intent} onConsumed={consumed} />
             ) : tab === 'manage' ? (
               <ManageTab intent={intent} onConsumed={consumed} />
+            ) : tab === 'practice' ? (
+              <PracticeTab />
             ) : tab === 'mark' ? (
               <MarkTab />
             ) : (
