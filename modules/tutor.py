@@ -10,11 +10,11 @@ Two files per syllabus × component under ``~/.cie_helper/tutor/``:
   patterns seen in two papers or more. A mistake made once is on file but
   not in the note until it happens again.
 
-The ledger is iterated, not rewritten: after each confirmed paper the model
-only files that paper's lost questions — into a pattern already on file, or
-a new one — and code does all the counting. Re-grading a paper takes its
-old filings back out first. With no ledger yet, every paper already graded
-is filed, oldest first.
+The ledger is iterated, not rewritten: after each confirmed run the model
+only files the questions that run graded — into a pattern already on file, or
+a new one — and code does all the counting. Re-grading a question takes its
+old filing back out first; the paper's other questions keep theirs. With no
+ledger yet, every paper already graded is filed, oldest first.
 
 The notes are for the student to read. Nothing in the grading path may read
 them — a grader that knows "this student keeps losing marks on Equilibria"
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 
 from openai import OpenAI
@@ -172,16 +172,27 @@ _PATTERN_ID_RE = re.compile(r"p\d+")
 
 
 def file_paper(
-    ledger: Ledger, paper_id: str, lost: list[AttemptRecord], reply: Mapping[str, str],
+    ledger: Ledger,
+    paper_id: str,
+    lost: list[AttemptRecord],
+    reply: Mapping[str, str],
+    *,
+    only: Collection[str] | None = None,
 ) -> Ledger:
     """*ledger* with *paper_id*'s filings replaced by those in *reply*.
+
+    ``only`` names the questions being refiled; the paper's other filings
+    stay. None refiles the whole paper.
 
     A tagged question joins only its own topic's patterns — the model was
     shown no others for it; an untagged one may join any. A question the
     reply leaves out stays unfiled.
     """
+    def stale(hit: tuple[str, str]) -> bool:
+        return hit[0] == paper_id and (only is None or hit[1] in only)
+
     patterns = [
-        p.model_copy(update={"hits": [h for h in p.hits if h[0] != paper_id]})
+        p.model_copy(update={"hits": [h for h in p.hits if not stale(h)]})
         for p in ledger.patterns
     ]
     next_id = 1 + max((int(p.id[1:]) for p in patterns), default=0)
@@ -257,9 +268,10 @@ def refresh_notes(
     *,
     subject_id: str,
     component: str,
-    paper_id: str,
+    questions: Iterable[tuple[str, str]],
 ) -> Path | None:
-    """File *paper_id* into the component's ledger and rewrite its note.
+    """File *questions* — (paper, question) pairs of this component — into
+    its ledger and rewrite its note.
 
     ``records`` is every attempt row, ``comments`` every grader comment by
     (paper, question). Returns the note's path, or None when the component
@@ -270,23 +282,31 @@ def refresh_notes(
         return None
     rows = component_rows(records, subject_id, component)
     path = ledger_path(subject_id, component)
+    picked: dict[str, set[str]] = {}
+    for paper, question in questions:
+        picked.setdefault(paper, set()).add(question)
+    # paper → the questions to refile; None is the whole paper.
+    papers: dict[str, set[str] | None]
     if path.exists():
         ledger = Ledger.model_validate_json(path.read_text(encoding="utf-8"))
-        papers = [paper_id]
+        papers = {paper: only for paper, only in picked.items()}
     else:
         ledger = Ledger()
         # Oldest first; dict keeps each paper at its first appearance.
-        papers = list(dict.fromkeys(
+        papers = dict.fromkeys(
             r.paper_id for r in sorted(rows, key=lambda r: r.timestamp)
-        ))
+        )
 
-    for paper in papers:
-        lost = lost_questions(r for r in rows if r.paper_id == paper)
+    for paper, only in papers.items():
+        lost = lost_questions(
+            r for r in rows
+            if r.paper_id == paper and (only is None or r.question_id in only)
+        )
         reply = _ask(config, build_prompt(
             ledger, lost, comments,
             subject_id=subject_id, component=component, paper_id=paper,
         )) if lost else {}
-        ledger = file_paper(ledger, paper, lost, reply)
+        ledger = file_paper(ledger, paper, lost, reply, only=only)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")

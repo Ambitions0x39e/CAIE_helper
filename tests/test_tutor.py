@@ -207,7 +207,7 @@ def test_with_no_ledger_every_graded_paper_is_filed_oldest_first(
 
     tutor.refresh_notes(
         GraderConfig(api_key="k"), _records(), {},
-        subject_id="9231", component="4", paper_id=_S25,
+        subject_id="9231", component="4", questions=[(_S25, "Q2a")],
     )
 
     assert [_S23 in s for s in sent] == [True, False]
@@ -227,7 +227,7 @@ def test_with_a_ledger_only_the_confirmed_paper_is_filed(
 
     tutor.refresh_notes(
         GraderConfig(api_key="k"), _records(), {},
-        subject_id="9231", component="4", paper_id=_S25,
+        subject_id="9231", component="4", questions=[(_S25, "Q2a")],
     )
 
     assert len(sent) == 1
@@ -235,11 +235,36 @@ def test_with_a_ledger_only_the_confirmed_paper_is_filed(
     assert saved.patterns[0].hits == [(_S23, "Q3a"), (_S25, "Q2a")]
 
 
+def test_refiling_one_question_leaves_its_papers_others_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A redone S23 Q6b: only it is sent and refiled; S23 Q3a keeps p1."""
+    monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+    path = tutor.ledger_path("9231", "4")
+    path.parent.mkdir(parents=True)
+    path.write_text(_ledger().model_dump_json(), encoding="utf-8")
+    sent = _fake_model(monkeypatch, [{"Q6b": "符号写反"}])
+
+    tutor.refresh_notes(
+        GraderConfig(api_key="k"), _records(), {},
+        subject_id="9231", component="4", questions=[(_S23, "Q6b")],
+    )
+
+    assert len(sent) == 1
+    assert "- Q6b" in sent[0]
+    assert "- Q3a" not in sent[0]
+    saved = Ledger.model_validate_json(path.read_text(encoding="utf-8"))
+    assert [(p.text, p.hits) for p in saved.patterns] == [
+        ("Wilcoxon T 取错", [(_S23, "Q3a"), (_S25, "Q2a")]),
+        ("符号写反", [(_S23, "Q6b")]),
+    ]
+
+
 def test_the_grading_path_cannot_reach_the_notes() -> None:
     """Blind grading: nothing the grader imports may import the profile or
     the notes, so no prompt it builds can carry them."""
     code = (
-        "import sys; import modules.marking.workflow; "
+        "import sys; import modules.marking.workflow, modules.marking.sheet; "
         "leaked = [m for m in ('modules.tutor', 'modules.profile') "
         "if m in sys.modules]; assert not leaked, leaked"
     )

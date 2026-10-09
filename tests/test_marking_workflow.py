@@ -1,7 +1,7 @@
-"""Tests for modules.marking.workflow.
+"""Tests for modules.marking.workflow and the grading run in .sheet.
 
-The module takes explicit arguments and imports nothing from the UI layer,
-which is what lets the whole grading flow be driven from here with stubs.
+Both take explicit arguments and import nothing from the UI layer, which is
+what lets the whole grading flow be driven from here with stubs.
 """
 from __future__ import annotations
 
@@ -12,16 +12,16 @@ from pathlib import Path
 import pytest
 
 from core.models import PaperType
-from modules.marking import workflow
+from modules.marking import sheet
 from modules.marking.grader import MarkDetail, QuestionResult
 from modules.marking.ms_parser import PaperConfig, QuestionConfig
 from modules.marking.page_segmenter import PageClip, QuestionRegion
+from modules.marking.sheet import Sheet, SheetItem, grade_sheet
 from modules.marking.syllabus_parser import SyllabusInfo, SyllabusTopic
 from modules.marking.workflow import (
     ScoreSummary,
     collect_page_assignments,
     component_paper_number,
-    grade_paper,
     merge_mcq_answers,
     parse_page_spec,
     regions_to_page_map,
@@ -162,7 +162,7 @@ class TestSummariseScores:
 
 @dataclass
 class _FakeConfig:
-    """Stands in for GraderConfig — grade_paper only reads ``dpi``."""
+    """Stands in for GraderConfig — grade_sheet only reads ``dpi``."""
 
     dpi: int = 200
 
@@ -193,9 +193,12 @@ class _FakeRenderer:
         return [b"png"]
 
 
+_PAPER = "9709_s24_qp_12"
+
+
 def _paper_config(*qids: str) -> PaperConfig:
     return PaperConfig(
-        paper_id="9709_s24_qp_12",
+        paper_id=_PAPER,
         total_marks=5 * len(qids),
         questions={
             qid: QuestionConfig(mark_scheme=f"scheme {qid}", max_marks=5)
@@ -217,28 +220,44 @@ def _stub_grader(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             f'"total": 3, "max": 5}}'
         )
 
-    monkeypatch.setattr(workflow, "grade_question", _fake_grade)
+    monkeypatch.setattr(sheet, "grade_question", _fake_grade)
     return graded
 
 
-class TestGradePaper:
+def _sheet(
+    qids: tuple[str, ...],
+    clips: dict[str, list[PageClip]] | None = None,
+    paper_id: str = _PAPER,
+) -> Sheet:
+    """One item per question, each on a page of its own, so a renderer can
+    single one out by the page number it was asked to render."""
+    clips = clips or {}
+    return Sheet(
+        kind="paper",
+        pdf_path="answers.pdf",
+        items=[
+            SheetItem(
+                paper_id=paper_id, question_id=q, pages=[i + 1],
+                clips=clips.get(q, []),
+            )
+            for i, q in enumerate(qids)
+        ],
+    )
+
+
+class TestGradeSheet:
     def _run(
         self,
         renderer: _FakeRenderer,
         clips: dict[str, list[PageClip]],
         qids: tuple[str, ...] = ("Q1", "Q2"),
         on_progress: object = None,
-    ) -> workflow.GradeOutcome:
-        return grade_paper(
+    ) -> sheet.GradeOutcome:
+        return grade_sheet(
             config=_FakeConfig(),  # type: ignore[arg-type]
-            paper_config=_paper_config(*qids),
-            paper_type=PaperType.MATH,
-            pdf_source=b"%PDF",
-            # Distinct page per question so a renderer can single one out by
-            # the page number it was asked to render.
-            question_ids=list(qids),
-            assignments={q: [i + 1] for i, q in enumerate(qids)},
-            clips=clips,
+            sheet=_sheet(qids, clips),
+            paper_configs={_PAPER: (_paper_config(*qids), PaperType.MATH)},
+            topics_of=lambda _pid: None,
             renderer=renderer,
             on_progress=on_progress,  # type: ignore[arg-type]
         )
@@ -263,7 +282,7 @@ class TestGradePaper:
         Each render blocks on a 3-party barrier before returning. A
         sequential implementation only ever has one render in flight, so the
         barrier never fills and every question times out; this only passes
-        when grade_paper genuinely runs the three concurrently.
+        when grade_sheet genuinely runs the three concurrently.
         """
         barrier = threading.Barrier(3, timeout=2)
 
@@ -300,7 +319,9 @@ class TestGradePaper:
 
         assert not outcome.ok
         assert outcome.failures == [
-            workflow.QuestionFailure(question="Q2", error="render stalled"),
+            sheet.QuestionFailure(
+                question="Q2", error="render stalled", paper_id=_PAPER,
+            ),
         ]
         # Q1 and Q3 still got graded, in original order, despite Q2 failing.
         assert [r.question for r in outcome.results] == ["Q1", "Q3"]
@@ -349,20 +370,81 @@ class TestGradePaper:
         self, _stub_grader: list[str],
     ) -> None:
         seen: list[tuple[int, int, str]] = []
-        outcome = grade_paper(
+        outcome = grade_sheet(
             config=_FakeConfig(),  # type: ignore[arg-type]
-            paper_config=_paper_config(),
-            paper_type=PaperType.MATH,
-            pdf_source=b"%PDF",
-            question_ids=[],
-            assignments={},
-            clips={},
+            sheet=_sheet(()),
+            paper_configs={},
+            topics_of=lambda _pid: None,
             renderer=_FakeRenderer(),
             on_progress=lambda d, t, q: seen.append((d, t, q)),
         )
         assert outcome.ok
         assert outcome.results == []
         assert seen == [(0, 0, "")]
+
+    def test_an_item_with_no_pages_fails_alone(
+        self, _stub_grader: list[str],
+    ) -> None:
+        run = _sheet(("Q1", "Q2"))
+        run.items[0].pages = []
+
+        outcome = grade_sheet(
+            config=_FakeConfig(),  # type: ignore[arg-type]
+            sheet=run,
+            paper_configs={_PAPER: (_paper_config("Q1", "Q2"), PaperType.MATH)},
+            topics_of=lambda _pid: None,
+            renderer=_FakeRenderer(),
+        )
+
+        assert [f.question for f in outcome.failures] == ["Q1"]
+        assert [r.question for r in outcome.results] == ["Q2"]
+
+
+def test_a_sheet_across_two_papers_grades_each_against_its_own(
+    _grader_calls: list[dict[str, object]],
+) -> None:
+    """Q1 of two papers: each graded with its own scheme, type and topics,
+    topics resolved once per paper, and every result told its paper."""
+    other = "9709_s25_qp_43"
+    run = Sheet(
+        kind="practice",
+        export_id="20261009-153012-practice",
+        pdf_path="answers.pdf",
+        items=[
+            SheetItem(paper_id=_PAPER, question_id="Q1", pages=[1]),
+            SheetItem(paper_id=other, question_id="Q1", pages=[2]),
+            SheetItem(paper_id=_PAPER, question_id="Q2", pages=[3]),
+        ],
+    )
+    other_config = PaperConfig(
+        paper_id=other, total_marks=5,
+        questions={"Q1": QuestionConfig(mark_scheme="other Q1", max_marks=5)},
+    )
+    asked: list[str] = []
+
+    def topics_of(pid: str) -> dict[str, str] | None:
+        asked.append(pid)
+        return topics_for_paper(_syllabus(), pid)
+
+    outcome = grade_sheet(
+        config=_FakeConfig(),  # type: ignore[arg-type]
+        sheet=run,
+        paper_configs={
+            _PAPER: (_paper_config("Q1", "Q2"), PaperType.MATH),
+            other: (other_config, PaperType.PHYSICS),
+        },
+        topics_of=topics_of,
+        renderer=_FakeRenderer(),
+    )
+
+    assert sorted(asked) == sorted([_PAPER, other])
+    by_scheme = {c["mark_scheme"]: c for c in _grader_calls}
+    assert by_scheme["other Q1"]["paper_type"] is PaperType.PHYSICS
+    assert by_scheme["other Q1"]["topic_list"] == {"4.1": "Forces and equilibrium"}
+    assert by_scheme["scheme Q1"]["paper_type"] is PaperType.MATH
+    assert [(r.paper_id, r.question) for r in outcome.results] == [
+        (_PAPER, "Q1"), (other, "Q1"), (_PAPER, "Q2"),
+    ]
 
 
 # ── Syllabus topics ───────────────────────────────────────────────
@@ -430,7 +512,7 @@ class TestTopicsForPaper:
 
 @pytest.fixture
 def _grader_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
-    """Record every keyword ``grade_paper`` passes to ``grade_question``."""
+    """Record every keyword ``grade_sheet`` passes to ``grade_question``."""
     calls: list[dict[str, object]] = []
 
     def _fake_grade(**kwargs: object) -> str:
@@ -441,43 +523,37 @@ def _grader_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
             f'"total": 3, "max": 5, "topic": "1.1"}}'
         )
 
-    monkeypatch.setattr(workflow, "grade_question", _fake_grade)
+    monkeypatch.setattr(sheet, "grade_question", _fake_grade)
     return calls
 
 
-class TestGradePaperTopicPlumbing:
+class TestGradeSheetTopicPlumbing:
     """What reaches ``grade_question``, not what comes back from it.
 
     Asserting on the returned ``QuestionResult.topic`` would pass just as
-    well if ``grade_paper`` never forwarded anything, since the stubbed reply
+    well if ``grade_sheet`` never forwarded anything, since the stubbed reply
     carries a topic of its own.
     """
 
     def _run(
         self,
-        calls_fixture: list[dict[str, object]],
-        **kwargs: object,
-    ) -> workflow.GradeOutcome:
-        return grade_paper(
+        *,
+        syllabus_info: SyllabusInfo | None = None,
+        # The cover-page id an uploaded mark scheme is keyed by.
+        paper_id: str = "9709/12/M/J/25",
+    ) -> sheet.GradeOutcome:
+        return grade_sheet(
             config=_FakeConfig(),  # type: ignore[arg-type]
-            paper_config=_paper_config("Q1", "Q2"),
-            paper_type=PaperType.MATH,
-            pdf_source=b"%PDF",
-            question_ids=["Q1", "Q2"],
-            assignments={"Q1": [1], "Q2": [2]},
-            clips={},
+            sheet=_sheet(("Q1", "Q2"), paper_id=paper_id),
+            paper_configs={paper_id: (_paper_config("Q1", "Q2"), PaperType.MATH)},
+            topics_of=lambda pid: topics_for_paper(syllabus_info, pid),
             renderer=_FakeRenderer(),
-            **kwargs,  # type: ignore[arg-type]
         )
 
     def test_every_question_is_graded_against_its_papers_topics(
         self, _grader_calls: list[dict[str, object]],
     ) -> None:
-        self._run(
-            _grader_calls,
-            syllabus_info=_syllabus(),
-            paper_id="9709_s25_qp_12",
-        )
+        self._run(syllabus_info=_syllabus(), paper_id="9709_s25_qp_12")
 
         assert len(_grader_calls) == 2
         assert [c["question_id"] for c in _grader_calls] == ["Q1", "Q2"]
@@ -491,11 +567,7 @@ class TestGradePaperTopicPlumbing:
         self, _grader_calls: list[dict[str, object]],
     ) -> None:
         """Not a fixed list: paper 4 must get section 4, not section 1."""
-        self._run(
-            _grader_calls,
-            syllabus_info=_syllabus(),
-            paper_id="9709_s25_qp_43",
-        )
+        self._run(syllabus_info=_syllabus(), paper_id="9709_s25_qp_43")
 
         for call in _grader_calls:
             assert call["topic_list"] == {"4.1": "Forces and equilibrium"}
@@ -503,7 +575,7 @@ class TestGradePaperTopicPlumbing:
     def test_without_a_syllabus_nothing_is_passed(
         self, _grader_calls: list[dict[str, object]],
     ) -> None:
-        self._run(_grader_calls, paper_id="9709_s25_qp_12")
+        self._run(paper_id="9709_s25_qp_12")
 
         assert _grader_calls
         for call in _grader_calls:
@@ -512,7 +584,7 @@ class TestGradePaperTopicPlumbing:
     def test_an_uploaded_mark_scheme_has_no_paper_id_and_no_topics(
         self, _grader_calls: list[dict[str, object]],
     ) -> None:
-        self._run(_grader_calls, syllabus_info=_syllabus())
+        self._run(syllabus_info=_syllabus())
 
         assert _grader_calls
         for call in _grader_calls:
@@ -521,11 +593,7 @@ class TestGradePaperTopicPlumbing:
     def test_the_topic_the_model_returns_reaches_the_result(
         self, _grader_calls: list[dict[str, object]],
     ) -> None:
-        outcome = self._run(
-            _grader_calls,
-            syllabus_info=_syllabus(),
-            paper_id="9709_s25_qp_12",
-        )
+        outcome = self._run(syllabus_info=_syllabus(), paper_id="9709_s25_qp_12")
 
         assert [r.topic for r in outcome.results] == ["1.1", "1.1"]
 
@@ -548,13 +616,13 @@ def test_a_reply_missing_marking_points_is_asked_again(
         asked.append(kwargs["missing_marks"])
         return next(replies)
 
-    monkeypatch.setattr(workflow, "grade_question", _fake_grade)
-    outcome = TestGradePaper()._run(_FakeRenderer(), {}, qids=("Q1",))
+    monkeypatch.setattr(sheet, "grade_question", _fake_grade)
+    outcome = TestGradeSheet()._run(_FakeRenderer(), {}, qids=("Q1",))
 
     assert asked == [None, 1]
     assert outcome.results[0].total == 5
 
 
 def test_a_complete_reply_is_asked_once(_stub_grader: list[str]) -> None:
-    TestGradePaper()._run(_FakeRenderer(), {}, qids=("Q1",))
+    TestGradeSheet()._run(_FakeRenderer(), {}, qids=("Q1",))
     assert _stub_grader == ["Q1"]

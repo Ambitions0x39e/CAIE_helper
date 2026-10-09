@@ -19,8 +19,9 @@ export const CELL_H = 'h-20'
  * grading queue have to be sorted rather than taken as they come. A plain
  * string sort is not it either: that puts `10` before `2`. */
 export function compareQuestionIds(a: string, b: string): number {
-  const na = Number.parseInt(a, 10)
-  const nb = Number.parseInt(b, 10)
+  // Mark scheme keys carry a `Q` ("Q3a"); the number after it is what orders.
+  const na = Number.parseInt(a.replace(/^Q/, ''), 10)
+  const nb = Number.parseInt(b.replace(/^Q/, ''), 10)
   if (na !== nb) {
     // An id with no leading number sorts last rather than compares as NaN.
     return (Number.isNaN(na) ? Infinity : na) - (Number.isNaN(nb) ? Infinity : nb)
@@ -34,4 +35,21 @@ export function scoreBand(got: number | null, max: number): string {
   if (got >= max) return 'bg-ok/12'
   if (got <= 0) return 'bg-bad/12'
   return 'bg-warn/12'
+}
+
+/** A graded question's key: two papers can both have a `Q3a`. */
+export function resultKey(paperId: string, question: string): string {
+  return `${paperId}:${question}`
+}
+
+/** The question half of a `resultKey`. Question ids never hold a colon. */
+export function questionOf(key: string): string {
+  return key.slice(key.lastIndexOf(':') + 1)
+}
+
+/** Paper, then reading order within it. */
+export function compareResultKeys(a: string, b: string): number {
+  const pa = a.slice(0, a.lastIndexOf(':'))
+  const pb = b.slice(0, b.lastIndexOf(':'))
+  return pa === pb ? compareQuestionIds(questionOf(a), questionOf(b)) : pa.localeCompare(pb)
 }

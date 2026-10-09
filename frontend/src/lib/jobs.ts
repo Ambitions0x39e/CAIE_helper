@@ -21,7 +21,7 @@ export type JobEvent =
   | { type: 'syllabus_fetch'; subject_id: string }
   | { type: 'progress'; done: number; total: number; question: string }
   | { type: 'result'; result: Record<string, unknown> }
-  | { type: 'graded'; results: unknown[]; failures: { question: string; error: string }[] }
+  | { type: 'graded'; results: unknown[]; failures: { paper_id: string; question: string; error: string }[] }
   | { type: 'update_progress'; fraction: number | null; text: string }
   | { type: 'practice_progress'; stage: string; done: number; total: number; paper: string }
   | { type: 'practice_ready'; count: number; warnings: string[] }
