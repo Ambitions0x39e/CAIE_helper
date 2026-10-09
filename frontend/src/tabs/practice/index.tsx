@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { api } from '../../lib/bridge'
-import { PRACTICE_JOB, onJobEvent } from '../../lib/jobs'
 import type { QuerySeason, SyllabusConfig } from '../../lib/types'
 import { Button } from '../../ui/Button'
 import { Select } from '../../ui/Select'
-import { notify } from '../../ui/Toast'
 import { FIRST_YEAR, SEASONS } from '../download/session'
+import { getSnapshot, startPractice, subscribe } from './job'
 
 const thisYear = new Date().getFullYear()
 const YEARS: string[] = []
@@ -24,8 +23,7 @@ export function PracticeTab() {
   const [topics, setTopics] = useState<Record<string, string> | null>(null)
   const [topicError, setTopicError] = useState<string | null>(null)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
-  const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState<string | null>(null)
+  const { busy, progress } = useSyncExternalStore(subscribe, getSnapshot)
 
   useEffect(() => {
     api()
@@ -65,55 +63,14 @@ export function PracticeTab() {
     }
   }, [subject, component])
 
-  useEffect(
-    () =>
-      onJobEvent((e) => {
-        if (e.type === 'practice_progress') {
-          setProgress(`${e.stage} ${e.done}/${e.total} · ${e.paper}`)
-        } else if (e.type === 'practice_ready') {
-          setProgress(null)
-          api()
-            .then((a) => a.save_practice())
-            .then((r) => {
-              if (r.cancelled) return
-              if (!r.success) {
-                notify('bad', r.error ?? '保存失败')
-                return
-              }
-              notify(
-                e.warnings.length ? 'warn' : 'ok',
-                e.warnings.length
-                  ? `${e.count} 道题 → ${r.path}；${e.warnings.join('；')}`
-                  : `${e.count} 道题 → ${r.path}`,
-              )
-            })
-            .catch((err) => notify('bad', String(err instanceof Error ? err.message : err)))
-        } else if (e.type === 'error' && e.job === PRACTICE_JOB) {
-          notify('bad', e.message)
-        } else if (e.type === 'finished' && e.job === PRACTICE_JOB) {
-          setBusy(false)
-          setProgress(null)
-        }
-      }),
-    [],
-  )
-
   const toggle = (id: string) => {
     const next = new Set(picked)
     if (!next.delete(id)) next.add(id)
     setPicked(next)
   }
 
-  const generate = async () => {
-    setBusy(true)
-    const r = await (await api()).start_practice(
-      subject, component, Number(fromYear), fromSeason, Number(toYear), toSeason, [...picked],
-    )
-    if (!r.success) {
-      setBusy(false)
-      notify('bad', r.error ?? '生成失败')
-    }
-  }
+  const generate = () =>
+    startPractice(subject, component, Number(fromYear), fromSeason, Number(toYear), toSeason, [...picked])
 
   return (
     <div className="space-y-4">
