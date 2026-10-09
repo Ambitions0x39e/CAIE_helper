@@ -307,3 +307,14 @@ def test_total_is_summed_from_the_awarded_codes() -> None:
         "marks": [{"code": "B2", "awarded": True, "reason": ""}] * 2,
     })
     assert parse_grading_result(over).total == 2
+
+
+@pytest.mark.parametrize("pt", [PaperType.MATH, PaperType.PHYSICS])
+def test_printed_question_text_is_not_an_answer(pt: PaperType) -> None:
+    """A blank answer page still shows the printed question, its diagram and
+    the ruling. Without this rule the model credited one of those blank pages
+    with full marks — 9231_s25_qp_33 Q6a, 6/6, on one ask in three; with it,
+    0/6 on five asks out of five, and a written answer kept its 3/3."""
+    prompt = GRADING_PROMPTS[pt]
+    assert "只有学生手写的笔迹才算" in prompt
+    assert "整题没有手写笔迹时，所有 awarded 填 false，error_type 填 blank" in prompt
