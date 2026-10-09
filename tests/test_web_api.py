@@ -409,10 +409,68 @@ def test_practice_topics_without_a_syllabus_is_a_result(api: Api, monkeypatch) -
     assert result["error"]
 
 
-def test_a_practice_request_with_no_topics_is_a_result(api: Api) -> None:
+def test_a_practice_request_with_no_topics_is_a_result(api: Api, monkeypatch) -> None:
+    from core.settings import GraderConfig
+
+    monkeypatch.setattr(GraderConfig, "try_load", lambda: GraderConfig(api_key="k"))
+    monkeypatch.setattr("app_web.api.start", lambda *_: pytest.fail("no job"))
     result = api.start_practice("9709", "4", 2023, "s", 2024, "w", [])
     assert result["success"] is False
+    assert "at least 1" in result["error"]
     json.dumps(result)
+
+
+def test_a_practice_job_hands_its_set_to_save_and_a_rebuild_clears_it(
+    api: Api, monkeypatch,
+) -> None:
+    from core.settings import GraderConfig
+    from modules.marking.syllabus_parser import SyllabusInfo, SyllabusTopic
+
+    info = SyllabusInfo(
+        subject_id="9709",
+        topics={"4.2": SyllabusTopic(topic_id="4.2", name="Kinematics")},
+        component_topics={"4": ["4.2"]},
+    )
+    events: list[dict] = []
+    saved: list[bytes] = []
+    builds: list[int] = []
+
+    def fake_build(_request, _topics, *, on_progress, **_kw):
+        builds.append(1)
+        on_progress("分类", 1, 1, "9709_s23_qp_41")
+        if len(builds) == 2:
+            raise ValueError("这个范围里没有考到所选 topic 的题")
+        return b"%PDF", 2, ["w"]
+
+    def inline_start(_name, work):
+        work()
+        return {"success": True}
+
+    def capture_save(data, _suggested, _types):
+        saved.append(data)
+        return {"success": True, "path": "/x.pdf"}
+
+    monkeypatch.setattr(GraderConfig, "try_load", lambda: GraderConfig(api_key="k"))
+    monkeypatch.setattr("app_web.api.load_syllabus", lambda _s: info)
+    monkeypatch.setattr("app_web.api.build_practice", fake_build)
+    monkeypatch.setattr("app_web.api.start", inline_start)
+    monkeypatch.setattr("app_web.api.push", events.append)
+    monkeypatch.setattr("app_web.api._save_to_chosen_file", capture_save)
+
+    args = ("9709", "4", 2023, "s", 2024, "w", ["4.2"])
+    assert api.start_practice(*args) == {"success": True}
+    assert events == [
+        {"type": "practice_progress", "stage": "分类", "done": 1, "total": 1,
+         "paper": "9709_s23_qp_41"},
+        {"type": "practice_ready", "count": 2, "warnings": ["w"]},
+    ]
+    assert api.save_practice() == {"success": True, "path": "/x.pdf"}
+    assert saved == [b"%PDF"]
+
+    with pytest.raises(ValueError):
+        api.start_practice(*args)
+    assert api.save_practice()["success"] is False
+    assert saved == [b"%PDF"]
 
 
 def test_saving_before_building_is_a_result(api: Api) -> None:
