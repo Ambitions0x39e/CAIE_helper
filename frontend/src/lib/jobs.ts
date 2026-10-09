@@ -23,6 +23,8 @@ export type JobEvent =
   | { type: 'result'; result: Record<string, unknown> }
   | { type: 'graded'; results: unknown[]; failures: { question: string; error: string }[] }
   | { type: 'update_progress'; fraction: number | null; text: string }
+  | { type: 'practice_progress'; stage: string; done: number; total: number; paper: string }
+  | { type: 'practice_ready'; count: number; warnings: string[] }
   | { type: 'error'; job: string; message: string }
   | { type: 'finished'; job: string }
 
@@ -32,6 +34,7 @@ export const PARSE_JOB = '解析'
 export const GRADE_JOB = '批改'
 export const MCQ_JOB = '识别答案'
 export const UPDATE_JOB = '更新'
+export const PRACTICE_JOB = '练习'
 
 type Listener = (e: JobEvent) => void
 
