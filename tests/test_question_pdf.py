@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import json
 import re
 from pathlib import Path
 
@@ -784,11 +785,7 @@ class TestBuildExport:
             build_export([_record("Q1")], {"9231_s22_qp_41": ""})
 
 
-def test_crops_for_paper_without_a_wanted_list_takes_every_question(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Classification needs every main question, under the bare ids the mark
-    scheme uses — ``"2"``, not ``"Q2"``, or ``answer_pages`` finds nothing."""
+def _fake_three_question_scan(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
     from modules.marking.page_segmenter import PageClip, QuestionRegion
@@ -818,7 +815,44 @@ def test_crops_for_paper_without_a_wanted_list_takes_every_question(
         lambda _p, whole, _c, **_k: whole,
     )
 
+
+def test_crops_for_paper_without_a_wanted_list_takes_every_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Classification needs every main question, under the "Q"-prefixed ids
+    the segmenter and the mark scheme use."""
+    _fake_three_question_scan(monkeypatch)
+
     crops, missing = crops_for_paper("9709_s23_qp_41", "qp.pdf")
 
-    assert [c.question_id for c in crops] == ["1", "2", "3"]
+    assert [c.question_id for c in crops] == ["Q1", "Q2", "Q3"]
     assert missing == []
+
+
+def test_a_crop_id_finds_its_mark_scheme_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The ids ``crops_for_paper`` hands out are the ones ``answer_pages``
+    matches against a mark scheme keyed "Q2a", "Q2b"."""
+    from core.settings import app_settings
+    from modules.marking.answer_sheet import answer_pages
+
+    _fake_three_question_scan(monkeypatch)
+    cache = tmp_path / "ms"
+    cache.mkdir()
+    monkeypatch.setattr(
+        type(app_settings), "ms_cache_dir", property(lambda _self: cache),
+    )
+    (cache / "9709_s23_ms_41.sp4.json").write_text(json.dumps({
+        "paper_id": "9709/41/M/J/23",
+        "total_marks": 50,
+        "questions": {
+            "Q2a": {"max_marks": 2, "mark_scheme": "B1: x = 3"},
+            "Q2b": {"max_marks": 3, "mark_scheme": "M1: v = u + at"},
+        },
+    }), "utf-8")
+
+    crops, _ = crops_for_paper("9709_s23_qp_41", "qp.pdf")
+    q2 = next(c.question_id for c in crops if c.question_id == "Q2")
+
+    assert answer_pages("9709_s23_qp_41", q2, "9709_s23_ms_41.pdf") is not None

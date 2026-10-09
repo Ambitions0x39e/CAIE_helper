@@ -1,6 +1,9 @@
 """Tests for ``modules.practice`` — 专项练习."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from modules.downloader import QueryEntry, QueryResult
@@ -108,13 +111,13 @@ def test_no_syllabus_or_an_unmapped_component_has_no_topics() -> None:
 
 def test_any_matching_topic_selects_the_question_in_paper_order() -> None:
     classified = {
-        "9709_s23_qp_41": {"1": ["4.1"], "2": ["4.2", "4.5"], "3": []},
-        "9709_w23_qp_41": {"1": ["4.5"], "4": ["4.2"]},
+        "9709_s23_qp_41": {"Q1": ["4.1"], "Q2": ["4.2", "4.5"], "Q3": []},
+        "9709_w23_qp_41": {"Q1": ["4.5"], "Q4": ["4.2"]},
     }
     assert select(classified, {"4.2", "4.5"}) == [
-        Picked("9709_s23_qp_41", "2"),
-        Picked("9709_w23_qp_41", "1"),
-        Picked("9709_w23_qp_41", "4"),
+        Picked("9709_s23_qp_41", "Q2"),
+        Picked("9709_w23_qp_41", "Q1"),
+        Picked("9709_w23_qp_41", "Q4"),
     ]
 
 
@@ -145,11 +148,11 @@ def three_questions(monkeypatch: pytest.MonkeyPatch) -> None:
     """Q1 and Q3 fit on one page; Q2 runs over a page break."""
     def crops(paper_id: str, qp_path: str):
         return [
-            QuestionCrop(paper_id, "1", qp_path, [Band(1, 60.0, 300.0)]),
-            QuestionCrop(paper_id, "2", qp_path, [
+            QuestionCrop(paper_id, "Q1", qp_path, [Band(1, 60.0, 300.0)]),
+            QuestionCrop(paper_id, "Q2", qp_path, [
                 Band(2, 60.0, 700.0), Band(3, 60.0, 200.0),
             ]),
-            QuestionCrop(paper_id, "3", qp_path, [Band(4, 60.0, 500.0)]),
+            QuestionCrop(paper_id, "Q3", qp_path, [Band(4, 60.0, 500.0)]),
         ], []
     monkeypatch.setattr("modules.practice.crops_for_paper", crops)
 
@@ -187,7 +190,7 @@ def test_the_model_sees_which_images_belong_to_which_question(
         seen["prompt"] = prompt
         return '{"Q1": ["4.1"], "Q2": ["4.2", "4.5"], "Q3": ["4.5"]}'
 
-    assert _classify(call) == {"1": ["4.1"], "2": ["4.2", "4.5"], "3": ["4.5"]}
+    assert _classify(call) == {"Q1": ["4.1"], "Q2": ["4.2", "4.5"], "Q3": ["4.5"]}
     assert seen["n"] == 4
     prompt = str(seen["prompt"])
     assert "图 1 是 Q1" in prompt
@@ -198,9 +201,9 @@ def test_the_model_sees_which_images_belong_to_which_question(
 
 def test_ids_the_list_does_not_have_are_dropped(cache_dir, three_questions) -> None:
     def call(*_):
-        return '```json\n{"Q1": ["4.1", "9.9"], "2": ["nope"], "Q3": "4.5"}\n```'
+        return '```json\n{"Q1": ["4.1", "9.9"], "Q2": ["nope"], "Q3": "4.5"}\n```'
 
-    assert _classify(call) == {"1": ["4.1"], "2": [], "3": ["4.5"]}
+    assert _classify(call) == {"Q1": ["4.1"], "Q2": [], "Q3": ["4.5"]}
 
 
 def test_an_unreadable_answer_is_an_error(cache_dir, three_questions) -> None:
@@ -231,6 +234,39 @@ def test_a_changed_topic_list_classifies_again(
     assert cached_classification(
         "9709_s23_qp_41", {**TOPICS, "4.6": "Momentum"},
     ) is None
+
+
+@pytest.mark.parametrize("answer", ["{}", '{"Question 1": ["4.1"]}'])
+def test_an_answer_naming_no_question_is_an_error_and_is_not_cached(
+    cache_dir, three_questions, answer: str,
+) -> None:
+    from modules.practice import cached_classification
+
+    with pytest.raises(ValueError):
+        _classify(lambda *_: answer)
+    assert cached_classification("9709_s23_qp_41", TOPICS) is None
+    assert not list(cache_dir.glob("*.json"))
+
+
+@pytest.mark.parametrize("key", ["Q3", "3", " q3 "])
+def test_a_question_key_may_be_spelled_with_or_without_the_q(
+    cache_dir, three_questions, key: str,
+) -> None:
+    result = _classify(lambda *_: json.dumps({key: ["4.5"]}))
+    assert result == {"Q1": [], "Q2": [], "Q3": ["4.5"]}
+
+
+@pytest.mark.parametrize("content", ["[]", '"x"', "null", "{not json"])
+def test_a_cache_file_that_is_not_an_object_is_a_miss(
+    cache_dir, three_questions, content: str,
+) -> None:
+    from modules.practice import cached_classification
+
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "9709_s23_qp_41.json").write_text(content, "utf-8")
+
+    assert cached_classification("9709_s23_qp_41", TOPICS) is None
+    assert _classify(lambda *_: '{"Q1": ["4.1"]}')["Q1"] == ["4.1"]
 
 
 # -- build_practice ----------------------------------------------------------
@@ -287,8 +323,8 @@ def pipeline(tmp_path, monkeypatch: pytest.MonkeyPatch):
     )])
     listings = {"s": _listing("9709_s23_qp_41"), "w": _listing("9709_w23_qp_42")}
     classified = {
-        "9709_s23_qp_41": {"1": ["4.1"], "2": ["4.2"]},
-        "9709_w23_qp_42": {"1": ["4.2", "4.5"], "2": ["4.5"]},
+        "9709_s23_qp_41": {"Q1": ["4.1"], "Q2": ["4.2"]},
+        "9709_w23_qp_42": {"Q1": ["4.2", "4.5"], "Q2": ["4.5"]},
     }
     exported: dict[str, object] = {}
 
@@ -329,7 +365,7 @@ def test_missing_papers_are_downloaded_and_matching_questions_exported(
 
     assert downloader.got == ["9709_w23_qp_42"]
     assert exported["picks"] == [
-        Picked("9709_s23_qp_41", "2"), Picked("9709_w23_qp_42", "1"),
+        Picked("9709_s23_qp_41", "Q2"), Picked("9709_w23_qp_42", "Q1"),
     ]
     assert data == b"%PDF-practice"
     assert count == 2
@@ -345,15 +381,58 @@ def test_a_paper_that_fails_to_download_is_named_and_skipped(
     (_, count, warnings), _, _ = _run(
         store, query, tmp_path, fail={"9709_w23_qp_42"},
     )
-    assert exported["picks"] == [Picked("9709_s23_qp_41", "2")]
+    assert exported["picks"] == [Picked("9709_s23_qp_41", "Q2")]
     assert count == 1
     assert "9709_w23_qp_42: 下载失败（HTTP 404）" in warnings
+
+
+def test_a_record_whose_qp_file_was_deleted_is_redownloaded_without_a_warning(
+    pipeline, tmp_path,
+) -> None:
+    """The store refuses a paper it already has, so the download reports
+    failure even though the file is back on disk."""
+    store, query, exported = pipeline
+    record = store.records[0]
+    Path(record.qp_path).unlink()
+
+    class Refusing(_Downloader):
+        def download(self, request):
+            Path(record.qp_path).write_bytes(b"%PDF")
+            self.got.append(request.paper_id)
+            return DownloadResult(
+                success=False, paper_id=request.paper_id, error="already exists",
+            )
+
+    from modules.practice import build_practice
+
+    downloader = Refusing(store, tmp_path)
+    _, count, warnings = build_practice(
+        _request(from_season="s", to_season="s"), TOPICS,
+        store=store, downloader=downloader,
+        config=GraderConfig(api_key="k"), renderer=_Renderer(),
+        on_progress=lambda *_: None, query=query,
+    )
+
+    assert downloader.got == ["9709_s23_qp_41"]
+    assert warnings == ["9709_w23_qp_42: mark scheme 里没有 1 的答案"]
+    assert exported["picks"] == [Picked("9709_s23_qp_41", "Q2")]
+    assert count == 1
 
 
 def test_nothing_on_the_chosen_topics_is_an_error(pipeline, tmp_path) -> None:
     store, query, _ = pipeline
     with pytest.raises(ValueError, match="没有考到所选 topic"):
         _run(store, query, tmp_path, request=_request(topic_ids=["4.9"]))
+
+
+def test_a_range_that_ends_before_it_starts_is_refused() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="起始考季晚于结束考季"):
+        _request(from_year=2024, from_season="s", to_year=2023, to_season="w")
+    with pytest.raises(ValidationError, match="起始考季晚于结束考季"):
+        _request(from_year=2023, from_season="w", to_year=2023, to_season="s")
+    _request(from_year=2023, from_season="s", to_year=2023, to_season="s")
 
 
 def test_a_request_with_no_topics_is_refused() -> None:
@@ -371,13 +450,13 @@ def test_a_paper_whose_classification_fails_is_named_and_the_rest_still_export(
     def classify(pid, *_a, **_k):
         if pid == "9709_w23_qp_42":
             raise ValueError("模型没有返回 JSON")
-        return {"1": ["4.1"], "2": ["4.2"]}
+        return {"Q1": ["4.1"], "Q2": ["4.2"]}
 
     monkeypatch.setattr("modules.practice.classify_paper", classify)
     (_, count, warnings), _, _ = _run(store, query, tmp_path)
 
     assert "9709_w23_qp_42: 分类失败（模型没有返回 JSON）" in warnings
-    assert exported["picks"] == [Picked("9709_s23_qp_41", "2")]
+    assert exported["picks"] == [Picked("9709_s23_qp_41", "Q2")]
     assert count == 1
 
 

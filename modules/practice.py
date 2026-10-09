@@ -15,7 +15,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from core.settings import GraderConfig, app_settings
 from modules.downloader import QueryResult, query_available
@@ -138,6 +138,8 @@ def cached_classification(
         data = json.loads(_cache_file(paper_id).read_text("utf-8"))
     except (OSError, ValueError):
         return None
+    if not isinstance(data, dict):
+        return None
     if data.get("topics") != dict(topics):
         return None
     questions = data.get("questions")
@@ -153,8 +155,9 @@ def _save(
     path.write_text(json.dumps(payload, ensure_ascii=False), "utf-8")
 
 
-def _bare(question_id: str) -> str:
-    return question_id.strip().removeprefix("Q")
+def _as_q(question_id: str) -> str:
+    """``"3"``, ``"Q3"`` and ``" q3 "`` are the same question: ``"Q3"``."""
+    return "Q" + question_id.strip().upper().removeprefix("Q")
 
 
 def _parse(
@@ -170,7 +173,11 @@ def _parse(
         raise ValueError(f"模型返回的 JSON 读不了: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"模型返回的不是 JSON 对象: {raw[:80]!r}")
-    answers = {_bare(str(k)): v for k, v in data.items()}
+    answers = {_as_q(str(k)): v for k, v in data.items()}
+    if not any(qid in answers for qid in question_ids):
+        # ``{}`` and keys like "Question 1" would otherwise read as "no
+        # question examines any topic" and be cached as such.
+        raise ValueError(f"模型的回答里没有任何一道题: {raw[:80]!r}")
     out: dict[str, list[str]] = {}
     for qid in question_ids:
         picked = answers.get(qid, [])
@@ -214,7 +221,7 @@ def classify_paper(
             continue
         first, last = len(pngs) + 1, len(pngs) + len(images)
         span = f"图 {first}" if first == last else f"图 {first}–{last}"
-        spans.append(f"{span} 是 Q{crop.question_id}")
+        spans.append(f"{span} 是 {crop.question_id}")
         ids.append(crop.question_id)
         pngs.extend(images)
     if not pngs:
@@ -248,6 +255,14 @@ class PracticeRequest(BaseModel):
     to_season: str
     topic_ids: list[str] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def _range_runs_forward(self) -> PracticeRequest:
+        start = (self.from_year, _season_index(self.from_season))
+        end = (self.to_year, _season_index(self.to_season))
+        if start > end:
+            raise ValueError("起始考季晚于结束考季")
+        return self
+
 
 def _on_disk(
     paper_ids: Sequence[str],
@@ -269,6 +284,10 @@ def _on_disk(
         on_progress("下载", done, len(missing), pid)
         result = downloader.download(DownloadRequest(paper_id=pid))
         if not result.success or not result.qp_path:
+            # A paper the store already has cannot be added again, so a stale
+            # record's re-download reports failure with the file back on disk.
+            if pid in known and Path(known[pid].qp_path).is_file():
+                continue
             warnings.append(f"{pid}: 下载失败（{result.error}）")
             continue
         paths[pid] = (result.qp_path, result.ms_path or "")
