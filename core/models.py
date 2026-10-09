@@ -171,3 +171,54 @@ class PaperRecord(BaseModel):
                 f"score_total ({self.score_total})"
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Export records (.cpd)
+# ---------------------------------------------------------------------------
+
+
+class ExportedQuestion(BaseModel):
+    """One main question as it was laid out in an export's blank paper."""
+
+    paper_id: str
+    #: The main question, ``"Q3"``; the mark scheme's parts hang off it.
+    question_id: str
+    #: Pages of ``blank.pdf``, 1-based.
+    pages: list[int]
+
+
+class ExportedMark(BaseModel):
+    """One mark scheme part, copied out of the parse at export time."""
+
+    max_marks: int
+    mark_scheme: str
+
+
+class ExportedPaper(BaseModel):
+    """What grading one paper's questions needs, frozen at export time."""
+
+    #: None when the grading path could not be told; those questions cannot
+    #: be graded when handed back.
+    paper_type: PaperType | None = None
+    topics: dict[str, str] | None = None
+    #: Mark scheme part (``"Q3a"``) → its entry, for the exported questions
+    #: only. None when the mark scheme was never parsed.
+    ms: dict[str, ExportedMark] | None = None
+
+
+class ExportManifest(BaseModel):
+    """``manifest.json`` inside a ``.cpd``.
+
+    A snapshot: handing the paper back, typesetting its answers and saving
+    the blank paper again read only this, never the mark scheme cache or the
+    syllabus, which may since have been re-parsed or re-imported.
+    """
+
+    export_id: str
+    kind: Literal["practice", "mistakes"]
+    title: str
+    created_at: datetime.datetime
+    questions: list[ExportedQuestion]
+    papers: dict[str, ExportedPaper]
+    graded_at: datetime.datetime | None = None

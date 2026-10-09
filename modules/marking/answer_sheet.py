@@ -459,7 +459,7 @@ def atoms(
     *math* off treats "^" and "_" as the characters they are. Headings need
     that: a paper id is "9231_s25_qp_11", and read as maths it comes out as
     9231 with a subscript s, then 25, then a subscript q — which is exactly
-    how the first interleaved export printed it.
+    how an early answer sheet printed it.
     """
     base = size if base is None else base
     step = max(size * _SCRIPT_SCALE, base * _MIN_SCALE)
@@ -699,13 +699,7 @@ def _escape(run: _Run) -> bytes:
 
 
 class _Sheet:
-    """Lines flowed down pages, then turned into PDF content streams.
-
-    The page size is a parameter because these pages get interleaved with
-    pages cropped out of a question paper, and two of the papers on disk are
-    A4 rather than letter — a document that changes size halfway prints
-    badly.
-    """
+    """Lines flowed down pages, then turned into PDF content streams."""
 
     def __init__(
         self, width: float = _PAGE_W, height: float = _PAGE_H
@@ -892,44 +886,6 @@ def build_answer_sheet(
         raise ValueError("没有可导出的答案")
 
     return sheet.to_bytes(), warnings
-
-
-def answer_pages(
-    paper_id: str,
-    question_id: str,
-    ms_path: str,
-    width: float = _PAGE_W,
-    height: float = _PAGE_H,
-) -> bytes | None:
-    """One main question's mark scheme, as its own page(s), or None.
-
-    This is what goes on the page *after* the question in the interleaved
-    export, so it opens with the paper and question it answers — a sheet
-    that is going to be flipped past needs to say what it belongs to.
-
-    None when the paper has never been parsed or the parse doesn't cover
-    this question; the caller turns that into a warning rather than a gap.
-    """
-    from modules.marking.ms_parser import cached_mark_scheme
-
-    config = cached_mark_scheme(ms_path)
-    if config is None:
-        return None
-    main = main_question_id(question_id)
-    ids = [qid for qid in config.questions if main_question_id(qid) == main]
-    if not ids:
-        return None
-
-    sheet = _Sheet(width, height)
-    sheet.new_page()
-    # Latin-1 only: the base-14 fonts this is set in have no CJK glyphs, so
-    # a Chinese heading would come out as a row of question marks.
-    sheet.block(
-        f"{paper_id}   mark scheme", _PAPER_SIZE, bold=True, math=False,
-    )
-    sheet.gap(_PARA_GAP)
-    _write_question(sheet, main, ids, config)
-    return sheet.to_bytes()
 
 
 def _write_question(

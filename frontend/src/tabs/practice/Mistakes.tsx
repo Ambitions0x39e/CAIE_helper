@@ -237,7 +237,7 @@ export function Mistakes({ intent }: { intent?: Intent | null }) {
         </Button>
         <Button
           tone="accent"
-          title="把所选题目从原卷裁下来，一道大题一页（不含答题横线）；每题后面跟一页 mark scheme"
+          title="把所选题目从原卷裁下来，保留答题空间，一道大题另起一页"
           onClick={() => runExport((i) => api().then((a) => a.export_mistakes_pdf(i)))}
         >
           导出 PDF

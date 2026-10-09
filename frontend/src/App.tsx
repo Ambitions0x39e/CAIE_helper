@@ -134,7 +134,7 @@ export default function App() {
             ) : tab === 'manage' ? (
               <ManageTab intent={intent} onConsumed={consumed} />
             ) : tab === 'practice' ? (
-              <PracticeTab />
+              <PracticeTab intent={intent} onConsumed={consumed} />
             ) : tab === 'mark' ? (
               <MarkTab />
             ) : (

@@ -21,6 +21,7 @@ import type {
   QueryResult,
   QuerySeason,
   DownloadSource,
+  ExportRecord,
   SaveResult,
   SimpleResult,
   SyllabusConfig,
@@ -71,6 +72,8 @@ export interface PyApi {
     topic_ids: string[],
   ): Promise<SimpleResult>
   save_practice(): Promise<SaveResult>
+  exports(): Promise<ExportRecord[]>
+  save_export_blank(export_id: string): Promise<SaveResult>
   mail_settings(): Promise<Record<string, never> | {
     configured: boolean
     smtp_server?: string

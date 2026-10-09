@@ -125,7 +125,7 @@ describe('topicCommands', () => {
     const hits = matchCommands(parseQuery('错题 Equilibria'), topics)
     assert.equal(hits.length, 1)
     assert.deepEqual(hits[0].intent, {
-      tab: 'manage',
+      tab: 'practice',
       view: 'mistakes',
       sub: 'topic',
       param: '9701 · Equilibria',
