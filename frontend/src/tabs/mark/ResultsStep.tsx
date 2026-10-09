@@ -6,14 +6,17 @@ import { Metric } from '../../ui/Metric'
 import { Select } from '../../ui/Select'
 import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
-import { CELL_H, GRID_COLS, compareResultKeys, questionOf, resultKey, scoreBand } from './cells'
 import {
-  ERROR_LABELS,
-  type Analysis,
-  type ErrorType,
-  type GradeProgress,
-  type QuestionResult,
-} from './types'
+  CELL_H,
+  GRID_COLS,
+  compareResultKeys,
+  paperOf,
+  questionOf,
+  resultKey,
+  scoreBand,
+} from './cells'
+import type { Run } from './run'
+import { ERROR_LABELS, type ErrorType, type QuestionResult } from './types'
 
 const UNCLASSIFIED = '未分类'
 
@@ -22,36 +25,38 @@ const UNCLASSIFIED = '未分类'
 const NONE = '__none__'
 
 export function ResultsStep({
-  analysis,
-  queue,
-  results,
-  grading,
-  progress,
+  paperId: analysedId,
+  run,
 }: {
-  analysis: Analysis
-  /** The questions this run was asked to grade, as `resultKey`s. */
-  queue: string[]
-  results: QuestionResult[]
-  grading: boolean
-  progress: GradeProgress | null
+  /** The analysed paper's id, which a whole paper is recorded under unless
+   * the student types another. */
+  paperId: string
+  run: Run
 }) {
+  const { queue, results, grading, progress } = run
+  const whole = run.kind === 'paper'
   const [overrides, setOverrides] = useState<Record<string, string>>({})
   const [open, setOpen] = useState<string | null>(null)
-  const [paperId, setPaperId] = useState(analysis.paper_id ?? '')
+  const [paperId, setPaperId] = useState(analysedId)
   /** Every override is keyed by `resultKey`. Topic: the id the student
    * picked; null is 未分类; absent keeps the model's tag. */
   const [topicOverrides, setTopicOverrides] = useState<Record<string, string | null>>({})
   const [errorOverrides, setErrorOverrides] = useState<Record<string, ErrorType | null>>({})
-  /** Null when the paper has no topics to pick from — no syllabus, or a
-   * component it does not map. */
-  const [topics, setTopics] = useState<Record<string, string> | null>(null)
+  /** A whole paper's topics, which follow the paper id typed below. Null
+   * when the paper has no topics to pick from — no syllabus, or a component
+   * it does not map. */
+  const [typedTopics, setTypedTopics] = useState<Record<string, string> | null>(null)
 
   useEffect(() => {
+    if (!whole) return
     api()
       .then((a) => a.topics_for(paperId))
-      .then(setTopics)
-      .catch(() => setTopics(null))
-  }, [paperId])
+      .then(setTypedTopics)
+      .catch(() => setTypedTopics(null))
+  }, [paperId, whole])
+
+  /** A hand-back's questions each pick from their own paper's list. */
+  const topicsOf = (paper: string) => (whole ? typedTopics : (run.topics[paper] ?? null))
 
   const keyOf = (r: QuestionResult) => resultKey(r.paper_id, r.question)
   const topicOf = (r: QuestionResult) =>
@@ -60,7 +65,7 @@ export function ResultsStep({
     keyOf(r) in errorOverrides ? errorOverrides[keyOf(r)] : r.error_type
   const topicName = (r: QuestionResult) => {
     const id = topicOf(r)
-    return id ? (topics?.[id] ?? id) : UNCLASSIFIED
+    return id ? (topicsOf(r.paper_id)?.[id] ?? id) : UNCLASSIFIED
   }
 
   const byId = useMemo(
@@ -111,8 +116,8 @@ export function ResultsStep({
     return <div className="text-caption text-muted">还没有批改结果。</div>
   }
 
-  const maxOf = (k: string) =>
-    byId.get(k)?.max ?? analysis.questions?.[questionOf(k)]?.max_marks ?? 0
+  const maxOf = (k: string) => byId.get(k)?.max ?? run.max[k] ?? 0
+  const papers = [...new Set(order.map(paperOf))]
 
   const detail = open === null ? null : (byId.get(open) ?? null)
 
@@ -147,51 +152,65 @@ export function ResultsStep({
         <div className="text-caption text-muted">点开任意一题看判分明细。</div>
       )}
 
-      <div className="grid gap-2.5" style={{ gridTemplateColumns: GRID_COLS }}>
-        {order.map((k) => {
-          const r = byId.get(k)
-          const got = r ? scoreOf(r) : null
-          // A cell with no mark on it means one of two things, and only the run
-          // being over tells them apart: still queued, or the question failed.
-          const value = r ? `${got}/${maxOf(k)}` : grading ? '—' : '失败'
-          return (
-            <button
-              key={k}
-              onClick={() => r && setOpen(k)}
-              disabled={!r}
-              className={`flex ${CELL_H} flex-col items-center justify-center gap-0.5 rounded-ui
-                          border-2 ${scoreBand(got, maxOf(k))} ${
-                            open === k ? 'border-accent' : 'border-transparent'
-                          }`}
-            >
-              <span className="text-subhead font-semibold">{questionOf(k)}</span>
-              <span
-                className={`text-[20px] font-bold tabular-nums ${
-                  r ? '' : grading ? 'text-muted' : 'text-bad'
-                }`}
-              >
-                {value}
-              </span>
-              {r && topics && got !== null && got < r.max && (
-                <span className="max-w-full truncate px-2 text-micro text-muted">
-                  {topicName(r)}
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
+      {papers.map((paper) => (
+        <div key={paper} className="space-y-2">
+          {!whole && <div className="text-caption tabular-nums text-muted">{paper}</div>}
+          <div className="grid gap-2.5" style={{ gridTemplateColumns: GRID_COLS }}>
+            {order
+              .filter((k) => paperOf(k) === paper)
+              .map((k) => {
+                const r = byId.get(k)
+                const got = r ? scoreOf(r) : null
+                // A cell with no mark on it means one of two things, and only the run
+                // being over tells them apart: still queued, or the question failed.
+                const value = r ? `${got}/${maxOf(k)}` : grading ? '—' : '失败'
+                return (
+                  <button
+                    key={k}
+                    onClick={() => r && setOpen(k)}
+                    disabled={!r}
+                    className={`flex ${CELL_H} flex-col items-center justify-center gap-0.5 rounded-ui
+                                border-2 ${scoreBand(got, maxOf(k))} ${
+                                  open === k ? 'border-accent' : 'border-transparent'
+                                }`}
+                  >
+                    <span className="text-subhead font-semibold">{questionOf(k)}</span>
+                    <span
+                      className={`text-[20px] font-bold tabular-nums ${
+                        r ? '' : grading ? 'text-muted' : 'text-bad'
+                      }`}
+                    >
+                      {value}
+                    </span>
+                    {r && topicsOf(r.paper_id) && got !== null && got < r.max && (
+                      <span className="max-w-full truncate px-2 text-micro text-muted">
+                        {topicName(r)}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+          </div>
+        </div>
+      ))}
 
       {!grading && (
         <div className="flex flex-wrap items-center gap-2 rounded-ui border border-hairline bg-panel p-3.5">
           <span className="text-caption text-muted">检查结果，确认后记录分数。</span>
-          <TextInput
-            value={paperId}
-            onChange={setPaperId}
-            placeholder="记到哪份卷子"
-            className="ml-auto w-48"
-          />
-          <Button tone="accent" onClick={confirm} disabled={!paperId}>
+          {whole && (
+            <TextInput
+              value={paperId}
+              onChange={setPaperId}
+              placeholder="记到哪份卷子"
+              className="ml-auto w-48"
+            />
+          )}
+          <Button
+            tone="accent"
+            onClick={confirm}
+            disabled={whole && !paperId}
+            className={whole ? '' : 'ml-auto'}
+          >
             确认并记录分数
           </Button>
         </div>
@@ -233,7 +252,7 @@ export function ResultsStep({
               <span className="text-faint">留空 = 用模型给的 {detail.total}</span>
             </label>
 
-            {topics && (
+            {topicsOf(detail.paper_id) && (
               <Select
                 label="topic"
                 value={topicOf(detail) ?? NONE}
@@ -245,7 +264,10 @@ export function ResultsStep({
                 }
                 options={[
                   { value: NONE, label: UNCLASSIFIED },
-                  ...Object.entries(topics).map(([id, name]) => ({ value: id, label: name })),
+                  ...Object.entries(topicsOf(detail.paper_id) ?? {}).map(([id, name]) => ({
+                    value: id,
+                    label: name,
+                  })),
                 ]}
               />
             )}

@@ -16,9 +16,12 @@ type SectionId = (typeof SECTIONS)[number]['id']
 export function PracticeTab({
   intent,
   onConsumed,
+  navigate,
 }: {
   intent?: Intent | null
   onConsumed?: () => void
+  /** Hands an intent to another tab — a hand-back lands on 批改. */
+  navigate?: (intent: Intent) => void
 }) {
   const [section, setSection] = useState<SectionId>('topics')
   const [dir, setDir] = useState(1)
@@ -52,7 +55,7 @@ export function PracticeTab({
         ) : section === 'mistakes' ? (
           <Mistakes intent={sub} />
         ) : (
-          <Exports />
+          <Exports navigate={navigate} />
         )}
       </PushTrack>
     </div>

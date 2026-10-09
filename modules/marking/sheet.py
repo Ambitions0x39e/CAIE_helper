@@ -11,6 +11,7 @@ Nothing in this module may import ``app_web``, nor reach ``modules.tutor`` or
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -28,7 +29,7 @@ from modules.marking.grader import (
 from modules.marking.page_segmenter import PageClip
 
 if TYPE_CHECKING:
-    from core.models import PaperType
+    from core.models import ExportManifest, PaperType
     from core.settings import GraderConfig
     from modules.marking.ms_parser import PaperConfig
     from modules.marking.workflow import Renderer
@@ -200,3 +201,128 @@ def grade_sheet(
     if on_progress is not None:
         on_progress(total, total, "")
     return outcome
+
+
+# ── Handing an export back ────────────────────────────────────────
+
+#: The footer ``question_pdf`` prints on every exported page.
+_MARKER_RE = re.compile(r"CIEH (\S+) (\S+) (\S+) \d+/\d+")
+
+
+class ForeignPaper(ValueError):
+    """The PDF carries another export's markers."""
+
+
+def pages_by_question(
+    pdf_path: str, export_id: str,
+) -> dict[tuple[str, str], list[int]]:
+    """(paper_id, main question) → the 1-based pages of *pdf_path* holding it.
+
+    A marked page goes to the question its marker names; an unmarked one —
+    a page added in GoodNotes — to the question of the marked page before
+    it. Pages before the first marker belong to nothing and are dropped.
+
+    Read with ``all_texts``: a layered export may wrap each original page in
+    a form XObject, and the marker then sits inside an ``LTFigure`` the
+    default parameters do not read text from. The segmenter must not share
+    this — with ``all_texts`` it mistakes short words for question numbers.
+
+    Raises:
+        ForeignPaper: a marker names another export.
+    """
+    from pdfminer.high_level import extract_pages
+    from pdfminer.layout import LAParams, LTFigure, LTTextContainer
+
+    def marker(element: object) -> re.Match[str] | None:
+        for child in element:  # type: ignore[attr-defined]
+            if isinstance(child, LTTextContainer):
+                found = _MARKER_RE.search(child.get_text())
+                if found:
+                    return found
+            elif isinstance(child, LTFigure):
+                found = marker(child)
+                if found:
+                    return found
+        return None
+
+    out: dict[tuple[str, str], list[int]] = {}
+    current: tuple[str, str] | None = None
+    laparams = LAParams(all_texts=True)
+    for number, page in enumerate(extract_pages(pdf_path, laparams=laparams), 1):
+        found = marker(page)
+        if found:
+            if found.group(1) != export_id:
+                raise ForeignPaper(found.group(1))
+            current = (found.group(2), found.group(3))
+        if current is not None:
+            out.setdefault(current, []).append(number)
+    return out
+
+
+@dataclass
+class HandBack:
+    """An export handed back, ready for :func:`grade_sheet`."""
+
+    sheet: Sheet
+    paper_configs: dict[str, tuple[PaperConfig, PaperType]]
+    #: (paper_id, main question) that cannot be graded, and why.
+    skipped: list[tuple[str, str, str]]
+
+
+def sheet_from_export(manifest: ExportManifest, pdf_path: str) -> HandBack:
+    """The answers in *pdf_path* as a sheet, graded against the export's
+    snapshot.
+
+    Each exported main question becomes its mark scheme parts, all on the
+    question's pages. A question is skipped with its reason when no page was
+    found for it, or its paper went out with no mark scheme or no grading
+    type.
+
+    Raises:
+        ForeignPaper: the PDF is another export's.
+    """
+    from modules.marking.ms_parser import PaperConfig, QuestionConfig
+    from modules.question_pdf import main_question_id
+
+    pages = pages_by_question(pdf_path, manifest.export_id)
+    items: list[SheetItem] = []
+    configs: dict[str, tuple[PaperConfig, PaperType]] = {}
+    skipped: list[tuple[str, str, str]] = []
+    for question in manifest.questions:
+        pid, main = question.paper_id, question.question_id
+        paper = manifest.papers.get(pid)
+        on = pages.get((pid, main))
+        if not on:
+            skipped.append((pid, main, "no_pages"))
+            continue
+        if paper is None or paper.ms is None:
+            skipped.append((pid, main, "no_mark_scheme"))
+            continue
+        if paper.paper_type is None:
+            skipped.append((pid, main, "no_grading_type"))
+            continue
+        parts = [qid for qid in paper.ms if main_question_id(qid) == main]
+        if not parts:
+            skipped.append((pid, main, "no_mark_scheme"))
+            continue
+        if pid not in configs:
+            configs[pid] = (
+                PaperConfig(
+                    paper_id=pid,
+                    total_marks=sum(m.max_marks for m in paper.ms.values()),
+                    questions={
+                        qid: QuestionConfig(
+                            max_marks=m.max_marks, mark_scheme=m.mark_scheme,
+                        )
+                        for qid, m in paper.ms.items()
+                    },
+                    paper_type=paper.paper_type,
+                ),
+                paper.paper_type,
+            )
+        items += [SheetItem(paper_id=pid, question_id=qid, pages=on) for qid in parts]
+    sheet = Sheet(
+        kind=manifest.kind, export_id=manifest.export_id,
+        pdf_path=pdf_path, items=items,
+    )
+    return HandBack(sheet=sheet, paper_configs=configs, skipped=skipped)
