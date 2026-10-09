@@ -361,3 +361,89 @@ def test_a_request_with_no_topics_is_refused() -> None:
 
     with pytest.raises(ValidationError):
         _request(topic_ids=[])
+
+
+def test_a_paper_whose_classification_fails_is_named_and_the_rest_still_export(
+    pipeline, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, query, exported = pipeline
+
+    def classify(pid, *_a, **_k):
+        if pid == "9709_w23_qp_42":
+            raise ValueError("模型没有返回 JSON")
+        return {"1": ["4.1"], "2": ["4.2"]}
+
+    monkeypatch.setattr("modules.practice.classify_paper", classify)
+    (_, count, warnings), _, _ = _run(store, query, tmp_path)
+
+    assert "9709_w23_qp_42: 分类失败（模型没有返回 JSON）" in warnings
+    assert exported["picks"] == [Picked("9709_s23_qp_41", "2")]
+    assert count == 1
+
+
+# -- _parse_answers ----------------------------------------------------------
+
+
+def test_only_papers_without_a_cached_parse_are_parsed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modules.practice import _parse_answers
+
+    parsed: list[str] = []
+    events: list[tuple[str, int, int, str]] = []
+    monkeypatch.setattr(
+        "modules.marking.ms_parser.cached_mark_scheme",
+        lambda path: object() if path == "cached.pdf" else None,
+    )
+    monkeypatch.setattr(
+        "modules.marking.ms_parser.parse_mark_scheme",
+        lambda path, **_k: parsed.append(path),
+    )
+    monkeypatch.setattr(
+        "modules.marking.syllabus_parser.resolve_grading_type", lambda _pid: "mark",
+    )
+
+    warnings = _parse_answers(
+        ["a", "b", "c", "d"],
+        {"a": "cached.pdf", "b": "", "c": "c.pdf", "d": "d.pdf"},
+        GraderConfig(api_key="k"), _Renderer(),
+        lambda *e: events.append(e),
+    )
+
+    assert warnings == []
+    assert parsed == ["c.pdf", "d.pdf"]
+    assert events == [("答案", 1, 2, "c"), ("答案", 2, 2, "d")]
+
+
+def test_an_unknown_grading_type_and_a_failed_parse_are_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modules.practice import _parse_answers
+
+    parsed: list[str] = []
+
+    def parse(path, **_k):
+        parsed.append(path)
+        if path == "bad.pdf":
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "modules.marking.ms_parser.cached_mark_scheme", lambda _path: None,
+    )
+    monkeypatch.setattr("modules.marking.ms_parser.parse_mark_scheme", parse)
+    monkeypatch.setattr(
+        "modules.marking.syllabus_parser.resolve_grading_type",
+        lambda pid: None if pid == "unknown" else "mark",
+    )
+
+    warnings = _parse_answers(
+        ["unknown", "bad", "good"],
+        {"unknown": "u.pdf", "bad": "bad.pdf", "good": "good.pdf"},
+        GraderConfig(api_key="k"), _Renderer(), lambda *_e: None,
+    )
+
+    assert parsed == ["bad.pdf", "good.pdf"]
+    assert warnings == [
+        "unknown: 不知道这份卷的批改类型，没有解析 mark scheme",
+        "bad: mark scheme 解析失败（boom）",
+    ]
