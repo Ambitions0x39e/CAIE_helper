@@ -3,7 +3,8 @@
 The 错题本 can only draw on papers that were graded, because a question's
 topic is something the grader decides. Practice draws on papers never done,
 so it classifies them itself — one vision call per paper, cached on disk —
-and hands the picks to :mod:`modules.question_pdf`.
+and hands the picks to :mod:`modules.exports`, which lays them out as a paper
+to work on and records what grading it will need.
 
 Nothing here may import ``app_web``.
 """
@@ -19,9 +20,10 @@ from pydantic import BaseModel, Field, model_validator
 
 from core.settings import GraderConfig, app_settings
 from modules.downloader import QueryResult, query_available
-from modules.question_pdf import build_export, crops_for_paper
+from modules.question_pdf import crops_for_paper
 
 if TYPE_CHECKING:
+    from core.models import ExportManifest
     from core.storage import CSVStore
     from modules.downloader import PaperDownloader
     from modules.marking.syllabus_parser import SyllabusInfo
@@ -263,6 +265,27 @@ class PracticeRequest(BaseModel):
             raise ValueError("起始考季晚于结束考季")
         return self
 
+    @model_validator(mode="after")
+    def _not_multiple_choice(self) -> PracticeRequest:
+        """The segmenter cannot split an MCQ paper into its questions: of 20
+        9702 Paper 1s on disk, one came apart into its 40."""
+        from core.models import PaperType
+        from modules.marking.syllabus_parser import resolve_grading_type
+
+        probe = f"{self.subject}_s00_qp_{self.component}1"
+        if resolve_grading_type(probe) is PaperType.MCQ:
+            raise ValueError("选择题卷不能做专项练习")
+        return self
+
+    @property
+    def title(self) -> str:
+        """``9709 P4 · 4.1 4.3 · s23–w24``"""
+        return (
+            f"{self.subject} P{self.component} · {' '.join(self.topic_ids)} · "
+            f"{self.from_season}{self.from_year % 100:02d}–"
+            f"{self.to_season}{self.to_year % 100:02d}"
+        )
+
 
 def _on_disk(
     paper_ids: Sequence[str],
@@ -307,8 +330,8 @@ def _parse_answers(
     """Parse the mark schemes the export will need and has no parse of.
 
     Returns warnings. A paper whose grading path is unknown cannot be parsed,
-    and MCQ parses are never cached, so neither gets an answer page —
-    ``build_export`` names the questions that lack one.
+    so it goes into the record without a mark scheme, and its questions
+    cannot be graded when handed back.
     """
     from modules.marking.ms_parser import cached_mark_scheme, parse_mark_scheme
     from modules.marking.syllabus_parser import resolve_grading_type
@@ -344,8 +367,8 @@ def build_practice(
     renderer: Renderer,
     on_progress: Progress,
     query: Callable[[str, str, str], QueryResult] = query_available,  # type: ignore[assignment]
-) -> tuple[bytes, int, list[str]]:
-    """The whole practice set: (PDF, number of questions, warnings).
+) -> tuple[ExportManifest, bytes, list[str]]:
+    """The whole practice set: (record, blank paper, warnings).
 
     Every failure short of "nothing at all" is a warning, the way the
     错题本 export reports a paper it could not use.
@@ -380,7 +403,10 @@ def build_practice(
     ms_path_of = {pid: paths[pid][1] for pid in chosen}
     warnings += _parse_answers(chosen, ms_path_of, config, renderer, on_progress)
 
-    data, export_warnings = build_export(
-        picks, {pid: paths[pid][0] for pid in chosen}, ms_path_of,
+    from modules.exports import build_record
+
+    manifest, data, export_warnings = build_record(
+        "practice", request.title, picks,
+        {pid: paths[pid][0] for pid in chosen}, ms_path_of,
     )
-    return data, len(picks), warnings + export_warnings
+    return manifest, data, warnings + export_warnings

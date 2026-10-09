@@ -20,8 +20,8 @@ import pytest
 from pydantic import ValidationError
 
 from app_web.api import Api, _invalid
-from core.models import MistakeRecord
-from core.storage import AttemptStore, MistakeStore
+from core.models import ExportedQuestion, ExportManifest, MistakeRecord
+from core.storage import AttemptStore, ExportStore, MistakeStore
 from modules.marking.grader import QuestionResult
 from modules.marking.sheet import Sheet
 
@@ -34,6 +34,7 @@ def api(tmp_path) -> Api:
     a = Api()
     a._mistakes = MistakeStore(tmp_path / "mistakes.csv")
     a._attempts = AttemptStore(tmp_path / "attempts.csv")
+    a._exports = ExportStore(tmp_path / "exports")
     a._refresh_notes_later = lambda *_: None  # type: ignore[method-assign]
     return a
 
@@ -453,19 +454,30 @@ def test_a_practice_job_hands_its_set_to_save_and_a_rebuild_clears_it(
     saved: list[bytes] = []
     builds: list[int] = []
 
+    manifest = ExportManifest(
+        export_id="20261009-153012-practice", kind="practice", title="9709 P4",
+        created_at=datetime.datetime(2026, 10, 9, 15, 30, 12),
+        questions=[
+            ExportedQuestion(paper_id="9709_s23_qp_41", question_id=q, pages=[n])
+            for n, q in enumerate(("Q1", "Q2"), 1)
+        ],
+        papers={},
+    )
+
     def fake_build(_request, _topics, *, on_progress, **_kw):
         builds.append(1)
         on_progress("分类", 1, 1, "9709_s23_qp_41")
         if len(builds) == 2:
             raise ValueError("这个范围里没有考到所选 topic 的题")
-        return b"%PDF", 2, ["w"]
+        return manifest, b"%PDF", ["w"]
 
     def inline_start(_name, work):
         work()
         return {"success": True}
 
-    def capture_save(data, _suggested, _types):
+    def capture_save(data, suggested, _types):
         saved.append(data)
+        assert suggested == "20261009-153012-practice.pdf"
         return {"success": True, "path": "/x.pdf"}
 
     monkeypatch.setattr(GraderConfig, "try_load", lambda: GraderConfig(api_key="k"))
@@ -484,11 +496,19 @@ def test_a_practice_job_hands_its_set_to_save_and_a_rebuild_clears_it(
     ]
     assert api.save_practice() == {"success": True, "path": "/x.pdf"}
     assert saved == [b"%PDF"]
+    [record] = api.exports()
+    assert (record["export_id"], record["question_count"]) == (
+        "20261009-153012-practice", 2,
+    )
+    assert "papers" not in record
+    assert api.save_export_blank("20261009-153012-practice")["success"] is True
+    assert saved == [b"%PDF", b"%PDF"]
+    saved.clear()
 
     with pytest.raises(ValueError):
         api.start_practice(*args)
     assert api.save_practice()["success"] is False
-    assert saved == [b"%PDF"]
+    assert saved == []
 
 
 def test_saving_before_building_is_a_result(api: Api) -> None:
@@ -512,3 +532,9 @@ def test_a_whole_paper_is_recorded_under_the_id_confirmed_on_the_page(
     assert (out["score"], out["max_score"]) == (5.0, 6.0)
     assert {a.paper_id for a in api._attempts.load_all()} == {"9701_w25_qp_22"}
     assert [m.question_id for m in api._mistakes.load_all()] == ["2"]
+
+
+def test_a_record_id_that_is_not_one_is_refused(api: Api) -> None:
+    """The id comes from the page; it must not reach outside exports/."""
+    out = api.save_export_blank("../../data")
+    assert out["success"] is False

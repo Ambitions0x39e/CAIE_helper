@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import csv
 import datetime
+import os
+import re
+import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path, PureWindowsPath
@@ -9,7 +12,7 @@ from typing import IO, Any
 
 from pydantic import BaseModel, ValidationError
 
-from core.models import AttemptRecord, MistakeRecord, PaperRecord
+from core.models import AttemptRecord, ExportManifest, MistakeRecord, PaperRecord
 from core.settings import app_settings
 
 # Canonical column order that matches PaperRecord fields + computed percentage
@@ -422,3 +425,63 @@ class AttemptStore:
             "max_score": record.max_score,
             "timestamp": record.timestamp.isoformat(),
         }
+
+
+#: ``YYYYMMDD-HHMMSS-<kind>``: what names a ``.cpd``, and all it may be — the
+#: id arrives from the page, and must not reach outside ``exports/``.
+_EXPORT_ID_RE = re.compile(r"\d{8}-\d{6}-(practice|mistakes)")
+
+
+class ExportStore:
+    """Export records: one ``.cpd`` per exported practice set or batch of
+    mistakes — a zip of ``manifest.json`` and ``blank.pdf``.
+
+    One file per export rather than a folder of them, so ``exports/`` holds
+    exports and nothing else. A zip cannot be edited in place: every write
+    builds a new one beside it and swaps it in, so a crash mid-write leaves
+    the old record whole.
+    """
+
+    def __init__(self, directory: Path | None = None) -> None:
+        self._dir = directory or app_settings.exports_dir
+
+    def _path(self, export_id: str) -> Path:
+        if not _EXPORT_ID_RE.fullmatch(export_id):
+            raise ValueError(f"不是导出记录的编号: {export_id!r}")
+        return self._dir / f"{export_id}.cpd"
+
+    def load_all(self) -> list[ExportManifest]:
+        """Every readable record, newest first. A file that is not one is
+        skipped rather than failing the list."""
+        out: list[ExportManifest] = []
+        for path in self._dir.glob("*.cpd"):
+            try:
+                out.append(self.read(path.stem))
+            except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+                continue
+        return sorted(out, key=lambda m: m.created_at, reverse=True)
+
+    def read(self, export_id: str) -> ExportManifest:
+        with zipfile.ZipFile(self._path(export_id)) as archive:
+            return ExportManifest.model_validate_json(archive.read("manifest.json"))
+
+    def blank_pdf(self, export_id: str) -> bytes:
+        with zipfile.ZipFile(self._path(export_id)) as archive:
+            return archive.read("blank.pdf")
+
+    def write(self, manifest: ExportManifest, blank_pdf: bytes) -> Path:
+        path = self._path(manifest.export_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        staged = path.with_suffix(".tmp")
+        with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", manifest.model_dump_json(indent=2))
+            archive.writestr("blank.pdf", blank_pdf)
+        os.replace(staged, path)
+        return path
+
+    def mark_graded(self, export_id: str, when: datetime.datetime) -> None:
+        manifest = self.read(export_id)
+        self.write(
+            manifest.model_copy(update={"graded_at": when}),
+            self.blank_pdf(export_id),
+        )

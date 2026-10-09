@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -313,6 +314,9 @@ def _request(**over):
     })
 
 
+_UNTYPED = "9709_w23_qp_42: 不知道批改类型，这几题交回时不能批改"
+
+
 @pytest.fixture
 def pipeline(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Two sessions, one 4x paper each; s23 is already on disk."""
@@ -334,12 +338,14 @@ def pipeline(tmp_path, monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr("modules.practice._parse_answers", lambda *_a, **_k: [])
 
-    def export(records, qp_of, ms_of):
+    def export(kind, title, records, qp_of, ms_of):
+        exported["kind"], exported["title"] = kind, title
         exported["picks"] = list(records)
         exported["qp"] = dict(qp_of)
-        return b"%PDF-practice", ["9709_w23_qp_42: mark scheme 里没有 1 的答案"]
+        manifest = SimpleNamespace(questions=exported["picks"])
+        return manifest, b"%PDF-practice", [_UNTYPED]
 
-    monkeypatch.setattr("modules.practice.build_export", export)
+    monkeypatch.setattr("modules.exports.build_record", export)
     return store, (lambda _s, _y, season: listings[season]), exported
 
 
@@ -361,7 +367,8 @@ def test_missing_papers_are_downloaded_and_matching_questions_exported(
     pipeline, tmp_path,
 ) -> None:
     store, query, exported = pipeline
-    (data, count, warnings), downloader, events = _run(store, query, tmp_path)
+    (manifest, data, warnings), downloader, events = _run(store, query, tmp_path)
+    count = len(manifest.questions)
 
     assert downloader.got == ["9709_w23_qp_42"]
     assert exported["picks"] == [
@@ -369,7 +376,9 @@ def test_missing_papers_are_downloaded_and_matching_questions_exported(
     ]
     assert data == b"%PDF-practice"
     assert count == 2
-    assert warnings == ["9709_w23_qp_42: mark scheme 里没有 1 的答案"]
+    assert exported["kind"] == "practice"
+    assert exported["title"] == "9709 P4 · 4.2 · s23–w23"
+    assert warnings == [_UNTYPED]
     assert ("下载", 1, 1, "9709_w23_qp_42") in events
     assert ("分类", 2, 2, "9709_w23_qp_42") in events
 
@@ -378,11 +387,11 @@ def test_a_paper_that_fails_to_download_is_named_and_skipped(
     pipeline, tmp_path,
 ) -> None:
     store, query, exported = pipeline
-    (_, count, warnings), _, _ = _run(
+    (manifest, _, warnings), _, _ = _run(
         store, query, tmp_path, fail={"9709_w23_qp_42"},
     )
     assert exported["picks"] == [Picked("9709_s23_qp_41", "Q2")]
-    assert count == 1
+    assert len(manifest.questions) == 1
     assert "9709_w23_qp_42: 下载失败（HTTP 404）" in warnings
 
 
@@ -406,7 +415,7 @@ def test_a_record_whose_qp_file_was_deleted_is_redownloaded_without_a_warning(
     from modules.practice import build_practice
 
     downloader = Refusing(store, tmp_path)
-    _, count, warnings = build_practice(
+    manifest, _, warnings = build_practice(
         _request(from_season="s", to_season="s"), TOPICS,
         store=store, downloader=downloader,
         config=GraderConfig(api_key="k"), renderer=_Renderer(),
@@ -414,9 +423,9 @@ def test_a_record_whose_qp_file_was_deleted_is_redownloaded_without_a_warning(
     )
 
     assert downloader.got == ["9709_s23_qp_41"]
-    assert warnings == ["9709_w23_qp_42: mark scheme 里没有 1 的答案"]
+    assert warnings == [_UNTYPED]
     assert exported["picks"] == [Picked("9709_s23_qp_41", "Q2")]
-    assert count == 1
+    assert len(manifest.questions) == 1
 
 
 def test_nothing_on_the_chosen_topics_is_an_error(pipeline, tmp_path) -> None:
@@ -453,11 +462,11 @@ def test_a_paper_whose_classification_fails_is_named_and_the_rest_still_export(
         return {"Q1": ["4.1"], "Q2": ["4.2"]}
 
     monkeypatch.setattr("modules.practice.classify_paper", classify)
-    (_, count, warnings), _, _ = _run(store, query, tmp_path)
+    (manifest, _, warnings), _, _ = _run(store, query, tmp_path)
 
     assert "9709_w23_qp_42: 分类失败（模型没有返回 JSON）" in warnings
     assert exported["picks"] == [Picked("9709_s23_qp_41", "Q2")]
-    assert count == 1
+    assert len(manifest.questions) == 1
 
 
 # -- _parse_answers ----------------------------------------------------------
@@ -526,3 +535,12 @@ def test_an_unknown_grading_type_and_a_failed_parse_are_warnings(
         "unknown: 不知道这份卷的批改类型，没有解析 mark scheme",
         "bad: mark scheme 解析失败（boom）",
     ]
+
+
+def test_a_multiple_choice_component_is_refused() -> None:
+    """The segmenter cannot split an MCQ paper into its questions."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="选择题卷不能做专项练习"):
+        _request(subject="9702", component="1")
+    _request(subject="9702", component="2")

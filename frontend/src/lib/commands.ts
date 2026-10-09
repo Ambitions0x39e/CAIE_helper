@@ -53,9 +53,12 @@ export const COMMANDS: readonly Command[] = [
   { id: 'mg.organize', group: '管理', label: '整理', keys: ['organize', 'files'], intent: { tab: 'manage', view: 'organize' } },
   { id: 'mg.icons', group: '管理', label: '图标视图', keys: ['icons', 'grid', 'tb'], intent: { tab: 'manage', view: 'organize', sub: 'icons' } },
   { id: 'mg.detail', group: '管理', label: '详细信息', keys: ['detail', 'list', 'lb'], intent: { tab: 'manage', view: 'organize', sub: 'detail' } },
-  { id: 'mg.mistakes', group: '管理', label: '错题', keys: ['mistakes', 'wrong', 'ct'], intent: { tab: 'manage', view: 'mistakes' } },
-  { id: 'mg.bypaper', group: '管理', label: '错题按卷', keys: ['by-paper'], intent: { tab: 'manage', view: 'mistakes', sub: 'paper' } },
-  { id: 'mg.bytopic', group: '管理', label: '错题按 topic', keys: ['by-topic'], intent: { tab: 'manage', view: 'mistakes', sub: 'topic' } },
+
+  { id: 'pr.topics', group: '练习', label: '专项练习', keys: ['topics', 'zx'], intent: { tab: 'practice', view: 'topics' } },
+  { id: 'pr.mistakes', group: '练习', label: '错题本', keys: ['mistakes', 'wrong', 'ct'], intent: { tab: 'practice', view: 'mistakes' } },
+  { id: 'pr.bypaper', group: '练习', label: '错题按卷', keys: ['by-paper'], intent: { tab: 'practice', view: 'mistakes', sub: 'paper' } },
+  { id: 'pr.bytopic', group: '练习', label: '错题按 topic', keys: ['by-topic'], intent: { tab: 'practice', view: 'mistakes', sub: 'topic' } },
+  { id: 'pr.exports', group: '练习', label: '导出记录', keys: ['exports', 'records', 'dc'], intent: { tab: 'practice', view: 'exports' } },
 
   { id: 'st.mail', group: '设置', label: 'SMTP / GoodNotes', keys: ['mail', 'gn'], intent: { tab: 'settings', view: 'mail' } },
   { id: 'st.grader', group: '设置', label: 'Grader API', keys: ['api', 'key'], intent: { tab: 'settings', view: 'grader' } },
@@ -133,10 +136,10 @@ export function matchPapers(q: Query, papers: readonly PaperRecord[]): Command[]
 export function topicCommands(keys: readonly string[]): Command[] {
   return keys.map((k) => ({
     id: `topic.${k}`,
-    group: '管理',
+    group: '练习',
     label: k,
     keys: ['错题', 'mistakes', 'ct'],
-    intent: { tab: 'manage' as const, view: 'mistakes', sub: 'topic', param: k },
+    intent: { tab: 'practice' as const, view: 'mistakes', sub: 'topic', param: k },
   }))
 }
 

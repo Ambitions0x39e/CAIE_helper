@@ -34,8 +34,9 @@ from core.config_store import ConfigStore
 from core.gt_parser import GTParser
 from core.models import ERROR_TYPES, AttemptRecord, MistakeRecord, PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
-from core.storage import AttemptStore, CSVStore, MistakeStore
+from core.storage import AttemptStore, CSVStore, ExportStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
+from modules.exports import build_record
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
 from modules.marking.answer_sheet import build_answer_sheet
@@ -81,7 +82,6 @@ from modules.marking.workflow import (
     topics_for_paper,
 )
 from modules.practice import PracticeRequest, build_practice, component_topics
-from modules.question_pdf import build_export
 from modules.tutor import read_notes, refresh_notes
 from modules.updater import AppUpdater, current_app_version, format_progress
 
@@ -166,6 +166,7 @@ class Api:
         self._manager = PaperManager(self._store)
         self._mistakes = MistakeStore()
         self._attempts = AttemptStore()
+        self._exports = ExportStore()
         self._updater = AppUpdater()
         #: The installer the last check pointed at. The page never names a
         #: URL itself, so it cannot make the app download anything else.
@@ -185,6 +186,7 @@ class Api:
         #: save it — the build is minutes of work a cancelled dialog must not
         #: throw away.
         self._practice_pdf: bytes | None = None
+        self._practice_name = "practice.pdf"
 
     # -- health --------------------------------------------------------------
 
@@ -349,7 +351,8 @@ class Api:
         )
 
     def export_mistakes_pdf(self, indices: list[int]) -> Payload:
-        """Crop the selected questions out of their QPs into one PDF.
+        """Crop the selected questions out of their QPs into a paper to redo,
+        record the export, and save the paper where the user picks.
 
         Warnings come back alongside the file rather than instead of it:
         exporting nine of ten questions is worth doing as long as the tenth is
@@ -361,11 +364,17 @@ class Api:
         papers = self._store.load_all()
         qp = {r.paper_id: r.qp_path for r in papers}
         ms = {r.paper_id: r.ms_path for r in papers}
+        subjects = sorted({subject_id_of(r.paper_id) for r in chosen})
         try:
-            data, warnings = build_export(chosen, qp, ms)
+            manifest, data, warnings = build_record(
+                "mistakes", f"错题 · {' '.join(subjects)}", chosen, qp, ms,
+            )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
-        saved = _save_to_chosen_file(data, "mistakes.pdf", ("PDF (*.pdf)",))
+        self._exports.write(manifest, data)
+        saved = _save_to_chosen_file(
+            data, f"{manifest.export_id}.pdf", ("PDF (*.pdf)",),
+        )
         return {**saved, "warnings": warnings}
 
     def export_mistakes_answers(self, indices: list[int]) -> Payload:
@@ -431,7 +440,7 @@ class Api:
 
         def work() -> None:
             self._practice_pdf = None
-            data, count, warnings = build_practice(
+            manifest, data, warnings = build_practice(
                 request, topics["topics"],
                 store=self._store, downloader=self._downloader,
                 config=config, renderer=LocalRenderer(),
@@ -440,8 +449,14 @@ class Api:
                     "done": done, "total": total, "paper": paper,
                 }),
             )
+            self._exports.write(manifest, data)
             self._practice_pdf = data
-            push({"type": "practice_ready", "count": count, "warnings": warnings})
+            self._practice_name = f"{manifest.export_id}.pdf"
+            push({
+                "type": "practice_ready",
+                "count": len(manifest.questions),
+                "warnings": warnings,
+            })
 
         return start("练习", work)
 
@@ -450,8 +465,29 @@ class Api:
         if self._practice_pdf is None:
             return {"success": False, "error": "还没有生成练习"}
         return _save_to_chosen_file(
-            self._practice_pdf, "practice.pdf", ("PDF (*.pdf)",),
+            self._practice_pdf, self._practice_name, ("PDF (*.pdf)",),
         )
+
+    # -- exports -------------------------------------------------------------
+
+    def exports(self) -> list[Payload]:
+        """Every export record, newest first — without the snapshot, which
+        only grading reads."""
+        return [
+            {
+                **m.model_dump(mode="json", exclude={"papers"}),
+                "question_count": len(m.questions),
+            }
+            for m in self._exports.load_all()
+        ]
+
+    def save_export_blank(self, export_id: str) -> Payload:
+        """Save an export's blank paper again, where the user picks."""
+        try:
+            data = self._exports.blank_pdf(export_id)
+        except (OSError, ValueError, KeyError) as exc:
+            return {"success": False, "error": f"读不了这条导出记录：{exc}"}
+        return _save_to_chosen_file(data, f"{export_id}.pdf", ("PDF (*.pdf)",))
 
     # -- mark ----------------------------------------------------------------
 

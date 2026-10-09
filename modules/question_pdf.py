@@ -2,8 +2,10 @@
 
 Two callers: the 错题本 export ("let me redo those questions") and 专项练习
 ("every question on these topics, across these sessions"). Both hand over
-(paper_id, question_id) pairs; each page carries one whole question, cropped
-out of the QP it came from.
+(paper_id, question_id) pairs; each question starts a new page, cropped out
+of the QP it came from with its answer space, so the export is worked on as
+it stands. A footer line on every page names the export, paper and question
+— that is how pages handed back are told apart.
 
 **Vector, not raster.** The regions are placed by stamping the source page
 with its CropBox set to the band, which is what makes ``pypdf``'s merge emit
@@ -24,11 +26,16 @@ from dataclasses import dataclass, field
 from statistics import median
 from typing import TYPE_CHECKING, Protocol
 
-from pypdf import PdfReader, PdfWriter, Transformation
-from pypdf.generic import RectangleObject
+from pypdf import PageObject, PdfReader, PdfWriter, Transformation
+from pypdf.generic import (
+    DecodedStreamObject,
+    DictionaryObject,
+    NameObject,
+    RectangleObject,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from modules.marking.page_segmenter import PageClip
 
@@ -36,6 +43,11 @@ if TYPE_CHECKING:
 _MARGIN = 24.0
 #: Between two bands of the same question.
 _GAP = 12.0
+#: The footer marker: 6pt grey Courier, its baseline this far off the page
+#: bottom — inside the bottom margin, so it never overlaps a question.
+_MARKER_SIZE = 6.0
+_MARKER_Y = 9.0
+_MARKER_GREY = 0.6
 
 _MAIN_ID_RE = re.compile(r"^(Q?\d+)")
 
@@ -117,8 +129,8 @@ class QuestionCrop:
     question_id: str
     qp_path: str
     bands: list[Band] = field(default_factory=list)
-    #: False when the answer space could not be found and the whole question
-    #: region is being exported instead — see :func:`crops_for_paper`.
+    #: False when the answer space was kept: asked for, or not found — see
+    #: :func:`crops_for_paper`.
     trimmed: bool = True
 
 
@@ -155,13 +167,21 @@ def plan_pages(
 
 
 def crops_for_paper(
-    paper_id: str, qp_path: str, wanted: Sequence[str] | None = None
+    paper_id: str,
+    qp_path: str,
+    wanted: Sequence[str] | None = None,
+    *,
+    trim: bool = True,
 ) -> tuple[list[QuestionCrop], list[str]]:
     """Locate *wanted* main questions in a QP. Returns (crops, not found).
 
     ``wanted=None`` takes every question the scan found, under the segmenter's
     ids (``"Q3"``) — the form :func:`main_question_id` reduces a mark-scheme
     id like ``"Q3a"`` to.
+
+    ``trim`` cuts the answer space out, leaving the question alone — what a
+    model reading the question wants. ``trim=False`` keeps it, for a paper
+    the student is going to write on.
 
     Segments against **every** question the paper has, not just the wanted
     ones, then picks. Segmenting against a subset looks like it works and
@@ -200,8 +220,13 @@ def crops_for_paper(
         whole = clips_to_bands(region.clips)
         trimmed = content_bands(
             qp_path, whole, column,
-            top_margin=doc.top_margin, footer_y=doc.footer_y,
+            top_margin=doc.top_margin, footer_y=doc.footer_y, trim=trim,
         )
+        if not trim:
+            crops.append(QuestionCrop(
+                paper_id, question_id, qp_path, trimmed, trimmed=False,
+            ))
+            continue
         kept = sum(b.height for b in trimmed)
         total = sum(b.height for b in whole)
         # A trim that keeps nearly everything found no answer space worth
@@ -755,8 +780,13 @@ def content_bands(
     *,
     top_margin: float = _TOP_MARGIN,
     footer_y: float = _FOOTER_Y,
+    trim: bool = True,
 ) -> list[Band]:
     """Cut the answer space out of each band, keeping everything else.
+
+    ``trim=False`` keeps the answer space: each band is still narrowed to
+    the writing column, freed of blank pages and of a top edge that cuts
+    through the question's first line, but nothing inside it is cut.
 
     Cutting out the ruling rather than hunting for the question is what makes
     this work on both kinds of paper. Detecting ruling is reliable — it is
@@ -823,6 +853,26 @@ def content_bands(
             page_layout, band.y_top, band.y_bottom, height
         )
         page_extents = extents[region_band.page_idx]
+        if not trim:
+            # From the first line to the last, ruling included. The region's
+            # own edges would take in the barcode strip above the content.
+            spans = [*content, *filler]
+            if spans:
+                out.append(Band(
+                    band.page_idx,
+                    _uncut_top(
+                        page_extents,
+                        max(band.y_top, min(s.top for s in spans) - _PAD),
+                        band.y_top,
+                    ),
+                    _uncut_bottom(
+                        page_extents,
+                        min(band.y_bottom, max(s.bottom for s in spans) + _PAD),
+                        band.y_bottom,
+                    ),
+                    column[0], column[1],
+                ))
+            continue
         cursor = band.y_top
         for ruled_top, ruled_bottom in _ruling_blocks(filler):
             _keep(
@@ -886,14 +936,14 @@ def _keep(
 
 def compose_pdf(
     crops: Sequence[QuestionCrop],
-    answers: Mapping[tuple[str, str], bytes] | None = None,
-) -> bytes:
+    export_id: str | None = None,
+) -> tuple[bytes, dict[tuple[str, str], list[int]]]:
     """Render the crops into one PDF, a new page per question.
 
-    *answers* maps (paper_id, question_id) to a mark-scheme PDF, and each
-    one is appended directly after the pages of the question it answers —
-    so the document reads question, answer, question, answer, and a
-    question that ran onto two pages still has its answer on the next leaf.
+    Returns the PDF and, per (paper_id, question_id), the 1-based pages it
+    took. With *export_id*, every page carries a footer marker —
+    ``CIEH <export_id> <paper_id> <question> i/n`` — which is what tells
+    pages handed back apart, inserted pages and all.
 
     Raises:
         ValueError: no crop had any band to place — an empty PDF is not a
@@ -903,6 +953,7 @@ def compose_pdf(
     writer = PdfWriter()
     scratch = PdfWriter()
     placed = 0
+    pages_of: dict[tuple[str, str], list[int]] = {}
 
     for crop in crops:
         if not crop.bands:
@@ -916,8 +967,12 @@ def compose_pdf(
         width = float(first.mediabox.width)
         height = float(first.mediabox.height)
 
-        for page_plan in plan_pages(crop.bands, height):
+        plan = plan_pages(crop.bands, height)
+        for number, page_plan in enumerate(plan, 1):
             out_page = writer.add_blank_page(width=width, height=height)
+            pages_of.setdefault((crop.paper_id, crop.question_id), []).append(
+                len(writer.pages)
+            )
             for placement in page_plan:
                 source = reader.pages[placement.band.page_idx]
                 src_height = float(source.mediabox.height)
@@ -949,106 +1004,83 @@ def compose_pdf(
                 )
                 placed += 1
 
-        answer = (answers or {}).get((crop.paper_id, crop.question_id))
-        if answer:
-            for page in PdfReader(io.BytesIO(answer)).pages:
-                writer.add_page(page)
+            if export_id is not None:
+                out_page.merge_page(_marker_page(
+                    f"CIEH {export_id} {crop.paper_id} {crop.question_id} "
+                    f"{number}/{len(plan)}",
+                    width, height,
+                ))
 
     if not placed:
         raise ValueError("没有可导出的题目区域")
 
     buffer = io.BytesIO()
     writer.write(buffer)
-    return buffer.getvalue()
+    return buffer.getvalue(), pages_of
+
+
+def _marker_page(text: str, width: float, height: float) -> PageObject:
+    """A page holding nothing but the footer marker, to merge onto another.
+
+    Courier is one of the base-14 fonts, so nothing is embedded and pdfminer
+    reads it back as plain ASCII; its fixed-width glyphs look like nothing
+    on a CIE paper (Arial / Times) or the typeset answers (Helvetica).
+    """
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Courier"),
+        NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
+    })
+    page = PageObject.create_blank_page(width=width, height=height)
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): font}),
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(
+        b"BT /F1 %.1f Tf %.2f g %.2f %.2f Td (%s) Tj ET\n" % (
+            _MARKER_SIZE, _MARKER_GREY, _MARGIN, _MARKER_Y,
+            text.encode("ascii"),
+        )
+    )
+    page[NameObject("/Contents")] = stream
+    return page
 
 
 def build_export(
     records: Iterable[QuestionRef],
     qp_path_of: Mapping[str, str],
-    ms_path_of: Mapping[str, str] | None = None,
-) -> tuple[bytes, list[str]]:
-    """The whole export: records → cropped PDF, plus what couldn't be found.
+    export_id: str | None = None,
+) -> tuple[bytes, dict[tuple[str, str], list[int]], list[str]]:
+    """The whole export: records → a paper to work on, plus what couldn't be
+    found.
 
-    With *ms_path_of*, each question is followed on the next page by its
-    mark scheme, typeset from the parse the Mark tab already cached (see
-    :mod:`answer_sheet`). Without it the export is questions only.
-
-    Returns the PDF bytes and a list of human-readable warnings (a paper with
-    no QP on disk, a question the segmenter couldn't locate, a mark scheme
-    never parsed). Warnings are returned rather than raised: exporting nine
-    of ten questions is worth doing, as long as the tenth is named.
+    Returns the PDF bytes, each main question's pages in it (see
+    :func:`compose_pdf`), and a list of human-readable warnings (a paper with
+    no QP on disk, a question the segmenter couldn't locate). Warnings are
+    returned rather than raised: exporting nine of ten questions is worth
+    doing, as long as the tenth is named.
 
     Raises:
         ValueError: nothing at all could be exported.
     """
     from pathlib import Path
 
-    from modules.marking.answer_sheet import answer_pages
-
     items = list(records)
     warnings: list[str] = []
     crops: list[QuestionCrop] = []
-    answers: dict[tuple[str, str], bytes] = {}
 
     for paper_id, question_ids in main_questions_by_paper(items).items():
         path = qp_path_of.get(paper_id, "")
         if not path or not Path(path).is_file():
             warnings.append(f"{paper_id}: 找不到 QP 文件，已跳过")
             continue
-        found, missing = crops_for_paper(paper_id, path, question_ids)
+        found, missing = crops_for_paper(paper_id, path, question_ids, trim=False)
         crops.extend(found)
         if missing:
             warnings.append(
                 f"{paper_id}: QP 里定位不到 {', '.join(missing)}"
             )
-        if found and not any(crop.trimmed for crop in found):
-            warnings.append(
-                f"{paper_id}: 认不出答题空间，已按整题区域导出"
-            )
-        if ms_path_of is not None:
-            answers.update(_answers_for(
-                paper_id, found, ms_path_of.get(paper_id, ""), warnings,
-                answer_pages,
-            ))
 
-    return compose_pdf(crops, answers), warnings
-
-
-def _answers_for(
-    paper_id: str,
-    crops: Sequence[QuestionCrop],
-    ms_path: str,
-    warnings: list[str],
-    answer_pages: Callable[..., bytes | None],
-) -> dict[tuple[str, str], bytes]:
-    """The mark-scheme page for each of *crops*, and a note for the rest.
-
-    The page size follows the question paper's, because these pages get
-    interleaved with pages cropped out of it — two of the papers on disk are
-    A4 rather than letter, and a document that changes size halfway prints
-    badly.
-    """
-    out: dict[tuple[str, str], bytes] = {}
-    if not ms_path:
-        if crops:
-            warnings.append(f"{paper_id}: 没有 mark scheme 记录，只导出题目")
-        return out
-
-    absent: list[str] = []
-    for crop in crops:
-        if not crop.bands:
-            continue
-        page = PdfReader(crop.qp_path).pages[crop.bands[0].page_idx]
-        rendered = answer_pages(
-            paper_id, crop.question_id, ms_path,
-            float(page.mediabox.width), float(page.mediabox.height),
-        )
-        if rendered is None:
-            absent.append(crop.question_id)
-        else:
-            out[(paper_id, crop.question_id)] = rendered
-    if absent:
-        warnings.append(
-            f"{paper_id}: mark scheme 里没有 {', '.join(absent)} 的答案"
-        )
-    return out
+    data, pages = compose_pdf(crops, export_id)
+    return data, pages, warnings

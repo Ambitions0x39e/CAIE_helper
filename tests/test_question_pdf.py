@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import datetime
 import io
-import json
 import re
 from pathlib import Path
 
@@ -178,6 +177,20 @@ class TestContentBands:
         pdf = _paper_pdf(tmp_path / "qp.pdf")
         whole = [Band(page_idx=0, y_top=50.0, y_bottom=740.0)]
         return content_bands(str(pdf), whole)
+
+    def test_without_trimming_the_answer_space_stays(
+        self, tmp_path: Path
+    ) -> None:
+        """A paper to work on keeps every ruling row, in the writing column."""
+        pdf = _paper_pdf(tmp_path / "qp.pdf")
+
+        [band] = content_bands(
+            str(pdf), [Band(page_idx=0, y_top=40.0, y_bottom=740.0)], trim=False,
+        )
+
+        assert 40.0 < band.y_top < 55.0       # from the number, not the edge
+        assert band.y_bottom > 475 + 7 * 24   # through the last ruling row
+        assert band.x_left is not None and band.x_left > _BAR_X + 20
 
     def test_rows_of_dots_are_dropped(self, tmp_path: Path) -> None:
         bands = self._bands(tmp_path)
@@ -589,7 +602,7 @@ class TestComposePdf:
         ]
 
         out = tmp_path / "out.pdf"
-        out.write_bytes(compose_pdf(crops))
+        out.write_bytes(compose_pdf(crops)[0])
 
         rects = _clip_rects(out)
         assert len(rects) == 2                    # a page per question
@@ -612,7 +625,7 @@ class TestComposePdf:
         out = tmp_path / "out.pdf"
         out.write_bytes(compose_pdf([
             QuestionCrop("p", "Q1", str(source), bands)
-        ]))
+        ])[0])
 
         rect = _clip_rects(out)[0][0].split()
         x, width = float(rect[0]), float(rect[2])
@@ -620,12 +633,7 @@ class TestComposePdf:
         assert x < _NUMBER_X        # …but the question number is inside it
         assert width < _PAGE_W - x  # and so is whatever sits down the right
 
-    def test_an_answer_lands_on_the_page_after_its_question(
-        self, tmp_path: Path
-    ) -> None:
-        """The point of interleaving: flip the page and there is the mark
-        scheme, so a question that ran onto two pages still has its answer
-        on the next leaf rather than at the back of the document."""
+    def test_each_questions_pages_are_reported(self, tmp_path: Path) -> None:
         source = _paper_pdf(tmp_path / "qp.pdf")
         crops = [
             QuestionCrop("p", "Q1", str(source), [
@@ -636,29 +644,52 @@ class TestComposePdf:
                 Band(page_idx=0, y_top=60.0, y_bottom=100.0),
             ]),
         ]
-        answer = _answer_pdf(tmp_path / "a.pdf", "ANSWER ONE")
 
-        out = tmp_path / "out.pdf"
-        out.write_bytes(compose_pdf(crops, {("p", "Q1"): answer}))
-        pages = PdfReader(str(out)).pages
+        _, pages = compose_pdf(crops)
 
-        # Q1 wrapped onto two pages, then its answer, then Q2.
-        assert len(pages) == 4
-        assert "ANSWER ONE" in pages[2].extract_text()
-        assert "ANSWER ONE" not in pages[3].extract_text()
+        assert pages == {("p", "Q1"): [1, 2], ("p", "Q2"): [3]}
 
-    def test_without_answers_the_export_is_questions_only(
+    def test_every_page_carries_a_marker_pdfminer_reads(
         self, tmp_path: Path
     ) -> None:
+        """What a handed-back page is told apart by — read the way the
+        hand-back reads it, so a font pdfminer cannot decode fails here."""
+        source = _paper_pdf(tmp_path / "qp.pdf")
+        crops = [QuestionCrop("9709_s24_qp_41", "Q3", str(source), [
+            Band(page_idx=0, y_top=60.0, y_bottom=180.0),
+            Band(page_idx=0, y_top=60.0, y_bottom=760.0),
+        ])]
+
+        data, _ = compose_pdf(crops, "20261009-153012-practice")
+
+        from pdfminer.high_level import extract_text
+
+        texts = [
+            extract_text(io.BytesIO(data), page_numbers=[i]) for i in range(2)
+        ]
+        for number, text in enumerate(texts, 1):
+            assert (
+                f"CIEH 20261009-153012-practice 9709_s24_qp_41 Q3 {number}/2"
+                in text
+            )
+
+    def test_the_marker_sits_below_the_question(self, tmp_path: Path) -> None:
+        """Inside the bottom margin, so it never prints over a question."""
         source = _paper_pdf(tmp_path / "qp.pdf")
         crops = [QuestionCrop("p", "Q1", str(source), [
             Band(page_idx=0, y_top=60.0, y_bottom=180.0),
         ])]
 
-        out = tmp_path / "out.pdf"
-        out.write_bytes(compose_pdf(crops))
+        data, _ = compose_pdf(crops, "20261009-153012-practice")
 
-        assert len(PdfReader(str(out)).pages) == 1
+        from pdfminer.layout import LTTextContainer
+
+        page = next(extract_pages(io.BytesIO(data)))
+        marker = next(
+            e for e in page
+            if isinstance(e, LTTextContainer) and "CIEH" in e.get_text()
+        )
+        assert marker.y1 < 24.0     # the margin compose_pdf leaves
 
     def test_pages_keep_the_source_size(self, tmp_path: Path) -> None:
         source = _paper_pdf(tmp_path / "qp.pdf")
@@ -667,7 +698,7 @@ class TestComposePdf:
         ])]
 
         out = tmp_path / "out.pdf"
-        out.write_bytes(compose_pdf(crops))
+        out.write_bytes(compose_pdf(crops)[0])
 
         page = PdfReader(str(out)).pages[0]
         assert (float(page.mediabox.width), float(page.mediabox.height)) == (
@@ -701,8 +732,9 @@ class TestBuildExport:
         source = _paper_pdf(tmp_path / "qp.pdf")
 
         def _fake(
-            paper_id: str, qp_path: str, wanted: list[str]
+            paper_id: str, qp_path: str, wanted: list[str], *, trim: bool = True,
         ) -> tuple[list[QuestionCrop], list[str]]:
+            assert trim is False, "an export is a paper to work on"
             return [
                 QuestionCrop(paper_id, q, qp_path, [
                     Band(page_idx=0, y_top=60.0, y_bottom=180.0),
@@ -723,7 +755,7 @@ class TestBuildExport:
             _record("Q1", paper_id="9709_s25_qp_12"),
         ]
 
-        data, warnings = build_export(records, {
+        data, _, warnings = build_export(records, {
             "9231_s22_qp_41": str(_stub_crops),
             "9709_s25_qp_12": str(tmp_path / "gone.pdf"),
         })
@@ -735,50 +767,12 @@ class TestBuildExport:
     def test_a_paper_with_no_recorded_qp_path_is_named_too(
         self, _stub_crops: Path
     ) -> None:
-        _, warnings = build_export(
+        _, _, warnings = build_export(
             [_record("Q1"), _record("Q1", paper_id="9702_s25_qp_21")],
             {"9231_s22_qp_41": str(_stub_crops), "9702_s25_qp_21": ""},
         )
 
         assert any("9702_s25_qp_21" in w for w in warnings)
-
-    def test_an_untrimmable_paper_says_so(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """A paper whose trim found no answer space falls back to the whole
-        region, and the export has to admit it."""
-        source = _paper_pdf(tmp_path / "qp.pdf")
-
-        def _fake(
-            paper_id: str, qp_path: str, wanted: list[str]
-        ) -> tuple[list[QuestionCrop], list[str]]:
-            return [
-                QuestionCrop(paper_id, q, qp_path, [
-                    Band(page_idx=0, y_top=60.0, y_bottom=700.0),
-                ], trimmed=False)
-                for q in wanted
-            ], []
-
-        monkeypatch.setattr(
-            "modules.question_pdf.crops_for_paper", _fake
-        )
-
-        _, warnings = build_export(
-            [_record("Q1")], {"9231_s22_qp_41": str(source)}
-        )
-
-        assert len(warnings) == 1
-        assert "认不出答题空间" in warnings[0]
-        assert "整题区域" in warnings[0]
-
-    def test_a_trimmed_paper_warns_about_nothing(
-        self, _stub_crops: Path
-    ) -> None:
-        _, warnings = build_export(
-            [_record("Q1")], {"9231_s22_qp_41": str(_stub_crops)}
-        )
-
-        assert warnings == []
 
     def test_one_page_per_main_question_across_papers(
         self, _stub_crops: Path
@@ -786,12 +780,13 @@ class TestBuildExport:
         """Sub-questions collapse into their parent before anything is cut."""
         records = [_record("Q1a"), _record("Q1b"), _record("Q3")]
 
-        data, warnings = build_export(
+        data, pages, warnings = build_export(
             records, {"9231_s22_qp_41": str(_stub_crops)}
         )
 
         assert warnings == []
         assert len(PdfReader(io.BytesIO(data)).pages) == 2
+        assert pages == {("9231_s22_qp_41", "Q1"): [1], ("9231_s22_qp_41", "Q3"): [2]}
 
     def test_every_paper_missing_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="没有可导出"):
@@ -840,32 +835,3 @@ def test_crops_for_paper_without_a_wanted_list_takes_every_question(
 
     assert [c.question_id for c in crops] == ["Q1", "Q2", "Q3"]
     assert missing == []
-
-
-def test_a_crop_id_finds_its_mark_scheme_page(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    """The ids ``crops_for_paper`` hands out are the ones ``answer_pages``
-    matches against a mark scheme keyed "Q2a", "Q2b"."""
-    from core.settings import app_settings
-    from modules.marking.answer_sheet import answer_pages
-
-    _fake_three_question_scan(monkeypatch)
-    cache = tmp_path / "ms"
-    cache.mkdir()
-    monkeypatch.setattr(
-        type(app_settings), "ms_cache_dir", property(lambda _self: cache),
-    )
-    (cache / "9709_s23_ms_41.sp4.json").write_text(json.dumps({
-        "paper_id": "9709/41/M/J/23",
-        "total_marks": 50,
-        "questions": {
-            "Q2a": {"max_marks": 2, "mark_scheme": "B1: x = 3"},
-            "Q2b": {"max_marks": 3, "mark_scheme": "M1: v = u + at"},
-        },
-    }), "utf-8")
-
-    crops, _ = crops_for_paper("9709_s23_qp_41", "qp.pdf")
-    q2 = next(c.question_id for c in crops if c.question_id == "Q2")
-
-    assert answer_pages("9709_s23_qp_41", q2, "9709_s23_ms_41.pdf") is not None

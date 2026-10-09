@@ -124,6 +124,16 @@ export interface SimpleResult {
 
 /** A save-dialog call. `cancelled` is a normal outcome, not a failure —
  * nothing is written until a destination is picked. */
+/** An export record as `exports()` lists it — the snapshot left out. */
+export interface ExportRecord {
+  export_id: string
+  kind: 'practice' | 'mistakes'
+  title: string
+  created_at: string
+  graded_at: string | null
+  question_count: number
+}
+
 export interface SaveResult {
   success: boolean
   path?: string

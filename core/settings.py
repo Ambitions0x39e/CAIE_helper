@@ -166,6 +166,11 @@ class AppSettings(BaseSettings):
         """Where downloaded app installers land before being handed to the OS."""
         return self.base_dir / "updates"
 
+    @property
+    def exports_dir(self) -> Path:
+        """One ``.cpd`` per exported practice set or batch of mistakes."""
+        return self.base_dir / "exports"
+
     def init_dirs(self) -> None:
         """Create required directories if they don't exist."""
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -173,6 +178,7 @@ class AppSettings(BaseSettings):
         self.ms_cache_dir.mkdir(parents=True, exist_ok=True)
         self.syllabus_dir.mkdir(parents=True, exist_ok=True)
         self.updates_dir.mkdir(parents=True, exist_ok=True)
+        self.exports_dir.mkdir(parents=True, exist_ok=True)
 
 
 # Module-level singleton — import this directly in other modules

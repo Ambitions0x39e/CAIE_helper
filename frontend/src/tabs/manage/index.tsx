@@ -4,14 +4,12 @@ import type { Intent } from '../../lib/commands'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { PushTrack } from '../../ui/PushTrack'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
-import { Mistakes } from './Mistakes'
 import { Organize } from './Organize'
 import { Overview } from './Overview'
 
 const SECTIONS = [
   { id: 'overview', label: '总览' },
   { id: 'organize', label: '整理' },
-  { id: 'mistakes', label: '错题' },
 ] as const
 type SectionId = (typeof SECTIONS)[number]['id']
 
@@ -26,9 +24,9 @@ export function ManageTab({
   const [dir, setDir] = useState(1)
   const [papers, setPapers] = useState<PaperRecord[]>([])
   const [syllabuses, setSyllabuses] = useState<SyllabusConfig[]>([])
-  /** The palette's request, held for whichever sub-view is on screen: 整理
-   * reads the layout out of it, 错题 the grouping and the topic. Held as the
-   * object so asking twice for the same thing is two distinct requests. */
+  /** The palette's request, held for 整理, which reads the layout out of it.
+   * Held as the object so asking twice for the same thing is two distinct
+   * requests. */
   const [sub, setSub] = useState<Intent | null>(null)
 
   const index = SECTIONS.findIndex((s) => s.id === section)
@@ -72,15 +70,13 @@ export function ManageTab({
       <PushTrack step={index} dir={dir}>
         {section === 'overview' ? (
           <Overview papers={papers} syllabuses={syllabuses} />
-        ) : section === 'organize' ? (
+        ) : (
           <Organize
             papers={papers}
             syllabuses={syllabuses}
             reload={reload}
             intent={sub}
           />
-        ) : (
-          <Mistakes intent={sub} />
         )}
       </PushTrack>
     </div>
