@@ -129,6 +129,11 @@ class AppSettings(BaseSettings):
         return self.base_dir / ".cache" / "ms"
 
     @property
+    def topic_cache_dir(self) -> Path:
+        """Per-paper question → topic classifications — see ``modules.practice``."""
+        return self.base_dir / ".cache" / "topics"
+
+    @property
     def mistakes_csv(self) -> Path:
         """Backing file for the mistake notebook — see ``MistakeStore``."""
         return self.base_dir / "mistakes.csv"
