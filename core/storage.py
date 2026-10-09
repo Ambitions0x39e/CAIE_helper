@@ -4,7 +4,7 @@ import csv
 import datetime
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import IO, Any
 
 from pydantic import BaseModel, ValidationError
@@ -74,6 +74,19 @@ def _nullable_float(value: str) -> float | None:
 
 def _nullable_dt(value: str) -> datetime.datetime | None:
     return datetime.datetime.fromisoformat(value) if value else None
+
+
+def _local_pdf(path: str) -> str:
+    """*path*, or this machine's copy of it when *path* does not exist here.
+
+    A data.csv synced from Windows holds ``C:\\…\\pdfs\\<id>.pdf``; on a Mac
+    the same file sits in this machine's ``pdfs/``. ``PureWindowsPath`` reads
+    the name off either separator.
+    """
+    if not path or Path(path).is_file():
+        return path
+    local = app_settings.pdfs_dir / PureWindowsPath(path).name
+    return str(local) if local.is_file() else path
 
 
 def _load_validated[T: BaseModel](
@@ -187,8 +200,8 @@ class CSVStore:
         return {
             "paper_id": _cell(row, "paper_id"),
             "status": _cell(row, "status"),
-            "qp_path": _cell(row, "qp_path"),
-            "ms_path": _cell(row, "ms_path"),
+            "qp_path": _local_pdf(_cell(row, "qp_path")),
+            "ms_path": _local_pdf(_cell(row, "ms_path")),
             "score_raw": _nullable_float(_cell(row, "score_raw")),
             "score_total": _nullable_float(_cell(row, "score_total")),
             "sent_to_gn": _cell(row, "sent_to_gn").lower() in {"true", "1", "yes"},
