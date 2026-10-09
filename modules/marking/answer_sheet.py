@@ -1,6 +1,6 @@
 """The answer sheet that goes with the 错题本's cropped question export.
 
-The questions come out of the QP as vector crops (:mod:`mistake_pdf`); the
+The questions come out of the QP as vector crops (:mod:`modules.question_pdf`); the
 answers cannot. A mark scheme's answers live in a table that no amount of
 geometry cuts reliably into per-question pieces — that is why the Mark tab
 reads them with a vision model in the first place. So this typesets the
@@ -35,7 +35,7 @@ from pypdf.generic import (
     NameObject,
 )
 
-from modules.marking.mistake_pdf import (
+from modules.question_pdf import (
     main_question_id,
     main_questions_by_paper,
 )

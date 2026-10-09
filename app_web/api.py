@@ -44,7 +44,6 @@ from modules.marking.mcq_parser import (
     detect_student_answers,
     score_mcq_answers,
 )
-from modules.marking.mistake_pdf import build_export
 from modules.marking.mistakes import (
     distinct_topic_keys,
     mistakes_from_results,
@@ -80,6 +79,7 @@ from modules.marking.workflow import (
     summarise_scores,
     topics_for_paper,
 )
+from modules.question_pdf import build_export
 from modules.tutor import read_notes, refresh_notes
 from modules.updater import AppUpdater, current_app_version, format_progress
 

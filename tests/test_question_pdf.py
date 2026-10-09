@@ -1,4 +1,4 @@
-"""Tests for ``modules.marking.mistake_pdf`` — the 错题本's PDF export.
+"""Tests for ``modules.question_pdf`` — questions cropped out of their QPs.
 
 Three layers, because they fail differently:
 
@@ -23,13 +23,14 @@ from pdfminer.high_level import extract_pages
 from pypdf import PdfReader
 
 from core.models import MistakeRecord
-from modules.marking.mistake_pdf import (
+from modules.question_pdf import (
     Band,
     QuestionCrop,
     _page_extents,
     build_export,
     compose_pdf,
     content_bands,
+    crops_for_paper,
     main_question_id,
     main_questions_by_paper,
     plan_pages,
@@ -693,7 +694,7 @@ class TestBuildExport:
             ], []
 
         monkeypatch.setattr(
-            "modules.marking.mistake_pdf.crops_for_paper", _fake
+            "modules.question_pdf.crops_for_paper", _fake
         )
         return source
 
@@ -745,7 +746,7 @@ class TestBuildExport:
             ], []
 
         monkeypatch.setattr(
-            "modules.marking.mistake_pdf.crops_for_paper", _fake
+            "modules.question_pdf.crops_for_paper", _fake
         )
 
         _, warnings = build_export(
@@ -781,3 +782,43 @@ class TestBuildExport:
     def test_every_paper_missing_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="没有可导出"):
             build_export([_record("Q1")], {"9231_s22_qp_41": ""})
+
+
+def test_crops_for_paper_without_a_wanted_list_takes_every_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Classification needs every main question, under the bare ids the mark
+    scheme uses — ``"2"``, not ``"Q2"``, or ``answer_pages`` finds nothing."""
+    from types import SimpleNamespace
+
+    from modules.marking.page_segmenter import PageClip, QuestionRegion
+
+    doc = SimpleNamespace(
+        boundaries=[SimpleNamespace(question_num=n) for n in (1, 2, 3)],
+        main_count=3, top_margin=45.0, footer_y=740.0,
+    )
+    regions = [
+        QuestionRegion(question_id=f"Q{n}", clips=[
+            PageClip(page_idx=n, y_top=60.0, y_bottom=400.0),
+        ])
+        for n in (1, 2, 3)
+    ]
+    monkeypatch.setattr(
+        "modules.marking.page_segmenter.scan_document", lambda _p: doc,
+    )
+    monkeypatch.setattr(
+        "modules.marking.page_segmenter.match_scanned",
+        lambda _d, ids: ([r for r in regions if r.question_id in ids], None),
+    )
+    monkeypatch.setattr(
+        "modules.question_pdf.document_column", lambda _p: (40.0, 560.0),
+    )
+    monkeypatch.setattr(
+        "modules.question_pdf.content_bands",
+        lambda _p, whole, _c, **_k: whole,
+    )
+
+    crops, missing = crops_for_paper("9709_s23_qp_41", "qp.pdf")
+
+    assert [c.question_id for c in crops] == ["1", "2", "3"]
+    assert missing == []
