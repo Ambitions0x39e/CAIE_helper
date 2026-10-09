@@ -121,7 +121,7 @@ export default function App() {
         className="relative min-w-0 flex-1 overflow-hidden bg-page pt-(--titlebar)"
         style={{ '--spacing': '0.275rem' } as React.CSSProperties}
       >
-        <div className="h-full overflow-y-auto px-7 py-6">
+        <div className="h-full overflow-y-auto px-7 pb-6 pt-[max(0px,calc(var(--spacing)*6_-_var(--titlebar)))]">
           {connected === false && (
             <div className="mb-3 rounded-ui border border-hairline bg-panel px-3 py-2 text-caption text-warn">
               {BRIDGE_ABSENT}

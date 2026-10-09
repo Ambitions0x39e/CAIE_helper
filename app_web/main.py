@@ -77,11 +77,11 @@ def _titlebar(ns: Any) -> tuple[Any, float]:
 
 
 def _inset_titlebar(window: webview.Window) -> None:
-    """A full-height sidebar under a unified toolbar, the macOS 26 standard
-    window: title hidden, traffic lights inset in the toolbar row, the page
-    running beneath. The page learns the toolbar height as `--titlebar`, taken
-    from `contentLayoutRect` the way the HIG asks full-size content to be laid
-    out, and injected before the first paint."""
+    """A full-height sidebar under a compact unified toolbar: title hidden,
+    traffic lights inset in the toolbar row, the page running beneath. The page
+    learns the toolbar height as `--titlebar`, taken from `contentLayoutRect`
+    the way the HIG asks full-size content to be laid out, and injected before
+    the first paint."""
     ns: Any = window.native
     ns.setStyleMask_(ns.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView)
     ns.setTitlebarAppearsTransparent_(True)
@@ -89,7 +89,8 @@ def _inset_titlebar(window: webview.Window) -> None:
     toolbar = AppKit.NSToolbar.alloc().initWithIdentifier_("main")
     toolbar.setShowsBaselineSeparator_(False)
     ns.setToolbar_(toolbar)
-    ns.setToolbarStyle_(AppKit.NSWindowToolbarStyleUnified)
+    # The plain unified style reserves 66 pt above the page, compact 40.
+    ns.setToolbarStyle_(AppKit.NSWindowToolbarStyleUnifiedCompact)
     container, height = _titlebar(ns)
     # pywebview paints the container opaque; the page shows through only once
     # that is cleared.
@@ -124,6 +125,33 @@ def _add_titlebar_grip(window: webview.Window) -> None:
     AppHelper.callAfter(add)
 
 
+def _center_traffic_lights(window: webview.Window) -> None:
+    """Centre the three window buttons over the nav column. AppKit lays the
+    title bar out again whenever the window resizes, which puts them back at
+    the left edge, so the shift is re-applied after every resize."""
+    nav = window.evaluate_js("document.querySelector('nav').clientWidth")
+    ns: Any = window.native
+    kinds = (AppKit.NSWindowCloseButton, AppKit.NSWindowMiniaturizeButton,
+             AppKit.NSWindowZoomButton)
+
+    def place(_note: Any = None) -> None:
+        buttons = [ns.standardWindowButton_(k) for k in kinds]
+        left = buttons[0].frame().origin.x
+        span = AppKit.NSMaxX(buttons[-1].frame()) - left
+        shift = (nav - span) / 2 - left
+        for b in buttons:
+            x, y = b.frame().origin
+            b.setFrameOrigin_((x + shift, y))
+
+    def install() -> None:
+        place()
+        AppKit.NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+            AppKit.NSWindowDidResizeNotification, ns, None, place
+        )
+
+    AppHelper.callAfter(install)
+
+
 def main() -> None:
     prune_legacy_macos_app()
     debug = os.environ.get("CIE_DEBUG") == "1"
@@ -153,6 +181,7 @@ def main() -> None:
         # before_show fires on the main thread, before the page starts loading.
         window.events.before_show += _inset_titlebar
         window.events.loaded += _add_titlebar_grip
+        window.events.loaded += _center_traffic_lights
     # `private_mode` defaults to True, which throws the webview's storage away
     # on exit — localStorage included, so anything the UI remembers between
     # launches (the command palette's usage counts, its empty-state setting)
