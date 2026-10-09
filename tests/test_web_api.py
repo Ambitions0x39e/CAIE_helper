@@ -420,6 +420,16 @@ def test_a_practice_request_with_no_topics_is_a_result(api: Api, monkeypatch) ->
     json.dumps(result)
 
 
+def test_a_backwards_practice_range_is_a_result(api: Api, monkeypatch) -> None:
+    from core.settings import GraderConfig
+
+    monkeypatch.setattr(GraderConfig, "try_load", lambda: GraderConfig(api_key="k"))
+    monkeypatch.setattr("app_web.api.start", lambda *_: pytest.fail("no job"))
+    result = api.start_practice("9709", "4", 2024, "s", 2023, "w", ["4.1"])
+    assert result == {"success": False, "error": "起始考季晚于结束考季"}
+    json.dumps(result)
+
+
 def test_a_practice_job_hands_its_set_to_save_and_a_rebuild_clears_it(
     api: Api, monkeypatch,
 ) -> None:

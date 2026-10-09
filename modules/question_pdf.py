@@ -159,9 +159,9 @@ def crops_for_paper(
 ) -> tuple[list[QuestionCrop], list[str]]:
     """Locate *wanted* main questions in a QP. Returns (crops, not found).
 
-    ``wanted=None`` takes every question the scan found, under bare ids
-    (``"3"``) — the form mark-scheme ids reduce to through
-    :func:`main_question_id`.
+    ``wanted=None`` takes every question the scan found, under the segmenter's
+    ids (``"Q3"``) — the form :func:`main_question_id` reduces a mark-scheme
+    id like ``"Q3a"`` to.
 
     Segments against **every** question the paper has, not just the wanted
     ones, then picks. Segmenting against a subset looks like it works and
@@ -186,7 +186,7 @@ def crops_for_paper(
         f"Q{n}" for n in range(1, doc.main_count + 1)
     ]
     regions, _ = match_scanned(doc, every)
-    targets = list(wanted) if wanted is not None else [q[1:] for q in every]
+    targets = list(wanted) if wanted is not None else every
     by_id = {region.question_id: region for region in regions}
     column = document_column(qp_path)
 
