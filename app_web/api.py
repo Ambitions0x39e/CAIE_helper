@@ -79,6 +79,7 @@ from modules.marking.workflow import (
     summarise_scores,
     topics_for_paper,
 )
+from modules.practice import PracticeRequest, build_practice, component_topics
 from modules.question_pdf import build_export
 from modules.tutor import read_notes, refresh_notes
 from modules.updater import AppUpdater, current_app_version, format_progress
@@ -177,6 +178,10 @@ class Api:
         #: overlay. Kept apart from the manual boxes so re-scoring does
         #: not need another detection pass.
         self._mcq_detected: dict[str, str] = {}
+        #: The last practice set built, held until the user picks where to
+        #: save it — the build is minutes of work a cancelled dialog must not
+        #: throw away.
+        self._practice_pdf: bytes | None = None
 
     # -- health --------------------------------------------------------------
 
@@ -376,6 +381,73 @@ class Api:
             return {"success": False, "error": str(exc)}
         saved = _save_to_chosen_file(data, "answers.pdf", ("PDF (*.pdf)",))
         return {**saved, "warnings": warnings}
+
+    # -- practice ------------------------------------------------------------
+
+    def practice_topics(self, subject: str, component: str) -> Payload:
+        """The topics this component examines, fetching the syllabus if needed."""
+        syllabus = load_syllabus(subject)
+        if syllabus is None and subject.isdigit():
+            syllabus = fetch_syllabus(subject)
+        topics = component_topics(syllabus, component)
+        if not topics:
+            return {
+                "success": False,
+                "error": f"{subject} 的大纲里没有卷 {component} 的 topic",
+            }
+        return {"success": True, "topics": topics}
+
+    def start_practice(
+        self,
+        subject: str,
+        component: str,
+        from_year: int,
+        from_season: str,
+        to_year: int,
+        to_season: str,
+        topic_ids: list[str],
+    ) -> Payload:
+        """Build the set on a worker thread; the PDF waits for save_practice."""
+        try:
+            request = PracticeRequest(
+                subject=subject, component=component,
+                from_year=from_year, from_season=from_season,
+                to_year=to_year, to_season=to_season, topic_ids=topic_ids,
+            )
+        except ValidationError as exc:
+            return _invalid(exc)
+        config = GraderConfig.try_load()
+        if config is None:
+            return {
+                "success": False,
+                "error": "还没有配置 Grader API，先去【设置】填。",
+            }
+        topics = self.practice_topics(subject, component)
+        if not topics["success"]:
+            return topics
+
+        def work() -> None:
+            data, count, warnings = build_practice(
+                request, topics["topics"],
+                store=self._store, downloader=self._downloader,
+                config=config, renderer=LocalRenderer(),
+                on_progress=lambda stage, done, total, paper: push({
+                    "type": "practice_progress", "stage": stage,
+                    "done": done, "total": total, "paper": paper,
+                }),
+            )
+            self._practice_pdf = data
+            push({"type": "practice_ready", "count": count, "warnings": warnings})
+
+        return start("练习", work)
+
+    def save_practice(self) -> Payload:
+        """Ask where to put the last practice set, then write it."""
+        if self._practice_pdf is None:
+            return {"success": False, "error": "还没有生成练习"}
+        return _save_to_chosen_file(
+            self._practice_pdf, "practice.pdf", ("PDF (*.pdf)",),
+        )
 
     # -- mark ----------------------------------------------------------------
 

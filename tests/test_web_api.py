@@ -382,3 +382,38 @@ def test_the_analysis_is_keyed_by_the_downloaded_id(
     )
     api.start_analysis("/uploads/scan.pdf", "math")
     assert api.analysis()["paper_id"] == expected
+
+
+# -- practice ----------------------------------------------------------------
+
+
+def test_practice_topics_reads_the_stored_syllabus(api: Api, monkeypatch) -> None:
+    from modules.marking.syllabus_parser import SyllabusInfo, SyllabusTopic
+
+    info = SyllabusInfo(
+        subject_id="9709",
+        topics={"4.2": SyllabusTopic(topic_id="4.2", name="Kinematics")},
+        component_topics={"4": ["4.2"]},
+    )
+    monkeypatch.setattr("app_web.api.load_syllabus", lambda _s: info)
+    assert api.practice_topics("9709", "4") == {
+        "success": True, "topics": {"4.2": "Kinematics"},
+    }
+
+
+def test_practice_topics_without_a_syllabus_is_a_result(api: Api, monkeypatch) -> None:
+    monkeypatch.setattr("app_web.api.load_syllabus", lambda _s: None)
+    monkeypatch.setattr("app_web.api.fetch_syllabus", lambda _s: None)
+    result = api.practice_topics("9709", "4")
+    assert result["success"] is False
+    assert result["error"]
+
+
+def test_a_practice_request_with_no_topics_is_a_result(api: Api) -> None:
+    result = api.start_practice("9709", "4", 2023, "s", 2024, "w", [])
+    assert result["success"] is False
+    json.dumps(result)
+
+
+def test_saving_before_building_is_a_result(api: Api) -> None:
+    assert api.save_practice()["success"] is False
