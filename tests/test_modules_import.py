@@ -39,3 +39,18 @@ def test_grader_import_does_not_need_streamlit() -> None:
     # guard that grader never drags in streamlit.
     rc, err = _import_leaks("modules.marking.grader", ["streamlit"])
     assert rc == 0, err
+
+
+def test_question_pdf_import_is_light() -> None:
+    rc, err = _import_leaks(
+        "modules.question_pdf",
+        ["modules.marking.page_segmenter", "modules.marking.answer_sheet", "openai"],
+    )
+    assert rc == 0, err
+
+
+def test_practice_import_does_not_load_the_grader() -> None:
+    rc, err = _import_leaks(
+        "modules.practice", ["modules.marking.grader", "modules.marking.ms_parser"],
+    )
+    assert rc == 0, err
