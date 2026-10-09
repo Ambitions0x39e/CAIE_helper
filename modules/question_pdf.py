@@ -1,8 +1,9 @@
-"""Export mistakes as a PDF cut out of the original question papers.
+"""Questions cropped out of their question papers into one PDF.
 
-The 错题本's CSV export answers "which topics do I lose marks on". This one
-answers "let me redo those questions": each page carries one whole question,
-cropped out of the QP it came from.
+Two callers: the 错题本 export ("let me redo those questions") and 专项练习
+("every question on these topics, across these sessions"). Both hand over
+(paper_id, question_id) pairs; each page carries one whole question, cropped
+out of the QP it came from.
 
 **Vector, not raster.** The regions are placed by stamping the source page
 with its CropBox set to the band, which is what makes ``pypdf``'s merge emit
@@ -21,7 +22,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from statistics import median
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from pypdf import PdfReader, PdfWriter, Transformation
 from pypdf.generic import RectangleObject
@@ -29,7 +30,6 @@ from pypdf.generic import RectangleObject
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from core.models import MistakeRecord
     from modules.marking.page_segmenter import PageClip
 
 #: Breathing room at the top and bottom of an output page.
@@ -38,6 +38,16 @@ _MARGIN = 24.0
 _GAP = 12.0
 
 _MAIN_ID_RE = re.compile(r"^(Q?\d+)")
+
+
+class QuestionRef(Protocol):
+    """One question of one paper — a mistake row, a practice pick."""
+
+    @property
+    def paper_id(self) -> str: ...
+
+    @property
+    def question_id(self) -> str: ...
 
 
 def main_question_id(question_id: str) -> str:
@@ -52,7 +62,7 @@ def main_question_id(question_id: str) -> str:
 
 
 def main_questions_by_paper(
-    records: Iterable[MistakeRecord],
+    records: Iterable[QuestionRef],
 ) -> dict[str, list[str]]:
     """paper_id → its main question ids, each once, in first-seen order."""
     grouped: dict[str, list[str]] = {}
@@ -145,9 +155,13 @@ def plan_pages(
 
 
 def crops_for_paper(
-    paper_id: str, qp_path: str, wanted: Sequence[str]
+    paper_id: str, qp_path: str, wanted: Sequence[str] | None = None
 ) -> tuple[list[QuestionCrop], list[str]]:
     """Locate *wanted* main questions in a QP. Returns (crops, not found).
+
+    ``wanted=None`` takes every question the scan found, under bare ids
+    (``"3"``) — the form mark-scheme ids reduce to through
+    :func:`main_question_id`.
 
     Segments against **every** question the paper has, not just the wanted
     ones, then picks. Segmenting against a subset looks like it works and
@@ -172,12 +186,13 @@ def crops_for_paper(
         f"Q{n}" for n in range(1, doc.main_count + 1)
     ]
     regions, _ = match_scanned(doc, every)
+    targets = list(wanted) if wanted is not None else [q[1:] for q in every]
     by_id = {region.question_id: region for region in regions}
     column = document_column(qp_path)
 
     crops: list[QuestionCrop] = []
     missing: list[str] = []
-    for question_id in wanted:
+    for question_id in targets:
         region = by_id.get(_as_q(question_id))
         if region is None:
             missing.append(question_id)
@@ -959,7 +974,7 @@ def compose_pdf(
 
 
 def build_export(
-    records: Iterable[MistakeRecord],
+    records: Iterable[QuestionRef],
     qp_path_of: Mapping[str, str],
     ms_path_of: Mapping[str, str] | None = None,
 ) -> tuple[bytes, list[str]]:
