@@ -427,6 +427,7 @@ class Api:
             return topics
 
         def work() -> None:
+            self._practice_pdf = None
             data, count, warnings = build_practice(
                 request, topics["topics"],
                 store=self._store, downloader=self._downloader,
