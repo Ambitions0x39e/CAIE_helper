@@ -74,6 +74,7 @@ export interface PyApi {
   save_practice(): Promise<SaveResult>
   exports(): Promise<ExportRecord[]>
   save_export_blank(export_id: string): Promise<SaveResult>
+  export_answers(export_id: string): Promise<SaveResult & { warnings?: string[] }>
   mail_settings(): Promise<Record<string, never> | {
     configured: boolean
     smtp_server?: string
@@ -123,6 +124,7 @@ export interface PyApi {
   ): Promise<SimpleResult>
   analysis(): Promise<{ ready: boolean; [k: string]: unknown }>
   start_grading(question_ids: string[]): Promise<SimpleResult>
+  start_handback(export_id: string, pdf_path: string): Promise<SimpleResult>
   start_mcq_detection(
     qp_path: string, source_filename?: string,
   ): Promise<SimpleResult>

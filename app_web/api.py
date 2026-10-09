@@ -20,6 +20,7 @@ import datetime
 import logging
 import threading
 import webbrowser
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,14 +33,20 @@ from pydantic import ValidationError
 from app_web.jobs import push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
-from core.models import ERROR_TYPES, AttemptRecord, MistakeRecord, PaperType
+from core.models import (
+    ERROR_TYPES,
+    AttemptRecord,
+    ExportedMark,
+    MistakeRecord,
+    PaperType,
+)
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import AttemptStore, CSVStore, ExportStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
 from modules.exports import build_record
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
-from modules.marking.answer_sheet import build_answer_sheet
+from modules.marking.answer_sheet import build_answer_sheet, typeset_answers
 from modules.marking.attempts import attempts_from_results
 from modules.marking.grader import QuestionResult
 from modules.marking.mcq_parser import (
@@ -62,7 +69,13 @@ from modules.marking.ms_parser import (
 )
 from modules.marking.page_segmenter import ScannedDocument, match_scanned, scan_document
 from modules.marking.renderer import LocalRenderer
-from modules.marking.sheet import Sheet, SheetItem, grade_sheet
+from modules.marking.sheet import (
+    ForeignPaper,
+    Sheet,
+    SheetItem,
+    grade_sheet,
+    sheet_from_export,
+)
 from modules.marking.syllabus_fetch import fetch_syllabus
 from modules.marking.syllabus_parser import (
     delete_syllabus,
@@ -86,6 +99,14 @@ from modules.tutor import read_notes, refresh_notes
 from modules.updater import AppUpdater, current_app_version, format_progress
 
 _log = logging.getLogger("cie_helper.api")
+
+#: Why a question handed back could not be graded — ``sheet_from_export``'s
+#: codes, in the student's words.
+_SKIPPED = {
+    "no_pages": "没有作答页",
+    "no_mark_scheme": "没有 mark scheme，不能批改",
+    "no_grading_type": "不知道批改类型，不能批改",
+}
 
 #: Serialises note rewrites: two papers of one component confirmed back to
 #: back must not both read the same old note and race to replace it.
@@ -178,6 +199,8 @@ class Api:
         #: The last run graded and what came back, held until confirmed.
         self._sheet: Sheet | None = None
         self._results: list[QuestionResult] = []
+        #: The topic list each paper of the run was graded against.
+        self._sheet_topics: dict[str, dict[str, str] | None] = {}
         #: Letters the VL read off the annotated QP, before any manual
         #: overlay. Kept apart from the manual boxes so re-scoring does
         #: not need another detection pass.
@@ -481,6 +504,28 @@ class Api:
             for m in self._exports.load_all()
         ]
 
+    def export_answers(self, export_id: str) -> Payload:
+        """Typeset a graded export's answers from its snapshot."""
+        try:
+            manifest = self._exports.read(export_id)
+        except (OSError, ValueError, KeyError) as exc:
+            return {"success": False, "error": f"读不了这条导出记录：{exc}"}
+        if manifest.graded_at is None:
+            return {"success": False, "error": "批改后才有答案"}
+
+        def parts_of(paper_id: str) -> dict[str, ExportedMark] | None:
+            paper = manifest.papers.get(paper_id)
+            return None if paper is None else paper.ms
+
+        try:
+            data, warnings = typeset_answers(manifest.questions, parts_of)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        saved = _save_to_chosen_file(
+            data, f"{export_id}-answers.pdf", ("PDF (*.pdf)",),
+        )
+        return {**saved, "warnings": warnings}
+
     def save_export_blank(self, export_id: str) -> Payload:
         """Save an export's blank paper again, where the user picks."""
         try:
@@ -654,7 +699,10 @@ class Api:
             ],
         )
 
+        paper_configs = {a.paper_id: (a.config, a.paper_type)}
+
         def work() -> None:
+            self._announce(sheet, paper_configs)
             subject_id = subject_id_of(a.paper_id)
             # A subject nobody imported a syllabus for would grade with every
             # question 未分类, and nothing tells the student to go import one.
@@ -662,31 +710,107 @@ class Api:
             if syllabus is None and subject_id.isdigit():
                 push({"type": "syllabus_fetch", "subject_id": subject_id})
                 syllabus = fetch_syllabus(subject_id)
-            outcome = grade_sheet(
-                config=config,
-                sheet=sheet,
-                paper_configs={a.paper_id: (a.config, a.paper_type)},
-                topics_of=lambda pid: topics_for_paper(syllabus, pid),
-                renderer=LocalRenderer(),
-                on_progress=lambda done, total, qid: push(
-                    {"type": "progress", "done": done, "total": total, "question": qid},
-                ),
-                on_result=lambda r: push(
-                    {"type": "result", "result": r.model_dump(mode="json")},
-                ),
+            self._grade(
+                config, sheet, paper_configs,
+                lambda pid: topics_for_paper(syllabus, pid),
             )
-            self._sheet = sheet
-            self._results = outcome.results
-            push({
-                "type": "graded",
-                "results": [r.model_dump(mode="json") for r in outcome.results],
-                "failures": [
-                    {"paper_id": f.paper_id, "question": f.question, "error": f.error}
-                    for f in outcome.failures
-                ],
-            })
 
         return start("批改", work)
+
+    def start_handback(self, export_id: str, pdf_path: str) -> Payload:
+        """Grade an export handed back: its pages are matched to questions by
+        their footer markers, and every question is graded against the
+        export's snapshot."""
+        config = GraderConfig.try_load()
+        if config is None:
+            return {
+                "success": False,
+                "error": "还没有配置 Grader API，先去【设置】填。",
+            }
+        try:
+            manifest = self._exports.read(export_id)
+        except (OSError, ValueError, KeyError) as exc:
+            return {"success": False, "error": f"读不了这条导出记录：{exc}"}
+        topics = {pid: paper.topics for pid, paper in manifest.papers.items()}
+
+        def work() -> None:
+            try:
+                handback = sheet_from_export(manifest, pdf_path)
+            except ForeignPaper as exc:
+                raise ValueError("这份 PDF 不是这次导出的") from exc
+            skipped = [
+                f"{pid} {main} {_SKIPPED[why]}"
+                for pid, main, why in handback.skipped
+            ]
+            if not handback.sheet.items:
+                raise ValueError("；".join(["没有可批改的题", *skipped]))
+            self._announce(
+                handback.sheet, handback.paper_configs, topics, skipped,
+                title=manifest.title,
+            )
+            self._grade(config, handback.sheet, handback.paper_configs, topics.get)
+
+        return start("批改", work)
+
+    def _announce(
+        self,
+        sheet: Sheet,
+        paper_configs: Mapping[str, tuple[PaperConfig, PaperType]],
+        topics: Mapping[str, dict[str, str] | None] | None = None,
+        skipped: list[str] | None = None,
+        *,
+        title: str = "",
+    ) -> None:
+        """Tell the page what this run is about to grade, before any of it is
+        graded — the results page lays the run out from this."""
+        self._sheet = None
+        self._results = []
+        self._sheet_topics = dict(topics or {})
+        push({
+            "type": "sheet",
+            "kind": sheet.kind,
+            "export_id": sheet.export_id,
+            "title": title,
+            "queue": [f"{i.paper_id}:{i.question_id}" for i in sheet.items],
+            "max": {
+                f"{i.paper_id}:{i.question_id}":
+                    paper_configs[i.paper_id][0].questions[i.question_id].max_marks
+                for i in sheet.items
+            },
+            "topics": self._sheet_topics,
+            "skipped": skipped or [],
+        })
+
+    def _grade(
+        self,
+        config: GraderConfig,
+        sheet: Sheet,
+        paper_configs: Mapping[str, tuple[PaperConfig, PaperType]],
+        topics_of: Callable[[str], dict[str, str] | None],
+    ) -> None:
+        outcome = grade_sheet(
+            config=config,
+            sheet=sheet,
+            paper_configs=paper_configs,
+            topics_of=topics_of,
+            renderer=LocalRenderer(),
+            on_progress=lambda done, total, qid: push(
+                {"type": "progress", "done": done, "total": total, "question": qid},
+            ),
+            on_result=lambda r: push(
+                {"type": "result", "result": r.model_dump(mode="json")},
+            ),
+        )
+        self._sheet = sheet
+        self._results = outcome.results
+        push({
+            "type": "graded",
+            "results": [r.model_dump(mode="json") for r in outcome.results],
+            "failures": [
+                {"paper_id": f.paper_id, "question": f.question, "error": f.error}
+                for f in outcome.failures
+            ],
+        })
 
     # -- mark: MCQ -----------------------------------------------------------
 
@@ -826,11 +950,15 @@ class Api:
             summary = summarise_scores(results, scores)
             score += summary.score
             max_score += summary.max_score
+            # A practice set or a batch of mistakes is not the whole paper,
+            # so it has no score to put on the paper's row.
             if sheet.kind == "paper":
                 update = self.submit_score(pid, summary.score, summary.max_score)
                 if not update.get("success"):
                     return update
-            topics = self.topics_for(pid)
+                topics = self.topics_for(pid)
+            else:
+                topics = self._sheet_topics.get(pid)
             mistakes += mistakes_from_results(
                 results, paper_id=pid, topics=topics, scores=scores,
                 timestamp=now,
@@ -843,6 +971,8 @@ class Api:
 
         self._mistakes.append_many(mistakes)
         self._attempts.append_many(run)
+        if sheet.export_id is not None:
+            self._exports.mark_graded(sheet.export_id, now)
         self._sheet = None
         self._results = []
         self._refresh_notes_later(filed)

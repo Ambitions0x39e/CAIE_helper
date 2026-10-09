@@ -42,6 +42,11 @@ export function resultKey(paperId: string, question: string): string {
   return `${paperId}:${question}`
 }
 
+/** The paper half of a `resultKey`. */
+export function paperOf(key: string): string {
+  return key.slice(0, key.lastIndexOf(':'))
+}
+
 /** The question half of a `resultKey`. Question ids never hold a colon. */
 export function questionOf(key: string): string {
   return key.slice(key.lastIndexOf(':') + 1)
@@ -49,7 +54,7 @@ export function questionOf(key: string): string {
 
 /** Paper, then reading order within it. */
 export function compareResultKeys(a: string, b: string): number {
-  const pa = a.slice(0, a.lastIndexOf(':'))
-  const pb = b.slice(0, b.lastIndexOf(':'))
+  const pa = paperOf(a)
+  const pb = paperOf(b)
   return pa === pb ? compareQuestionIds(questionOf(a), questionOf(b)) : pa.localeCompare(pb)
 }

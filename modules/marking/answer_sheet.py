@@ -24,7 +24,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from pdfminer.fontmetrics import FONT_METRICS
 from pypdf import PdfWriter
@@ -41,10 +41,10 @@ from modules.question_pdf import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from core.models import MistakeRecord
-    from modules.marking.ms_parser import PaperConfig
+    from modules.question_pdf import QuestionRef
 
 _PAGE_W = 612.0
 _PAGE_H = 792.0
@@ -856,14 +856,44 @@ def build_answer_sheet(
     """
     from modules.marking.ms_parser import cached_mark_scheme
 
+    def parts_of(paper_id: str) -> Mapping[str, _Part] | None:
+        config = cached_mark_scheme(ms_path_of.get(paper_id, ""))
+        return None if config is None else config.questions
+
+    return typeset_answers(records, parts_of)
+
+
+class _Part(Protocol):
+    """One mark scheme part — a parsed ``QuestionConfig`` or an export
+    snapshot's ``ExportedMark``."""
+
+    @property
+    def max_marks(self) -> int: ...
+
+    @property
+    def mark_scheme(self) -> str: ...
+
+
+def typeset_answers(
+    records: Iterable[QuestionRef],
+    parts_of: Callable[[str], Mapping[str, _Part] | None],
+) -> tuple[bytes, list[str]]:
+    """The answer sheet for *records*, each paper's parts looked up through
+    *parts_of* — None for a paper with no mark scheme.
+
+    Returns the PDF bytes and warnings, as :func:`build_answer_sheet`.
+
+    Raises:
+        ValueError: nothing at all could be written.
+    """
     items = list(records)
     warnings: list[str] = []
     sheet = _Sheet()
     written = 0
 
     for paper_id, mains in main_questions_by_paper(items).items():
-        config = cached_mark_scheme(ms_path_of.get(paper_id, ""))
-        if config is None:
+        parts = parts_of(paper_id)
+        if parts is None:
             warnings.append(f"{paper_id}: 还没解析过 mark scheme，已跳过")
             continue
 
@@ -872,14 +902,11 @@ def build_answer_sheet(
         sheet.gap(_PARA_GAP)
 
         for main in mains:
-            ids = [
-                qid for qid in config.questions
-                if main_question_id(qid) == main
-            ]
+            ids = [qid for qid in parts if main_question_id(qid) == main]
             if not ids:
                 warnings.append(f"{paper_id}: mark scheme 里没有 {main}")
                 continue
-            _write_question(sheet, main, ids, config)
+            _write_question(sheet, main, ids, parts)
             written += 1
 
     if not written:
@@ -892,7 +919,7 @@ def _write_question(
     sheet: _Sheet,
     main: str,
     ids: Sequence[str],
-    config: PaperConfig,
+    parts: Mapping[str, _Part],
 ) -> None:
     """One main question: a heading, then every part's mark scheme.
 
@@ -901,11 +928,11 @@ def _write_question(
     either: this sheet is the answer to redo against, and the old marks
     belong in the 错题本, not on it.
     """
-    total = sum(config.questions[qid].max_marks for qid in ids)
+    total = sum(parts[qid].max_marks for qid in ids)
     sheet.block(f"{main}   [{total}]", _HEAD_SIZE, bold=True)
 
     for qid in ids:
-        entry = config.questions[qid]
+        entry = parts[qid]
         sheet.block(f"{qid}  [{entry.max_marks}]", _BODY_SIZE, bold=True)
         sheet.block(entry.mark_scheme, _BODY_SIZE)
         sheet.gap(_PARA_GAP)

@@ -177,6 +177,10 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
   layouts); `practice/` into `Topics` (专项练习), `Mistakes` (错题本) and
   `Exports` (导出记录); `mark/` into `SetupStep` / `GradeStep` / `McqStep` /
   `ResultsStep`.
+  - **A grading run lives in `mark/run.ts`, at module scope.** A hand-back is
+    started from 练习 and lands on 批改's results through an `App` intent; its
+    first events arrive before 批改 has mounted, so a listener bound with the
+    module is the only one that hears them all.
   - **The donut counts one unit per paper, not per mark.** A Pending record has
     no `score_total` (`completed_requires_scores` only demands them for
     Completed), so the grey slice has no marks to contribute. Each paper is one
@@ -210,6 +214,7 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
 - **`marking/`** — the Mark tab's pipeline, split out because these served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading), `sheet` (a grading run), `workflow` (the Mark tab's other decisions). Outside `app_web/api.py`, only `question_pdf`, `exports`, `practice` and `profile` import them.
   - **`page_segmenter` is two-phase**: `scan_document(pdf)` does every PDF-only step and `match_scanned(doc, question_ids)` the rest, so the Mark tab can scan the answer paper *while* the mark scheme is still parsing. `segment_questions_report()` is still the one-shot composition of the two.
   - **A grading run is a `Sheet`**: answer pages in one PDF, each item naming the paper and mark scheme sub-question (`"Q3a"`) it answers. `grade_sheet` grades every item against its own paper's `PaperConfig`, grading type and topic list, so one run can span several papers; results carry `paper_id`, and the results page keys them `"<paper_id>:<question>"`. A whole paper is a sheet of `kind="paper"`. The MS cache stores the grading type the paper was last parsed for (`PaperConfig.paper_type`).
+  - **An export handed back** becomes a sheet through `sheet_from_export`: `pages_by_question` reads every page's footer marker and gives an unmarked page (one added in GoodNotes) to the question before it; each main question then expands into its mark scheme parts from the `.cpd` snapshot. The markers are read with `LAParams(all_texts=True)`, because a layered export may wrap each page in a form XObject — the segmenter must not share that setting, which makes it read short words as question numbers. Confirming a hand-back files attempts and mistakes under each question's own paper, writes no `PaperRecord` score (it is not the whole paper), and marks the record graded; its answers are then typeset from the snapshot (`answer_sheet.typeset_answers`).
   - **`workflow.py` and `sheet.py` must never import `app_web`.** That constraint is what makes the grading pipeline testable (`tests/test_marking_workflow.py`); keep user-facing strings on the UI side of the boundary.
 
 ### Data patterns

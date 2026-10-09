@@ -19,6 +19,16 @@ export type JobEvent =
       answer_key: Record<string, string>
     }
   | { type: 'syllabus_fetch'; subject_id: string }
+  | {
+      type: 'sheet'
+      kind: 'paper' | 'practice' | 'mistakes'
+      export_id: string | null
+      title: string
+      queue: string[]
+      max: Record<string, number>
+      topics: Record<string, Record<string, string> | null>
+      skipped: string[]
+    }
   | { type: 'progress'; done: number; total: number; question: string }
   | { type: 'result'; result: Record<string, unknown> }
   | { type: 'graded'; results: unknown[]; failures: { paper_id: string; question: string; error: string }[] }
