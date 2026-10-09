@@ -484,3 +484,25 @@ def test_cache_hit_keeps_good_cover_info(cache_env: Path) -> None:
 
     assert result.paper_id == "9618/11/M/J/24"
     assert result.total_marks == 75
+
+
+def test_the_grading_type_is_cached_with_the_mark_scheme(cache_env: Path) -> None:
+    """A cache written before the type was stored learns it on the next parse,
+    and ``cached_mark_scheme`` hands it back to whoever reads the cache."""
+    pdf_path = cache_env / "9702_s24_ms_21.pdf"
+    pdf_path.write_bytes(
+        _make_ms_pdf([_COVER_PAGE, _GENERIC_PAGE, _content_page("1(a)")])
+    )
+    untyped = PaperConfig(
+        paper_id="9702/21/M/J/24",
+        total_marks=60,
+        questions={"Q1a": QuestionConfig(max_marks=3, mark_scheme="B1")},
+    )
+    _save_cache(pdf_path, untyped, 3)
+
+    result = parse_mark_scheme(pdf_path, paper_type=PaperType.PHYSICS)
+
+    assert result.paper_type is PaperType.PHYSICS
+    cached = ms_parser.cached_mark_scheme(pdf_path)
+    assert cached is not None
+    assert cached.paper_type is PaperType.PHYSICS

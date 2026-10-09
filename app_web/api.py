@@ -32,7 +32,7 @@ from pydantic import ValidationError
 from app_web.jobs import push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
-from core.models import ERROR_TYPES, MistakeRecord, PaperType
+from core.models import ERROR_TYPES, AttemptRecord, MistakeRecord, PaperType
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import AttemptStore, CSVStore, MistakeStore
 from modules.downloader import DownloadRequest, PaperDownloader, query_available
@@ -40,6 +40,7 @@ from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
 from modules.marking.answer_sheet import build_answer_sheet
 from modules.marking.attempts import attempts_from_results
+from modules.marking.grader import QuestionResult
 from modules.marking.mcq_parser import (
     detect_student_answers,
     score_mcq_answers,
@@ -60,6 +61,7 @@ from modules.marking.ms_parser import (
 )
 from modules.marking.page_segmenter import ScannedDocument, match_scanned, scan_document
 from modules.marking.renderer import LocalRenderer
+from modules.marking.sheet import Sheet, SheetItem, grade_sheet
 from modules.marking.syllabus_fetch import fetch_syllabus
 from modules.marking.syllabus_parser import (
     delete_syllabus,
@@ -73,7 +75,6 @@ from modules.marking.syllabus_parser import (
 from modules.marking.workflow import (
     collect_page_assignments,
     component_paper_number,
-    grade_paper,
     merge_mcq_answers,
     regions_to_page_map,
     summarise_scores,
@@ -173,7 +174,9 @@ class Api:
         # error. The UI hides the GoodNotes affordance rather than failing it.
         self._mail = MailConfig.try_load()
         self._analysis: _Analysis | None = None
-        self._results: list[Any] = []
+        #: The last run graded and what came back, held until confirmed.
+        self._sheet: Sheet | None = None
+        self._results: list[QuestionResult] = []
         #: Letters the VL read off the annotated QP, before any manual
         #: overlay. Kept apart from the manual boxes so re-scoring does
         #: not need another detection pass.
@@ -603,6 +606,17 @@ class Api:
         )
         page_map, clips = regions_to_page_map(regions)
         assignments = collect_page_assignments(page_map)
+        sheet = Sheet(
+            kind="paper",
+            pdf_path=answer_path,
+            items=[
+                SheetItem(
+                    paper_id=a.paper_id, question_id=q,
+                    pages=assignments.get(q, []), clips=clips.get(q, []),
+                )
+                for q in question_ids
+            ],
+        )
 
         def work() -> None:
             subject_id = subject_id_of(a.paper_id)
@@ -612,17 +626,12 @@ class Api:
             if syllabus is None and subject_id.isdigit():
                 push({"type": "syllabus_fetch", "subject_id": subject_id})
                 syllabus = fetch_syllabus(subject_id)
-            outcome = grade_paper(
+            outcome = grade_sheet(
                 config=config,
-                paper_config=a.config,
-                paper_type=a.paper_type,
-                pdf_source=answer_path,
-                question_ids=question_ids,
-                assignments=assignments,
-                clips=clips,
+                sheet=sheet,
+                paper_configs={a.paper_id: (a.config, a.paper_type)},
+                topics_of=lambda pid: topics_for_paper(syllabus, pid),
                 renderer=LocalRenderer(),
-                syllabus_info=syllabus,
-                paper_id=a.paper_id,
                 on_progress=lambda done, total, qid: push(
                     {"type": "progress", "done": done, "total": total, "question": qid},
                 ),
@@ -630,12 +639,13 @@ class Api:
                     {"type": "result", "result": r.model_dump(mode="json")},
                 ),
             )
+            self._sheet = sheet
             self._results = outcome.results
             push({
                 "type": "graded",
                 "results": [r.model_dump(mode="json") for r in outcome.results],
                 "failures": [
-                    {"question": f.question, "error": f.error}
+                    {"paper_id": f.paper_id, "question": f.question, "error": f.error}
                     for f in outcome.failures
                 ],
             })
@@ -731,65 +741,95 @@ class Api:
         """Write the graded scores to the paper's row, file its lost marks and
         record every question as an attempt.
 
-        ``topic_overrides`` / ``error_overrides`` map question → the topic id /
-        error type the student picked in place of the model's; None clears it.
+        The three override maps are keyed ``"<paper_id>:<question>"`` by the
+        paper each question was graded under: a score, or the topic id / error
+        type the student picked in place of the model's (None clears it). A
+        whole paper is then recorded under *paper_id*, which the student may
+        have corrected on the results page.
 
         The mistake rows are appended, never replaced: re-grading a paper adds
         a second set rather than editing the first, which is what makes the
         错题本 a history instead of a snapshot.
         """
-        if not self._results:
+        sheet = self._sheet
+        if sheet is None or not self._results:
             return {"success": False, "error": "没有可确认的批改结果"}
-        summary = summarise_scores(self._results, overrides or {})
-        update = self.submit_score(paper_id, summary.score, summary.max_score)
-        if not update.get("success"):
-            return update
+        overrides = overrides or {}
         topic_picks = topic_overrides or {}
         # model_copy skips validation, so an error type the page made up
         # would only fail when the attempt row is built — after the score
         # was already written.
         error_picks = {
-            q: e for q, e in (error_overrides or {}).items()
+            k: e for k, e in (error_overrides or {}).items()
             if e is None or e in ERROR_TYPES
         }
-        results = []
+
+        by_paper: dict[str, list[QuestionResult]] = {}
         for r in self._results:
-            picked: dict[str, Any] = {}
-            if r.question in topic_picks:
-                picked["topic"] = topic_picks[r.question]
-            if r.question in error_picks:
-                picked["error_type"] = error_picks[r.question]
-            results.append(r.model_copy(update=picked) if picked else r)
-        topics = self.topics_for(paper_id)
+            by_paper.setdefault(r.paper_id, []).append(r)
+
         now = datetime.datetime.now(datetime.UTC)
-        mistakes = mistakes_from_results(
-            results, paper_id=paper_id, topics=topics, scores=overrides,
-            timestamp=now,
-        )
-        run = attempts_from_results(
-            results, model_results=self._results, paper_id=paper_id,
-            topics=topics, scores=overrides, timestamp=now,
-        )
+        mistakes: list[MistakeRecord] = []
+        run: list[AttemptRecord] = []
+        filed: list[tuple[str, str]] = []
+        score = max_score = 0.0
+        for graded_as, model_results in by_paper.items():
+            pid = paper_id if sheet.kind == "paper" else graded_as
+            scores: dict[str, float] = {}
+            results = []
+            for r in model_results:
+                key = f"{graded_as}:{r.question}"
+                if key in overrides:
+                    scores[r.question] = overrides[key]
+                picked: dict[str, Any] = {}
+                if key in topic_picks:
+                    picked["topic"] = topic_picks[key]
+                if key in error_picks:
+                    picked["error_type"] = error_picks[key]
+                results.append(r.model_copy(update=picked) if picked else r)
+            summary = summarise_scores(results, scores)
+            score += summary.score
+            max_score += summary.max_score
+            if sheet.kind == "paper":
+                update = self.submit_score(pid, summary.score, summary.max_score)
+                if not update.get("success"):
+                    return update
+            topics = self.topics_for(pid)
+            mistakes += mistakes_from_results(
+                results, paper_id=pid, topics=topics, scores=scores,
+                timestamp=now,
+            )
+            run += attempts_from_results(
+                results, model_results=model_results, paper_id=pid,
+                topics=topics, scores=scores, timestamp=now,
+            )
+            filed += [(pid, r.question) for r in results]
+
         self._mistakes.append_many(mistakes)
         self._attempts.append_many(run)
+        self._sheet = None
         self._results = []
-        self._refresh_notes_later(paper_id)
-        return {
-            "success": True,
-            "score": summary.score,
-            "max_score": summary.max_score,
-        }
+        self._refresh_notes_later(filed)
+        return {"success": True, "score": score, "max_score": max_score}
 
-    def _refresh_notes_later(self, paper_id: str) -> None:
-        """File the paper into its component's tutor note, on a thread of its own.
+    def _refresh_notes_later(self, questions: list[tuple[str, str]]) -> None:
+        """File the confirmed questions into their components' tutor notes,
+        on a thread of its own.
 
         Not a `jobs.start` job: that allows one job at a time, and a note
         rewrite must not block parsing the next paper. A failure is logged
         and the old note stays — the scores are already recorded.
         """
         config = GraderConfig.try_load()
-        component = component_paper_number(paper_id)
-        if config is None or component is None:
+        if config is None:
+            return
+        by_component: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for paper_id, question in questions:
+            component = component_paper_number(paper_id)
+            if component is not None:
+                key = (subject_id_of(paper_id), component)
+                by_component.setdefault(key, []).append((paper_id, question))
+        if not by_component:
             return
         records = self._attempts.load_all()
         # Appended in time order, so a re-graded question's latest comment wins.
@@ -798,15 +838,18 @@ class Api:
         }
 
         def work() -> None:
-            try:
-                with _notes_lock:
-                    refresh_notes(
-                        config, records, comments,
-                        subject_id=subject_id_of(paper_id), component=component,
-                        paper_id=paper_id,
+            for (subject_id, component), filed in by_component.items():
+                try:
+                    with _notes_lock:
+                        refresh_notes(
+                            config, records, comments,
+                            subject_id=subject_id, component=component,
+                            questions=filed,
+                        )
+                except Exception:
+                    _log.exception(
+                        "tutor note for %s P%s failed", subject_id, component,
                     )
-            except Exception:
-                _log.exception("tutor note for %s failed", paper_id)
 
         threading.Thread(target=work, name="tutor-notes", daemon=True).start()
 

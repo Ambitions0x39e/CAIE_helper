@@ -92,7 +92,7 @@ def full_page_clips(source: str | bytes | Path) -> list[PageClip]:
 #: for it raises ("Crop exceeds page dimensions" when the two insets meet).
 _MIN_SLICE_PT = 1.0
 
-#: PDFium is not thread-safe, and `grade_paper` renders on several workers at
+#: PDFium is not thread-safe, and `grade_sheet` renders on several workers at
 #: once. Unserialised, four threads opening one answer paper failed 36 of 40
 #: opens with "Data format error"; one lock across the whole render fixes it.
 _PDFIUM_LOCK = threading.Lock()
@@ -104,7 +104,7 @@ class LocalRenderer:
     Same PDFium engine the native path reaches through Dart, so the pixels
     match; it just runs on this side of the process. That makes it the whole
     dependency of a grading run on the UI stack: construct one and
-    :func:`grade_paper` needs nothing else from the app.
+    `grade_sheet` needs nothing else from the app.
 
     **The clip is applied before rasterizing, not after.** ``render``'s ``crop``
     takes an inset in points from each edge — verified against a banded page:

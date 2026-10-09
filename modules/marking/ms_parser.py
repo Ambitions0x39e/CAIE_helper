@@ -70,6 +70,9 @@ class PaperConfig(BaseModel):
     paper_id: str
     total_marks: int
     questions: dict[str, QuestionConfig]
+    #: The grading path it was last parsed for. None on caches written
+    #: before the type was stored, until the paper is parsed again.
+    paper_type: PaperType | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -683,7 +686,15 @@ def parse_mark_scheme(
     resolved_start = resolve_ms_start_page(pdf_path, start_page)
     cached = None if force else _load_cached(path, resolved_start)
     if cached is not None:
-        return _repair_cover_info(path, cached, resolved_start)
+        repaired = _repair_cover_info(path, cached, resolved_start)
+        if repaired.paper_type is paper_type:
+            return repaired
+        # Every structured type parses the same way, so the cached questions
+        # stand; only the type the user picked this time is recorded.
+        typed = repaired.model_copy(update={"paper_type": paper_type})
+        with contextlib.suppress(Exception):
+            _save_cache(path, typed, resolved_start)
+        return typed
 
     if grader_config is None:
         raise ValueError(
@@ -708,6 +719,7 @@ def parse_mark_scheme(
         paper_id=paper_id,
         total_marks=total_marks,
         questions=questions,
+        paper_type=paper_type,
     )
     _save_cache(path, config, resolved_start)
     return config

@@ -7,6 +7,7 @@ import { notify } from '../../ui/Toast'
 import { GradeStep } from './GradeStep'
 import { McqStep } from './McqStep'
 import { ResultsStep } from './ResultsStep'
+import { resultKey } from './cells'
 import { SetupStep } from './SetupStep'
 import type { Analysis, GradeProgress, QuestionResult } from './types'
 
@@ -19,7 +20,8 @@ const STEPS = [
 export function MarkTab() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [results, setResults] = useState<QuestionResult[]>([])
-  /** The questions the running batch was asked for — what 结果 lays out. */
+  /** The questions the running batch was asked for, as `resultKey`s — what
+   * 结果 lays out. */
   const [queue, setQueue] = useState<string[]>([])
   const [grading, setGrading] = useState(false)
   const [progress, setProgress] = useState<GradeProgress | null>(null)
@@ -97,10 +99,10 @@ export function MarkTab() {
   /** Start a run and go straight to 结果 — that step draws the batch as
    * pending cells and fills them in one by one, which is where the progress
    * of a run is actually legible. */
-  const startGrading = useCallback(async (questionIds: string[]) => {
+  const startGrading = useCallback(async (paperId: string, questionIds: string[]) => {
     setGrading(true)
     setResults([])
-    setQueue(questionIds)
+    setQueue(questionIds.map((q) => resultKey(paperId, q)))
     setProgress({ done: 0, total: questionIds.length })
     setReached(2)
     setDir(1)
@@ -133,7 +135,11 @@ export function MarkTab() {
           // mark scheme to review afterwards, so it has no third step.
           <McqStep analysis={analysis} />
         ) : step === 1 && analysis ? (
-          <GradeStep analysis={analysis} busy={grading} onStart={startGrading} />
+          <GradeStep
+            analysis={analysis}
+            busy={grading}
+            onStart={(ids) => startGrading(analysis.paper_id ?? '', ids)}
+          />
         ) : step === 2 && analysis ? (
           <ResultsStep
             analysis={analysis}

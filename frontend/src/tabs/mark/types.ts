@@ -41,6 +41,8 @@ export const ERROR_LABELS: Record<ErrorType, string> = {
 }
 
 export interface QuestionResult {
+  /** The paper it was graded against; a run can span several. */
+  paper_id: string
   question: string
   marks: MarkDetail[]
   total: number

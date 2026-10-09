@@ -6,7 +6,7 @@ import { Metric } from '../../ui/Metric'
 import { Select } from '../../ui/Select'
 import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
-import { CELL_H, GRID_COLS, compareQuestionIds, scoreBand } from './cells'
+import { CELL_H, GRID_COLS, compareResultKeys, questionOf, resultKey, scoreBand } from './cells'
 import {
   ERROR_LABELS,
   type Analysis,
@@ -29,7 +29,7 @@ export function ResultsStep({
   progress,
 }: {
   analysis: Analysis
-  /** The questions this run was asked to grade. */
+  /** The questions this run was asked to grade, as `resultKey`s. */
   queue: string[]
   results: QuestionResult[]
   grading: boolean
@@ -38,8 +38,8 @@ export function ResultsStep({
   const [overrides, setOverrides] = useState<Record<string, string>>({})
   const [open, setOpen] = useState<string | null>(null)
   const [paperId, setPaperId] = useState(analysis.paper_id ?? '')
-  /** Question → topic id the student picked; null is 未分类. Absent keeps
-   * the model's tag. */
+  /** Every override is keyed by `resultKey`. Topic: the id the student
+   * picked; null is 未分类; absent keeps the model's tag. */
   const [topicOverrides, setTopicOverrides] = useState<Record<string, string | null>>({})
   const [errorOverrides, setErrorOverrides] = useState<Record<string, ErrorType | null>>({})
   /** Null when the paper has no topics to pick from — no syllabus, or a
@@ -53,17 +53,18 @@ export function ResultsStep({
       .catch(() => setTopics(null))
   }, [paperId])
 
+  const keyOf = (r: QuestionResult) => resultKey(r.paper_id, r.question)
   const topicOf = (r: QuestionResult) =>
-    r.question in topicOverrides ? topicOverrides[r.question] : r.topic
+    keyOf(r) in topicOverrides ? topicOverrides[keyOf(r)] : r.topic
   const errorOf = (r: QuestionResult) =>
-    r.question in errorOverrides ? errorOverrides[r.question] : r.error_type
+    keyOf(r) in errorOverrides ? errorOverrides[keyOf(r)] : r.error_type
   const topicName = (r: QuestionResult) => {
     const id = topicOf(r)
     return id ? (topics?.[id] ?? id) : UNCLASSIFIED
   }
 
   const byId = useMemo(
-    () => new Map(results.map((r) => [r.question, r])),
+    () => new Map(results.map((r) => [keyOf(r), r])),
     [results],
   )
 
@@ -71,7 +72,7 @@ export function ResultsStep({
    * applies on the Python side, so the number shown here is the number
    * recorded. A blank or unparseable box falls back to the model's mark. */
   const scoreOf = (r: QuestionResult) => {
-    const raw = overrides[r.question]
+    const raw = overrides[keyOf(r)]
     const n = raw === undefined || raw === '' ? Number.NaN : Number(raw)
     return Number.isFinite(n) ? n : r.total
   }
@@ -85,9 +86,9 @@ export function ResultsStep({
 
   const confirm = async () => {
     const numeric: Record<string, number> = {}
-    for (const [q, v] of Object.entries(overrides)) {
+    for (const [k, v] of Object.entries(overrides)) {
       const n = Number(v)
-      if (v !== '' && Number.isFinite(n)) numeric[q] = n
+      if (v !== '' && Number.isFinite(n)) numeric[k] = n
     }
     const r = await (await api()).confirm_results(
       paperId,
@@ -105,15 +106,13 @@ export function ResultsStep({
   // Laid out from what was *sent* to grade, not from what has come back: the
   // first frame of a run has no results at all, and a grid built from those
   // would be an empty page until the first question lands.
-  const order = (queue.length > 0 ? [...queue] : results.map((r) => r.question)).sort(
-    compareQuestionIds,
-  )
+  const order = (queue.length > 0 ? [...queue] : results.map(keyOf)).sort(compareResultKeys)
   if (order.length === 0) {
     return <div className="text-caption text-muted">还没有批改结果。</div>
   }
 
-  const maxOf = (q: string) =>
-    byId.get(q)?.max ?? analysis.questions?.[q]?.max_marks ?? 0
+  const maxOf = (k: string) =>
+    byId.get(k)?.max ?? analysis.questions?.[questionOf(k)]?.max_marks ?? 0
 
   const detail = open === null ? null : (byId.get(open) ?? null)
 
@@ -149,23 +148,23 @@ export function ResultsStep({
       )}
 
       <div className="grid gap-2.5" style={{ gridTemplateColumns: GRID_COLS }}>
-        {order.map((q) => {
-          const r = byId.get(q)
+        {order.map((k) => {
+          const r = byId.get(k)
           const got = r ? scoreOf(r) : null
           // A cell with no mark on it means one of two things, and only the run
           // being over tells them apart: still queued, or the question failed.
-          const value = r ? `${got}/${maxOf(q)}` : grading ? '—' : '失败'
+          const value = r ? `${got}/${maxOf(k)}` : grading ? '—' : '失败'
           return (
             <button
-              key={q}
-              onClick={() => r && setOpen(q)}
+              key={k}
+              onClick={() => r && setOpen(k)}
               disabled={!r}
               className={`flex ${CELL_H} flex-col items-center justify-center gap-0.5 rounded-ui
-                          border-2 ${scoreBand(got, maxOf(q))} ${
-                            open === q ? 'border-accent' : 'border-transparent'
+                          border-2 ${scoreBand(got, maxOf(k))} ${
+                            open === k ? 'border-accent' : 'border-transparent'
                           }`}
             >
-              <span className="text-subhead font-semibold">{q}</span>
+              <span className="text-subhead font-semibold">{questionOf(k)}</span>
               <span
                 className={`text-[20px] font-bold tabular-nums ${
                   r ? '' : grading ? 'text-muted' : 'text-bad'
@@ -225,9 +224,9 @@ export function ResultsStep({
             <label className="flex items-center gap-2 text-caption text-muted">
               调分
               <TextInput
-                value={overrides[detail.question] ?? ''}
+                value={overrides[keyOf(detail)] ?? ''}
                 placeholder={String(detail.total)}
-                onChange={(v) => setOverrides({ ...overrides, [detail.question]: v })}
+                onChange={(v) => setOverrides({ ...overrides, [keyOf(detail)]: v })}
                 inputMode="decimal"
                 className="w-20"
               />
@@ -241,7 +240,7 @@ export function ResultsStep({
                 onChange={(v) =>
                   setTopicOverrides({
                     ...topicOverrides,
-                    [detail.question]: v === NONE ? null : v,
+                    [keyOf(detail)]: v === NONE ? null : v,
                   })
                 }
                 options={[
@@ -258,7 +257,7 @@ export function ResultsStep({
                 onChange={(v) =>
                   setErrorOverrides({
                     ...errorOverrides,
-                    [detail.question]: v === NONE ? null : (v as ErrorType),
+                    [keyOf(detail)]: v === NONE ? null : (v as ErrorType),
                   })
                 }
                 options={[

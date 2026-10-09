@@ -169,7 +169,8 @@ class QuestionResult(BaseModel):
     # could not place the question — all three land in 未分类 downstream.
     topic: str | None = None
     error_type: ErrorType | None = None
-
+    #: Filled by ``grade_sheet``: the model's reply carries no paper id.
+    paper_id: str = ""
 
 
 def mark_value(code: str) -> int:

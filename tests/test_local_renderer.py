@@ -132,7 +132,7 @@ def test_render_pages_selects_whole_pages_by_1_indexed_number() -> None:
 
 
 def test_concurrent_renders_all_succeed(tmp_path: Path) -> None:
-    """``grade_paper`` renders on several workers at once; PDFium is not
+    """``grade_sheet`` renders on several workers at once; PDFium is not
     thread-safe, so without the lock most of these opens fail."""
     from concurrent.futures import ThreadPoolExecutor
 

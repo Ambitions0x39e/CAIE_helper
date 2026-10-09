@@ -23,6 +23,7 @@ from app_web.api import Api, _invalid
 from core.models import MistakeRecord
 from core.storage import AttemptStore, MistakeStore
 from modules.marking.grader import QuestionResult
+from modules.marking.sheet import Sheet
 
 
 @pytest.fixture
@@ -248,14 +249,19 @@ def test_exporting_nothing_is_a_result_not_a_save_dialog(api: Api) -> None:
 # -- confirming a graded run -------------------------------------------------
 
 
+_PAPER = "9701_s25_qp_22"
+
+
 def _graded_run(api: Api) -> None:
     """Three questions, all tagged 7 by the model: two lost marks, one full."""
+    api._sheet = Sheet(kind="paper", pdf_path="answers.pdf", items=[])
     api._results = [
         QuestionResult(question="1", marks=[], total=0, max=2, topic="7",
-                       error_type="slip"),
+                       error_type="slip", paper_id=_PAPER),
         QuestionResult(question="2", marks=[], total=1, max=2, topic="7",
-                       error_type="concept"),
-        QuestionResult(question="3", marks=[], total=2, max=2, topic="7"),
+                       error_type="concept", paper_id=_PAPER),
+        QuestionResult(question="3", marks=[], total=2, max=2, topic="7",
+                       paper_id=_PAPER),
     ]
     api.submit_score = lambda *_: {"success": True}  # type: ignore[method-assign]
     api.topics_for = lambda _: {"7": "Equilibria", "8": "Kinetics"}  # type: ignore[method-assign]
@@ -268,7 +274,9 @@ def test_a_topic_picked_on_the_results_page_is_what_both_rows_are_filed_under(
     they left alone keeps the model's tag."""
     _graded_run(api)
 
-    out = api.confirm_results("9701_s25_qp_22", topic_overrides={"1": "8", "2": None})
+    out = api.confirm_results(
+        _PAPER, topic_overrides={f"{_PAPER}:1": "8", f"{_PAPER}:2": None},
+    )
 
     assert out["success"] is True
     assert [(r.question_id, r.topic_name) for r in api._mistakes.load_all()] == [
@@ -290,7 +298,7 @@ def test_every_question_becomes_an_attempt_with_the_picked_error_type(
     _graded_run(api)
 
     out = api.confirm_results(
-        "9701_s25_qp_22", error_overrides={"1": "misread", "2": "nonsense"},
+        _PAPER, error_overrides={f"{_PAPER}:1": "misread", f"{_PAPER}:2": "nonsense"},
     )
 
     assert out["success"] is True
@@ -352,7 +360,7 @@ def test_a_confirmed_run_rewrites_its_components_note(
         ("9701_s25_qp_22", "1"), ("9701_s25_qp_22", "2"),
     }
     assert (calls[0]["subject_id"], calls[0]["component"]) == ("9701", "2")
-    assert calls[0]["paper_id"] == "9701_s25_qp_22"
+    assert calls[0]["questions"] == [(_PAPER, "1"), (_PAPER, "2"), (_PAPER, "3")]
 
 
 @pytest.mark.parametrize(
@@ -485,3 +493,22 @@ def test_a_practice_job_hands_its_set_to_save_and_a_rebuild_clears_it(
 
 def test_saving_before_building_is_a_result(api: Api) -> None:
     assert api.save_practice()["success"] is False
+
+
+def test_a_whole_paper_is_recorded_under_the_id_confirmed_on_the_page(
+    api: Api,
+) -> None:
+    """Overrides are keyed by the paper the question was graded under; the
+    rows then go to the id the student typed."""
+    _graded_run(api)
+    submitted: list[tuple[str, float, float]] = []
+    api.submit_score = lambda pid, score, total: (  # type: ignore[method-assign]
+        submitted.append((pid, score, total)) or {"success": True}
+    )
+
+    out = api.confirm_results("9701_w25_qp_22", overrides={f"{_PAPER}:1": 2})
+
+    assert submitted == [("9701_w25_qp_22", 5.0, 6.0)]
+    assert (out["score"], out["max_score"]) == (5.0, 6.0)
+    assert {a.paper_id for a in api._attempts.load_all()} == {"9701_w25_qp_22"}
+    assert [m.question_id for m in api._mistakes.load_all()] == ["2"]

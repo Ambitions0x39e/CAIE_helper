@@ -1,7 +1,7 @@
 /** Run with `pnpm test` (node --test, no framework dependency). */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { compareQuestionIds, scoreBand } from './cells.ts'
+import { compareQuestionIds, compareResultKeys, questionOf, scoreBand } from './cells.ts'
 
 describe('compareQuestionIds', () => {
   test('puts the parts of a question together, in paper order', () => {
@@ -14,8 +14,28 @@ describe('compareQuestionIds', () => {
     )
   })
 
+  test('reads the number after the Q of a mark scheme key', () => {
+    assert.deepEqual(['Q10', 'Q2', 'Q1b', 'Q1a'].sort(compareQuestionIds), ['Q1a', 'Q1b', 'Q2', 'Q10'])
+  })
+
   test('an id with no leading number sorts last', () => {
     assert.deepEqual(['extra', '2', '1'].sort(compareQuestionIds), ['1', '2', 'extra'])
+  })
+})
+
+describe('resultKey', () => {
+  test('groups by paper, then reading order', () => {
+    const keys = ['9709_s24_qp_41:2', '9231_s23_qp_43:10', '9709_s24_qp_41:1(a)', '9231_s23_qp_43:3']
+    assert.deepEqual(keys.sort(compareResultKeys), [
+      '9231_s23_qp_43:3',
+      '9231_s23_qp_43:10',
+      '9709_s24_qp_41:1(a)',
+      '9709_s24_qp_41:2',
+    ])
+  })
+
+  test('a cover-page id keeps its question', () => {
+    assert.equal(questionOf('9709/12/M/J/25:Q3a'), 'Q3a')
   })
 })
 
