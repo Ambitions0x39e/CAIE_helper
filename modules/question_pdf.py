@@ -204,12 +204,8 @@ def crops_for_paper(
         )
         kept = sum(b.height for b in trimmed)
         total = sum(b.height for b in whole)
-        # Some papers embed their fonts with no ToUnicode map: pdfminer then
-        # reports every glyph as "(cid:155)" and cannot even group them into
-        # lines, so the rulings are indistinguishable from the question
-        # (measured on 9709 s25 — 10k cid tokens, zero readable words). When
-        # trimming changes nothing, say so and export the whole region rather
-        # than pretend.
+        # A trim that keeps nearly everything found no answer space worth
+        # claiming: export the whole region and say so rather than pretend.
         if not trimmed or (total and kept / total > _TRIM_THRESHOLD):
             crops.append(QuestionCrop(
                 paper_id, question_id, qp_path, whole, trimmed=False,
@@ -272,10 +268,6 @@ _INSIDE_RATIO = 0.6
 _MIN_BAND = 6.0
 #: Keep this much of the region and the trim achieved nothing worth claiming.
 _TRIM_THRESHOLD = 0.9
-#: A line that came out as an actual word rather than a run of glyph codes.
-#: One of these on a page is enough to trust its text layer — the papers that
-#: fail this produce *zero* across the whole document, not a few.
-_READABLE_RE = re.compile(r"[A-Za-z]{3,}")
 #: Breathing room on the right of the writing column.
 _COLUMN_PAD = 6.0
 #: A ruling position used by fewer than this share of a paper's rulings is
@@ -348,16 +340,16 @@ def _is_filler(line: object) -> bool:
 def _content_spans(
     layout: object, y_top: float, y_bottom: float, page_height: float
 ) -> tuple[list[_Span], list[_Span], int]:
-    """(content, filler, readable) — spans top-down, plus a legibility count.
+    """(content, filler, text_lines) — spans top-down, plus a line count.
 
     The filler spans are kept, not discarded: where a ruling *was* is the
     honest place to break one block from the next. Judging it by distance
     alone mistakes a paper's own paragraph spacing for answer space.
 
-    ``readable`` counts lines that came out as actual words. It is what says
-    whether this page's text layer can be trusted to say where a question
-    ends: on a paper embedded without a ToUnicode map it is zero, and then
-    the gaps between rulings have to be kept whole.
+    ``text_lines`` counts the content lines of text, decoded or not. A line
+    pdfminer reports as ``(cid:94)…`` still sits exactly where its glyphs
+    print, so it bounds the question as well as a readable one; measured on
+    the 48 ``AllAndNone`` papers, every one trims all of its questions.
     """
     from pdfminer.layout import (
         LTCurve,
@@ -371,7 +363,7 @@ def _content_spans(
 
     content: list[_Span] = []
     filler: list[_Span] = []
-    readable = 0
+    text_lines = 0
 
     def _add(element: object, into: list[_Span]) -> None:
         top = page_height - element.y1  # type: ignore[attr-defined]
@@ -410,15 +402,14 @@ def _content_spans(
                 if _text_size(line) < _MIN_TEXT_SIZE:
                     continue  # barcode / running head, not question content
                 _add(line, content)
-                if _READABLE_RE.search(line.get_text()):
-                    readable += 1
+                text_lines += 1
         elif isinstance(
             element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
         ) and element.height <= _FURNITURE_RATIO * page_height:
             # Taller than that and it is the margin bar CIE draws down every
             # page, not part of any question.
             _add(element, content)
-    return content, filler, readable
+    return content, filler, text_lines
 
 
 @dataclass(frozen=True)
@@ -828,7 +819,7 @@ def content_bands(
         band = region_band.from_top(_uncut_top(
             extents[region_band.page_idx], region_band.y_top, top_margin
         ))
-        content, filler, readable = _content_spans(
+        content, filler, text_lines = _content_spans(
             page_layout, band.y_top, band.y_bottom, height
         )
         page_extents = extents[region_band.page_idx]
@@ -836,12 +827,12 @@ def content_bands(
         for ruled_top, ruled_bottom in _ruling_blocks(filler):
             _keep(
                 out, band, cursor, min(ruled_top, band.y_bottom),
-                content, readable, column, page_extents,
+                content, text_lines, column, page_extents,
             )
             cursor = max(cursor, ruled_bottom)
         _keep(
             out, band, cursor, band.y_bottom,
-            content, readable, column, page_extents,
+            content, text_lines, column, page_extents,
         )
     return out
 
@@ -852,7 +843,7 @@ def _keep(
     top: float,
     bottom: float,
     content: Sequence[_Span],
-    readable: int,
+    text_lines: int,
     column: tuple[float, float],
     extents: Sequence[tuple[float, float]] = (),
 ) -> None:
@@ -862,10 +853,8 @@ def _keep(
     the first ruling is blank, and it would otherwise come through as a
     sliver.
 
-    A gap is then closed up around its content, but **only when the page's
-    text layer is legible**. Where it isn't, the text positions say nothing
-    about where the question really is, and tightening the band on them
-    would crop away the very thing being exported.
+    A gap is then closed up around its content when the page has text
+    lines; a page of graphics alone keeps the whole gap.
     """
     if bottom - top < _MIN_BAND:
         return
@@ -875,7 +864,7 @@ def _keep(
     ]
     if not inside:
         return
-    if readable:
+    if text_lines:
         top = max(top, min(span.top for span in inside) - _PAD)
         bottom = min(bottom, max(span.bottom for span in inside) + _PAD)
         if bottom - top < _MIN_BAND:
@@ -1014,8 +1003,7 @@ def build_export(
             )
         if found and not any(crop.trimmed for crop in found):
             warnings.append(
-                f"{paper_id}: 这份 PDF 的文字层是乱码（字体没有 ToUnicode），"
-                "认不出答题横线，已按整题区域导出"
+                f"{paper_id}: 认不出答题空间，已按整题区域导出"
             )
         if ms_path_of is not None:
             answers.update(_answers_for(
