@@ -231,3 +231,133 @@ def test_a_changed_topic_list_classifies_again(
     assert cached_classification(
         "9709_s23_qp_41", {**TOPICS, "4.6": "Momentum"},
     ) is None
+
+
+# -- build_practice ----------------------------------------------------------
+
+from core.models import PaperRecord  # noqa: E402
+from modules.downloader import DownloadResult  # noqa: E402
+
+
+class _Store:
+    def __init__(self, records: list[PaperRecord]) -> None:
+        self.records = records
+
+    def load_all(self) -> list[PaperRecord]:
+        return list(self.records)
+
+
+class _Downloader:
+    def __init__(self, store: _Store, tmp_path, fail: set[str] = frozenset()) -> None:
+        self.store, self.tmp, self.fail, self.got = store, tmp_path, fail, []
+
+    def download(self, request):
+        pid = request.paper_id
+        self.got.append(pid)
+        if pid in self.fail:
+            return DownloadResult(success=False, paper_id=pid, error="HTTP 404")
+        qp = self.tmp / f"{pid}.pdf"
+        qp.write_bytes(b"%PDF")
+        ms = self.tmp / f"{pid.replace('_qp_', '_ms_')}.pdf"
+        self.store.records.append(PaperRecord(
+            paper_id=pid, qp_path=str(qp), ms_path=str(ms),
+        ))
+        return DownloadResult(
+            success=True, paper_id=pid, qp_path=str(qp), ms_path=str(ms),
+        )
+
+
+def _request(**over):
+    from modules.practice import PracticeRequest
+
+    return PracticeRequest(**{
+        "subject": "9709", "component": "4",
+        "from_year": 2023, "from_season": "s", "to_year": 2023, "to_season": "w",
+        "topic_ids": ["4.2"], **over,
+    })
+
+
+@pytest.fixture
+def pipeline(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Two sessions, one 4x paper each; s23 is already on disk."""
+    qp = tmp_path / "9709_s23_qp_41.pdf"
+    qp.write_bytes(b"%PDF")
+    store = _Store([PaperRecord(
+        paper_id="9709_s23_qp_41", qp_path=str(qp), ms_path=str(tmp_path / "ms.pdf"),
+    )])
+    listings = {"s": _listing("9709_s23_qp_41"), "w": _listing("9709_w23_qp_42")}
+    classified = {
+        "9709_s23_qp_41": {"1": ["4.1"], "2": ["4.2"]},
+        "9709_w23_qp_42": {"1": ["4.2", "4.5"], "2": ["4.5"]},
+    }
+    exported: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "modules.practice.classify_paper",
+        lambda pid, *_a, **_k: classified[pid],
+    )
+    monkeypatch.setattr("modules.practice._parse_answers", lambda *_a, **_k: [])
+
+    def export(records, qp_of, ms_of):
+        exported["picks"] = list(records)
+        exported["qp"] = dict(qp_of)
+        return b"%PDF-practice", ["9709_w23_qp_42: mark scheme 里没有 1 的答案"]
+
+    monkeypatch.setattr("modules.practice.build_export", export)
+    return store, (lambda _s, _y, season: listings[season]), exported
+
+
+def _run(store, query, tmp_path, request=None, fail=frozenset()):
+    from modules.practice import build_practice
+
+    events: list[tuple[str, int, int, str]] = []
+    downloader = _Downloader(store, tmp_path, set(fail))
+    out = build_practice(
+        request or _request(), TOPICS,
+        store=store, downloader=downloader,
+        config=GraderConfig(api_key="k"), renderer=_Renderer(),
+        on_progress=lambda *e: events.append(e), query=query,
+    )
+    return out, downloader, events
+
+
+def test_missing_papers_are_downloaded_and_matching_questions_exported(
+    pipeline, tmp_path,
+) -> None:
+    store, query, exported = pipeline
+    (data, count, warnings), downloader, events = _run(store, query, tmp_path)
+
+    assert downloader.got == ["9709_w23_qp_42"]
+    assert exported["picks"] == [
+        Picked("9709_s23_qp_41", "2"), Picked("9709_w23_qp_42", "1"),
+    ]
+    assert data == b"%PDF-practice"
+    assert count == 2
+    assert warnings == ["9709_w23_qp_42: mark scheme 里没有 1 的答案"]
+    assert ("下载", 1, 1, "9709_w23_qp_42") in events
+    assert ("分类", 2, 2, "9709_w23_qp_42") in events
+
+
+def test_a_paper_that_fails_to_download_is_named_and_skipped(
+    pipeline, tmp_path,
+) -> None:
+    store, query, exported = pipeline
+    (_, count, warnings), _, _ = _run(
+        store, query, tmp_path, fail={"9709_w23_qp_42"},
+    )
+    assert exported["picks"] == [Picked("9709_s23_qp_41", "2")]
+    assert count == 1
+    assert "9709_w23_qp_42: 下载失败（HTTP 404）" in warnings
+
+
+def test_nothing_on_the_chosen_topics_is_an_error(pipeline, tmp_path) -> None:
+    store, query, _ = pipeline
+    with pytest.raises(ValueError, match="没有考到所选 topic"):
+        _run(store, query, tmp_path, request=_request(topic_ids=["4.9"]))
+
+
+def test_a_request_with_no_topics_is_refused() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _request(topic_ids=[])
