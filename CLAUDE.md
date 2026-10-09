@@ -170,7 +170,7 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
   handle a rejected promise for a mistyped paper id.
 - `app_web/jobs.py` — long-running work (parse, grade, MCQ detect) runs on a
   thread and pushes progress events to the page; one in-progress flag at a time.
-- `frontend/src/App.tsx` — the four-tab shell (下载 / 管理 / 批改 / 设置) plus the
+- `frontend/src/App.tsx` — the five-tab shell (下载 / 管理 / 练习 / 批改 / 设置) plus the
   overlay root that full-cover panels portal into.
 - `frontend/src/tabs/<tab>/` — one directory per tab. `manage/` splits into
   `Overview` (donut + per-syllabus cards), `Organize` (icon / detail layouts)
@@ -202,8 +202,10 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
 - **`manager.py`** — `PaperManager` handles score submission (marks Completed, timestamps), record deletion (optionally removes local PDFs), and opening PDFs in system viewer (cross-platform).
 - **`mailer.py`** — `GoodNotesMailer` sends QP PDF to GoodNotes import email via SMTP SSL, updates `sent_to_gn` flag on success. Uses `_MailError` (never leaks outside module).
 - **`updater.py`** — in-app update check / download / silent install against GitHub releases.
+- **`question_pdf.py`** — crops whole questions out of their QPs (vector, answer space trimmed) and composes them into one PDF, each followed by its typeset mark scheme. Takes anything with `paper_id`/`question_id`: the 错题本 export hands it mistake rows, 专项练习 its picks.
+- **`practice.py`** — 专项练习. Expands a session range, finds the component's QPs per session, downloads what is missing, classifies every main question by syllabus topic (one vision call per paper, cached in `~/.cie_helper/.cache/topics/` together with the topic list it was made against), and exports the questions on the chosen topics through `question_pdf`. Question ids are bare (`"3"`) so `answer_sheet` can match them to mark-scheme ids like `"3(a)"`.
 - **`profile.py`** + **`tutor.py`** — the tutor notes. `profile` turns `attempts.csv` into per-topic loss rates for one syllabus × component (a re-graded paper counts once); `tutor` rewrites `~/.cie_helper/tutor/<subject>_p<N>.md` from it after every confirmed run, on a thread of its own. **The grading path must never import either** — a grader that has read "keeps losing marks on Equilibria" marks Equilibria harder; `tests/test_tutor.py` fails if `workflow` reaches them.
-- **`marking/`** — the Mark tab's pipeline, split out because these served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading), `workflow` (orchestration). Nothing outside `app_web/api.py` imports them.
+- **`marking/`** — the Mark tab's pipeline, split out because these served one flow: `ms_parser` (mark scheme → `PaperConfig`), `mcq_parser`, `page_segmenter` (question regions), `renderer` (page → image clips), `grader` (LLM grading), `workflow` (orchestration). Outside `app_web/api.py`, only `question_pdf` and `practice` import them.
   - **`page_segmenter` is two-phase**: `scan_document(pdf)` does every PDF-only step and `match_scanned(doc, question_ids)` the rest, so the Mark tab can scan the answer paper *while* the mark scheme is still parsing. `segment_questions_report()` is still the one-shot composition of the two.
   - **`workflow.py` must never import `app_web`.** That constraint is what makes the grading pipeline testable (`tests/test_marking_workflow.py`); keep user-facing strings on the UI side of the boundary.
 
