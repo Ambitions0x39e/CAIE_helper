@@ -15,11 +15,15 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, NamedTuple
 
+from pydantic import BaseModel, Field
+
 from core.settings import GraderConfig, app_settings
 from modules.downloader import QueryResult, query_available
-from modules.question_pdf import crops_for_paper
+from modules.question_pdf import build_export, crops_for_paper
 
 if TYPE_CHECKING:
+    from core.storage import CSVStore
+    from modules.downloader import PaperDownloader
     from modules.marking.syllabus_parser import SyllabusInfo
     from modules.marking.workflow import Renderer
 
@@ -227,3 +231,137 @@ def classify_paper(
     questions = _parse(call(config, pngs, prompt), ids, topics)
     _save(paper_id, topics, questions)
     return questions
+
+
+type Progress = Callable[[str, int, int, str], None]
+
+
+class PracticeRequest(BaseModel):
+    """What the 练习 tab asks for."""
+
+    subject: str
+    #: The component's first digit: "4" covers 41, 42, 43 …
+    component: str = Field(pattern=r"^\d$")
+    from_year: int
+    from_season: str
+    to_year: int
+    to_season: str
+    topic_ids: list[str] = Field(min_length=1)
+
+
+def _on_disk(
+    paper_ids: Sequence[str],
+    store: CSVStore,
+    downloader: PaperDownloader,
+    on_progress: Progress,
+    warnings: list[str],
+) -> dict[str, tuple[str, str]]:
+    """paper_id → (qp_path, ms_path), downloading whatever is missing."""
+    from modules.downloader import DownloadRequest
+
+    known = {r.paper_id: r for r in store.load_all()}
+    paths: dict[str, tuple[str, str]] = {}
+    missing = [
+        pid for pid in paper_ids
+        if pid not in known or not Path(known[pid].qp_path).is_file()
+    ]
+    for done, pid in enumerate(missing, 1):
+        on_progress("下载", done, len(missing), pid)
+        result = downloader.download(DownloadRequest(paper_id=pid))
+        if not result.success or not result.qp_path:
+            warnings.append(f"{pid}: 下载失败（{result.error}）")
+            continue
+        paths[pid] = (result.qp_path, result.ms_path or "")
+    for pid in paper_ids:
+        if pid in known and pid not in paths and Path(known[pid].qp_path).is_file():
+            paths[pid] = (known[pid].qp_path, known[pid].ms_path)
+    return {pid: paths[pid] for pid in paper_ids if pid in paths}
+
+
+def _parse_answers(
+    paper_ids: Sequence[str],
+    ms_path_of: Mapping[str, str],
+    config: GraderConfig,
+    renderer: Renderer,
+    on_progress: Progress,
+) -> list[str]:
+    """Parse the mark schemes the export will need and has no parse of.
+
+    Returns warnings. A paper whose grading path is unknown cannot be parsed,
+    and MCQ parses are never cached, so neither gets an answer page —
+    ``build_export`` names the questions that lack one.
+    """
+    from modules.marking.ms_parser import cached_mark_scheme, parse_mark_scheme
+    from modules.marking.syllabus_parser import resolve_grading_type
+
+    todo = [
+        pid for pid in paper_ids
+        if ms_path_of.get(pid) and cached_mark_scheme(ms_path_of[pid]) is None
+    ]
+    warnings: list[str] = []
+    for done, pid in enumerate(todo, 1):
+        on_progress("答案", done, len(todo), pid)
+        paper_type = resolve_grading_type(pid)
+        if paper_type is None:
+            warnings.append(f"{pid}: 不知道这份卷的批改类型，没有解析 mark scheme")
+            continue
+        try:
+            parse_mark_scheme(
+                ms_path_of[pid], paper_type=paper_type,
+                grader_config=config, renderer=renderer,
+            )
+        except Exception as exc:  # noqa: BLE001 — one paper's answers, not the set
+            warnings.append(f"{pid}: mark scheme 解析失败（{exc}）")
+    return warnings
+
+
+def build_practice(
+    request: PracticeRequest,
+    topics: Mapping[str, str],
+    *,
+    store: CSVStore,
+    downloader: PaperDownloader,
+    config: GraderConfig,
+    renderer: Renderer,
+    on_progress: Progress,
+    query: Callable[[str, str, str], QueryResult] = query_available,  # type: ignore[assignment]
+) -> tuple[bytes, int, list[str]]:
+    """The whole practice set: (PDF, number of questions, warnings).
+
+    Every failure short of "nothing at all" is a warning, the way the
+    错题本 export reports a paper it could not use.
+
+    Raises:
+        ValueError: no question in range examines any of the chosen topics,
+            or nothing could be exported.
+    """
+    sessions = sessions_between(
+        request.from_year, request.from_season, request.to_year, request.to_season,
+    )
+    paper_ids, warnings = papers_in_range(
+        request.subject, request.component, sessions, query=query,
+    )
+    paths = _on_disk(paper_ids, store, downloader, on_progress, warnings)
+
+    classified: dict[str, dict[str, list[str]]] = {}
+    for done, (pid, (qp_path, _)) in enumerate(paths.items(), 1):
+        on_progress("分类", done, len(paths), pid)
+        try:
+            classified[pid] = classify_paper(
+                pid, qp_path, topics, config=config, renderer=renderer,
+            )
+        except Exception as exc:  # noqa: BLE001 — one paper, not the set
+            warnings.append(f"{pid}: 分类失败（{exc}）")
+
+    picks = select(classified, set(request.topic_ids))
+    if not picks:
+        raise ValueError("这个范围里没有考到所选 topic 的题")
+
+    chosen = list(dict.fromkeys(p.paper_id for p in picks))
+    ms_path_of = {pid: paths[pid][1] for pid in chosen}
+    warnings += _parse_answers(chosen, ms_path_of, config, renderer, on_progress)
+
+    data, export_warnings = build_export(
+        picks, {pid: paths[pid][0] for pid in chosen}, ms_path_of,
+    )
+    return data, len(picks), warnings + export_warnings
