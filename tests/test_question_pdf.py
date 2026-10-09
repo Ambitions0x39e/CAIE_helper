@@ -524,6 +524,22 @@ class TestContentBands:
             str(path), [Band(page_idx=0, y_top=45.0, y_bottom=740.0)]
         ) != []
 
+    def test_a_line_with_no_word_in_it_still_bounds_the_question(
+        self, tmp_path: Path
+    ) -> None:
+        """Maths, or a line pdfminer reports as "(cid:94)…", carries no
+        word, but its glyph boxes sit where it prints. The band closes up
+        around it instead of keeping the whole page."""
+        path = self._blank_page_pdf(
+            tmp_path / "maths.pdf", "2 + 3 = 5", centred=False
+        )
+
+        [band] = content_bands(
+            str(path), [Band(page_idx=0, y_top=45.0, y_bottom=740.0)]
+        )
+
+        assert band.height < 40
+
     def test_a_page_of_pure_answer_space_yields_nothing(
         self, tmp_path: Path
     ) -> None:
@@ -729,11 +745,8 @@ class TestBuildExport:
     def test_an_untrimmable_paper_says_so(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Some papers embed fonts with no ToUnicode map: pdfminer reports
-        every glyph as "(cid:155)" and cannot group them into lines, so the
-        answer ruling is indistinguishable from the question. Measured on a
-        real 2025 paper — 10k cid tokens, zero readable words. The export
-        falls back to the whole region and has to admit it."""
+        """A paper whose trim found no answer space falls back to the whole
+        region, and the export has to admit it."""
         source = _paper_pdf(tmp_path / "qp.pdf")
 
         def _fake(
@@ -755,7 +768,7 @@ class TestBuildExport:
         )
 
         assert len(warnings) == 1
-        assert "乱码" in warnings[0]
+        assert "认不出答题空间" in warnings[0]
         assert "整题区域" in warnings[0]
 
     def test_a_trimmed_paper_warns_about_nothing(
