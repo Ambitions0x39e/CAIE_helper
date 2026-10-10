@@ -35,6 +35,18 @@ _lock = threading.Lock()
 _running: str | None = None
 
 
+def main_window() -> webview.Window | None:
+    """The app's one window.
+
+    Not `webview.active_window()`: on WinForms that is `Form.ActiveForm`, which
+    is None whenever the window is not the foreground one. A job that outlives
+    the user's attention — alt-tab to a browser while it runs — would then drop
+    every event, including the terminal ones, and the page would sit at the
+    last progress it saw with its button still busy.
+    """
+    return webview.windows[0] if webview.windows else None
+
+
 def push(event: dict[str, Any]) -> None:
     """Send one event to the page. Never raises into the worker.
 
@@ -42,7 +54,7 @@ def push(event: dict[str, Any]) -> None:
     finishing, and the page will see the terminal event or the job's absence.
     """
     _log.debug("push %s", event)
-    window = webview.active_window()
+    window = main_window()
     if window is None:
         _log.warning("no active window; dropped %s", event.get("type"))
         return
