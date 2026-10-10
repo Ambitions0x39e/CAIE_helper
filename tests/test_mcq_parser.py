@@ -11,6 +11,7 @@ from fpdf import FPDF
 
 from core.settings import GraderConfig
 from modules.marking.mcq_parser import (
+    _answers_with_marks,
     _call_vl,
     _extract_paper_id,
     _parse_paper_filename,
@@ -39,6 +40,21 @@ def test_call_vl_turns_thinking_off(monkeypatch: pytest.MonkeyPatch) -> None:
     _call_vl(GraderConfig(api_key="test-key"), [b"png"])
 
     assert sent["extra_body"] == {"enable_thinking": False}
+
+
+def test_a_letter_without_a_mark_is_not_the_students() -> None:
+    """Asked for bare letters, the model answered unmarked questions itself —
+    17 of 40 on a paper with no ink at all. Only a letter read off a described
+    mark is the student's."""
+    assert _answers_with_marks({
+        "1": {"mark": "circle around B", "answer": "b"},
+        "2": {"mark": "", "answer": "C"},
+        "3": {"mark": "   ", "answer": "A"},
+        "4": {"mark": "", "answer": None},
+        "5": {"mark": "tick", "answer": "E"},
+        "6": "D",
+    }) == {"1": "B"}
+    assert _answers_with_marks(["not", "a", "dict"]) == {}
 
 
 def test_parse_paper_filename_matches_qp() -> None:

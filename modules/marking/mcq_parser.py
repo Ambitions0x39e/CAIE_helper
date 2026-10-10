@@ -31,21 +31,28 @@ _ANSWER_LETTERS = frozenset("ABCD")
 
 # ── VL prompt ──────────────────────────────────────────────────────────────
 
+# Every answer must come with a description of the ink it was read from. Asked
+# for bare letters, the model solves the questions nobody marked and returns
+# its own answers: 9702_s25_qp_14 with no annotation at all came back with 17
+# "detected" letters, 11 of them correct, and a rule saying printed text is not
+# a mark changed nothing (18 and 21 on two more asks). Made to name the mark,
+# it returned none on the blank paper, and all 36 of 36 circled answers on the
+# annotated one, with the 4 unmarked questions left undetected.
 _MCQ_DETECTION_PROMPT = """\
-This is a page (or pages) from a student's annotated CIE A-Level MCQ answer paper.
-The student has marked their chosen answer for each question.
-Marking styles vary: circling the letter, circling the option text, writing the
-letter beside the question, ticking, crossing, or underlining.
+This is a page (or pages) from a student's CIE A-Level MCQ question paper.
+The student may have marked a chosen answer on some questions — circling or
+crossing a letter or option, ticking, underlining, or writing a letter nearby.
+Many questions may be left unmarked.
 
-For every question number visible, identify which option the student selected
-(A, B, C, or D).
+For every question number printed on the page, look for the student's own ink
+on that question. Printed text, options, diagrams and tables are not marks.
+Do not work any question out yourself.
 
-Return ONLY valid JSON — no markdown, no explanation:
-{"<question_number>": "<letter>", ...}
+Return ONLY valid JSON — no markdown:
+{"<question_number>": {"mark": "<mark>", "answer": "<A|B|C|D or null>"}, ...}
 
-Example: {"3": "C", "4": "A", "5": "B"}
-
-Omit any question where you cannot clearly determine the selection."""
+"mark" says what the student's ink is, e.g. "circle around B". A question with
+no student ink has "mark": "" and "answer": null."""
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -110,13 +117,27 @@ def _call_vl(
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
     try:
         data = json.loads(cleaned)
-        return {
-            k.strip(): v.strip().upper()
-            for k, v in data.items()
-            if isinstance(v, str) and v.strip().upper() in _ANSWER_LETTERS
-        }
-    except (json.JSONDecodeError, AttributeError):
+    except json.JSONDecodeError:
         return {}
+    return _answers_with_marks(data)
+
+
+def _answers_with_marks(data: object) -> dict[str, str]:
+    """``{question: letter}`` for the entries that name the ink they were read
+    from. A letter with an empty ``mark`` is the model's own answer."""
+    if not isinstance(data, dict):
+        return {}
+    answers: dict[str, str] = {}
+    for q, entry in data.items():
+        if not isinstance(entry, dict):
+            continue
+        mark, answer = entry.get("mark"), entry.get("answer")
+        if not (isinstance(mark, str) and mark.strip() and isinstance(answer, str)):
+            continue
+        letter = answer.strip().upper()
+        if letter in _ANSWER_LETTERS:
+            answers[str(q).strip()] = letter
+    return answers
 
 
 def _resolve_skip_pages(source_stem: str) -> set[int]:

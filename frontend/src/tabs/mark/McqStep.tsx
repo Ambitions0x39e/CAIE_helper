@@ -15,7 +15,7 @@ export function McqStep({ analysis }: { analysis: Analysis }) {
     [analysis],
   )
 
-  const [qpPath, setQpPath] = useState('')
+  const [qpPath, setQpPath] = useState(analysis.answer_path ?? '')
   const [busy, setBusy] = useState(false)
   const [detected, setDetected] = useState<Record<string, string>>({})
   const [undetected, setUndetected] = useState<string[]>([])
