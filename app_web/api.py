@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 import webview
 from pydantic import ValidationError
 
-from app_web.jobs import push, start
+from app_web.jobs import main_window, push, start
 from core.config_store import ConfigStore
 from core.gt_parser import GTParser
 from core.models import (
@@ -160,7 +160,7 @@ def _save_to_chosen_file(
     The dialog is the host's own, so nothing is written until a destination is
     picked and cancelling is a normal outcome rather than an error.
     """
-    window = webview.active_window()
+    window = main_window()
     if window is None:
         return {"success": False, "error": "没有窗口可以弹出保存对话框。"}
     chosen = window.create_file_dialog(
@@ -547,7 +547,7 @@ class Api:
         no title, so what the user is choosing is said by the button that
         opened this and by the filename shown beside it.
         """
-        window = webview.active_window()
+        window = main_window()
         if window is None:
             return None
         chosen = window.create_file_dialog(
@@ -1159,7 +1159,7 @@ class Api:
             installed = self._updater.install(Path(downloaded.local_path))
             if not installed.success:
                 raise RuntimeError(installed.error or "安装程序没能启动")
-            window = webview.active_window()
+            window = main_window()
             if window is not None:
                 window.destroy()
 
