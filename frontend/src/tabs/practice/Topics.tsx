@@ -1,10 +1,11 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { api } from '../../lib/bridge'
 import type { QuerySeason, SyllabusConfig } from '../../lib/types'
-import { Button } from '../../ui/Button'
 import { Select } from '../../ui/Select'
+import { StepButton } from '../../ui/StepButton'
 import { FIRST_YEAR, SEASONS } from '../download/session'
 import { getSnapshot, startPractice, subscribe } from './job'
+import { practiceSteps } from './steps'
 
 const thisYear = new Date().getFullYear()
 const YEARS: string[] = []
@@ -23,7 +24,7 @@ export function Topics() {
   const [topics, setTopics] = useState<Record<string, string> | null>(null)
   const [topicError, setTopicError] = useState<string | null>(null)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
-  const { busy, progress } = useSyncExternalStore(subscribe, getSnapshot)
+  const { busy, stage, failed } = useSyncExternalStore(subscribe, getSnapshot)
 
   useEffect(() => {
     api()
@@ -127,10 +128,15 @@ export function Topics() {
       )}
 
       <div className="flex items-center gap-3">
-        <Button tone="accent" onClick={generate} disabled={busy || picked.size === 0}>
+        <StepButton
+          running={busy}
+          steps={practiceSteps(stage)}
+          failed={failed}
+          onClick={generate}
+          disabled={picked.size === 0}
+        >
           生成
-        </Button>
-        {progress && <span className="text-caption tabular-nums text-muted">{progress}</span>}
+        </StepButton>
       </div>
     </div>
   )

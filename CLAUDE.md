@@ -189,7 +189,9 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
     slices summing to the paper count.
 - `frontend/src/ui/` — the shared primitives. `Overlay` is the full-cover panel
   (portal + clip-path grow from the clicked rect); `PushTrack` the sliding
-  N-step track; `motion.ts` the two springs everything animates on.
+  N-step track; `StepButton` the accent button that becomes a dot-and-line
+  step track while its job runs (解析 and 生成; each caller folds its own job
+  events into `Step[]`); `motion.ts` the two springs everything animates on.
 
 ### `core/` — infrastructure layer
 - **`settings.py`** — `AppSettings` (paths: `~/.cie_helper/`) and `MailConfig` (SMTP from .env). Singleton `app_settings` imported by all modules.

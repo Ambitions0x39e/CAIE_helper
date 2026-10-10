@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { PARSE_JOB, onJobEvent } from '../../lib/jobs'
 import { comparePaperIds, syllabusIdOf } from '../../lib/papers'
 import type { PaperRecord, PaperType } from '../../lib/types'
 import { Button } from '../../ui/Button'
 import { Select } from '../../ui/Select'
+import { StepButton } from '../../ui/StepButton'
 import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
-import { nextStage } from './stage'
+import { type ParseProgress, begin, nextProgress, parseSteps } from './stage'
 import type { Analysis } from './types'
 
 type Source = 'downloaded' | 'upload'
@@ -74,21 +75,13 @@ export function SetupStep({
   const [graderReady, setGraderReady] = useState(true)
   const [busy, setBusy] = useState(false)
   const [cached, setCached] = useState(false)
-  const [stage, setStage] = useState('')
+  const [progress, setProgress] = useState<ParseProgress>(() => begin(false))
 
   /** The answer paper this step will parse: the one just picked, or — after a
    * reload — the one the stored analysis was made against. The analysis lives
    * on the Python side and outlives the page, so the file the user chose has
    * to be read back off it rather than left in local state that does not. */
   const answerPdf = answerPath || analysis?.answer_path || ''
-
-  // The listener below is bound for the component's life, so it closes over
-  // the first render's answerPdf forever. A ref is what lets it read the
-  // current pick without re-subscribing and dropping events mid-parse.
-  const hasAnswerRef = useRef(false)
-  useEffect(() => {
-    hasAnswerRef.current = answerPdf !== ''
-  }, [answerPdf])
 
   useEffect(() => {
     api()
@@ -106,7 +99,7 @@ export function SetupStep({
   useEffect(
     () =>
       onJobEvent((e) => {
-        setStage((s) => nextStage(s, e, { hasAnswer: hasAnswerRef.current }))
+        setProgress((p) => nextProgress(p, e))
         if (e.type === 'ms_cache') setCached(e.cached)
         else if (e.type === 'scan') {
           if (!e.ok) notify('bad', `答卷分析失败: ${e.error}`)
@@ -114,9 +107,10 @@ export function SetupStep({
           const parsed = e as unknown as Analysis
           notify('ok', parsedSummary(parsed))
           onAnalysed(parsed)
-        } else if (e.type === 'error' && e.job === PARSE_JOB)
+        } else if (e.type === 'error' && e.job === PARSE_JOB) {
+          setProgress((p) => ({ ...p, failed: true }))
           notify('bad', `解析失败: ${e.message}`)
-        else if (e.type === 'finished' && e.job === PARSE_JOB) setBusy(false)
+        } else if (e.type === 'finished' && e.job === PARSE_JOB) setBusy(false)
       }),
     [onAnalysed],
   )
@@ -168,7 +162,7 @@ export function SetupStep({
 
   const parse = async (force: boolean) => {
     setBusy(true)
-    setStage('准备中…')
+    setProgress(begin(answerPdf !== ''))
     const page = Number(startPage)
     const r = await (await api()).start_analysis(
       msPath,
@@ -179,8 +173,8 @@ export function SetupStep({
     )
     if (!r.success) {
       notify('bad', `解析失败: ${r.error ?? ''}`)
+      setProgress((p) => ({ ...p, failed: true }))
       setBusy(false)
-      setStage('')
     }
   }
 
@@ -304,20 +298,19 @@ export function SetupStep({
         )}
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button tone="accent" onClick={() => parse(false)} disabled={!canParse}>
+          {/* The steps stand there for the whole run rather than going out as a
+              toast: a cold parse is minutes of VL calls, and a message that
+              takes itself away after four seconds leaves a greyed-out button
+              as the only sign of life — which looks exactly like a hang. */}
+          <StepButton
+            running={busy}
+            steps={parseSteps(progress)}
+            failed={progress.failed}
+            onClick={() => parse(false)}
+            disabled={!canParse}
+          >
             {answerPdf && !isMcq ? '解析 Mark Scheme 与答卷' : '解析 Mark Scheme'}
-          </Button>
-          {/* Stands there for the whole run rather than going out as a toast:
-              a cold parse is minutes of VL calls, and a message that takes
-              itself away after four seconds leaves a greyed-out button as the
-              only sign of life — which looks exactly like a hang. */}
-          {busy && stage && (
-            <span className="flex items-center gap-2 text-caption text-muted"
-                  role="status" aria-live="polite">
-              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-warn" />
-              {stage}
-            </span>
-          )}
+          </StepButton>
           {analysis?.ready && cached && !busy && (
             <span className="ml-auto flex items-center gap-1.5 rounded-full border border-hairline
                              bg-raised py-1 pl-3 pr-1.5 text-caption">

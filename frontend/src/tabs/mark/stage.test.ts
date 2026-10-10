@@ -2,71 +2,45 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { JobEvent } from '../../lib/jobs.ts'
-import { nextStage } from './stage.ts'
+import { begin, nextProgress, parseSteps } from './stage.ts'
 
 /** Fold a run of events the way the component does. */
-function run(events: JobEvent[], hasAnswer: boolean): string {
-  return events.reduce((s, e) => nextStage(s, e, { hasAnswer }), '准备中…')
+function run(events: JobEvent[], hasAnswer: boolean) {
+  return parseSteps(events.reduce(nextProgress, begin(hasAnswer)))
 }
 
-describe('nextStage', () => {
-  test('a cold parse names the render before any batch has been counted', () => {
-    // The gap this closes: render_pages runs before the first ms_progress,
-    // so a run that only reacts to batches says nothing for the longest
-    // silent stretch of the whole parse.
-    assert.equal(run([{ type: 'ms_cache', cached: false }], true), '渲染 Mark Scheme 页面…')
+describe('parseSteps', () => {
+  test('a parse with an answer paper has two steps, both in flight at the start', () => {
+    assert.deepEqual(run([], true), [
+      { label: '解析 Mark Scheme', state: 'active' },
+      { label: '解析答卷', state: 'active' },
+    ])
   })
 
-  test('counts batches while the mark scheme is being read', () => {
-    assert.equal(
-      run(
-        [
-          { type: 'ms_cache', cached: false },
-          { type: 'ms_progress', batch: 3, total: 8 },
-        ],
-        true,
-      ),
-      '解析 Mark Scheme 第 3/8 批…',
-    )
+  test('without an answer paper there is only the mark scheme', () => {
+    assert.deepEqual(run([], false), [{ label: '解析 Mark Scheme', state: 'active' }])
   })
 
-  test('an answer scan landing mid-parse does not wipe the batch counter', () => {
-    // Both halves run concurrently. The scan is the fast one, so its
-    // completion is not what the reader is waiting on.
-    assert.equal(
-      run(
-        [
-          { type: 'ms_cache', cached: false },
-          { type: 'ms_progress', batch: 2, total: 8 },
-          { type: 'scan', ok: true, error: '' },
-        ],
-        true,
-      ),
-      '解析 Mark Scheme 第 2/8 批…',
-    )
+  test('the two halves finish independently', () => {
+    // They run concurrently and the scan is the fast one: its landing is not
+    // the mark scheme's.
+    assert.deepEqual(run([{ type: 'scan', ok: true, error: '' }], true), [
+      { label: '解析 Mark Scheme', state: 'active' },
+      { label: '解析答卷', state: 'done' },
+    ])
+    assert.deepEqual(run([{ type: 'ms_done' }], true), [
+      { label: '解析 Mark Scheme', state: 'done' },
+      { label: '解析答卷', state: 'active' },
+    ])
   })
 
-  test('the last batch gives way to the answer scan instead of going stale', () => {
-    assert.equal(
-      run(
-        [
-          { type: 'ms_progress', batch: 8, total: 8 },
-          { type: 'ms_done' },
-        ],
-        true,
-      ),
-      '分析答卷…',
-    )
+  test('a scan that failed says so', () => {
+    const [, scan] = run([{ type: 'scan', ok: false, error: 'x' }], true)
+    assert.equal(scan.state, 'failed')
   })
 
-  test('a cache hit says so, and reports whatever is left', () => {
-    assert.equal(run([{ type: 'ms_cache', cached: true }], true), '读取缓存，分析答卷…')
-    assert.equal(run([{ type: 'ms_cache', cached: true }], false), '读取缓存…')
-  })
-
-  test('both terminal events clear the line', () => {
-    const started: JobEvent[] = [{ type: 'ms_progress', batch: 1, total: 4 }]
-    assert.equal(run([...started, { type: 'finished', job: '解析' }], true), '')
-    assert.equal(run([...started, { type: 'error', job: '解析', message: 'x' }], true), '')
+  test('a cache hit relabels the mark scheme step', () => {
+    assert.equal(run([{ type: 'ms_cache', cached: true }], false)[0].label, '读取缓存')
+    assert.equal(run([{ type: 'ms_cache', cached: false }], false)[0].label, '解析 Mark Scheme')
   })
 })

@@ -2,15 +2,17 @@ import { api } from '../../lib/bridge'
 import { PRACTICE_JOB, onJobEvent } from '../../lib/jobs'
 import type { QuerySeason } from '../../lib/types'
 import { notify } from '../../ui/Toast'
+import type { Stage } from './steps'
 
 /** Module scope, not component state: the tab unmounts on a tab switch, and the
  * save step after `practice_ready` still has to happen. */
 export interface PracticeJob {
   busy: boolean
-  progress: string | null
+  stage: Stage | null
+  failed: boolean
 }
 
-let state: PracticeJob = { busy: false, progress: null }
+let state: PracticeJob = { busy: false, stage: null, failed: false }
 const listeners = new Set<() => void>()
 
 function set(next: Partial<PracticeJob>) {
@@ -29,9 +31,8 @@ const message = (err: unknown) => String(err instanceof Error ? err.message : er
 
 onJobEvent((e) => {
   if (e.type === 'practice_progress') {
-    set({ progress: `${e.stage} ${e.done}/${e.total} · ${e.paper}` })
+    set({ stage: { name: e.stage, done: e.done, total: e.total } })
   } else if (e.type === 'practice_ready') {
-    set({ progress: null })
     api()
       .then((a) => a.save_practice())
       .then((r) => {
@@ -49,9 +50,10 @@ onJobEvent((e) => {
       })
       .catch((err) => notify('bad', message(err)))
   } else if (e.type === 'error' && e.job === PRACTICE_JOB) {
+    set({ failed: true })
     notify('bad', e.message)
   } else if (e.type === 'finished' && e.job === PRACTICE_JOB) {
-    set({ busy: false, progress: null })
+    set({ busy: false })
   }
 })
 
@@ -64,17 +66,17 @@ export async function startPractice(
   toSeason: QuerySeason,
   topicIds: string[],
 ): Promise<void> {
-  set({ busy: true })
+  set({ busy: true, stage: null, failed: false })
   try {
     const r = await (await api()).start_practice(
       subject, component, fromYear, fromSeason, toYear, toSeason, topicIds,
     )
     if (!r.success) {
-      set({ busy: false })
+      set({ busy: false, failed: true })
       notify('bad', r.error ?? '生成失败')
     }
   } catch (err) {
-    set({ busy: false })
+    set({ busy: false, failed: true })
     notify('bad', message(err))
   }
 }
