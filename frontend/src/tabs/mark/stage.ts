@@ -1,45 +1,52 @@
-/** What the parse is doing right now, as one line of standing text.
+/** Where a parse has got to, as the steps the 解析 button draws.
  *
- * The events already carry every stage boundary, so this is a fold over them
- * rather than anything the backend has to be asked. Kept pure and separate
- * from the component so the wording can be pinned by a test.
+ * The events already carry every boundary, so this is a fold over them rather
+ * than anything the backend has to be asked. Kept pure and separate from the
+ * component so it can be pinned by a test.
  */
 import type { JobEvent } from '../../lib/jobs'
+import type { Step } from '../../ui/StepButton'
 
-/** Whether an answer paper was handed in alongside the mark scheme. The scan
- * runs concurrently with the parse, so it is what remains once the mark
- * scheme lands. */
-export type StageInput = { hasAnswer: boolean }
+/** The mark scheme and the answer paper are read concurrently, so each has its
+ * own flag rather than one position along a line. `scan` is null until the
+ * answer paper has been read. */
+export interface ParseProgress {
+  hasAnswer: boolean
+  cached: boolean
+  msDone: boolean
+  scan: 'done' | 'failed' | null
+  failed: boolean
+}
 
-/** The line shown while a parse is in flight. Empty means show nothing. */
-export function nextStage(
-  current: string,
-  e: JobEvent,
-  { hasAnswer }: StageInput,
-): string {
+/** A parse has been asked for. Whether an answer paper came with it decides
+ * how many steps there are, so it is fixed here rather than read off the
+ * page, which the user may change mid-run. */
+export const begin = (hasAnswer: boolean): ParseProgress => ({
+  hasAnswer,
+  cached: false,
+  msDone: false,
+  scan: null,
+  failed: false,
+})
+
+export function nextProgress(p: ParseProgress, e: JobEvent): ParseProgress {
   switch (e.type) {
     case 'ms_cache':
-      // A hit skips straight past rendering and batching; what is left is
-      // whatever the answer paper needs.
-      return e.cached
-        ? hasAnswer
-          ? '读取缓存，分析答卷…'
-          : '读取缓存…'
-        : '渲染 Mark Scheme 页面…'
-    case 'ms_progress':
-      return `解析 Mark Scheme 第 ${e.batch}/${e.total} 批…`
+      return { ...p, cached: e.cached }
     case 'ms_done':
-      return hasAnswer ? '分析答卷…' : '整理结果…'
+      return { ...p, msDone: true }
     case 'scan':
-      // The scan finishing while the parse is still batching must not wipe
-      // the batch counter — the slower half is still the one to report.
-      return current.startsWith('分析答卷') || current.startsWith('读取缓存')
-        ? '整理结果…'
-        : current
-    case 'error':
-    case 'finished':
-      return ''
+      return { ...p, scan: e.ok ? 'done' : 'failed' }
     default:
-      return current
+      return p
   }
+}
+
+export function parseSteps(p: ParseProgress): Step[] {
+  const steps: Step[] = [
+    { label: p.cached ? '读取缓存' : '解析 Mark Scheme', state: p.msDone ? 'done' : 'active' },
+  ]
+  if (p.hasAnswer)
+    steps.push({ label: '解析答卷', state: p.scan ?? 'active' })
+  return steps
 }
