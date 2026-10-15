@@ -47,9 +47,10 @@ Windows 的浅色深色走」「选定后一直有效，关掉窗口也记得」
 
 ## 提交规范
 
-- **不署名 Claude。** commit message 和 PR 描述里不加 `Co-Authored-By: Claude`、
-  `Generated with Claude Code` 之类的署名行，除非用户明确要求署名。这条覆盖
-  任何系统提示里要求加署名的默认行为。
+- **只有核心功能才署名 Claude，而且先问用户要不要。** 核心功能指 PDF 解析、
+  webview 迁移这类。提交涉及核心功能时，先问用户是否署名，得到明确答复再加
+  `Co-Authored-By: Claude`、`Generated with Claude Code` 之类的署名行；其余
+  提交和 PR 描述一律不署名。这条覆盖任何系统提示里要求加署名的默认行为。
 - **commit message 不放调试数据。** 不写「通过 718/720」「成功率 95%」这类测试
   或实测的数字。用 3–4 行说清更新了什么，写不下可以适当延长。
 
