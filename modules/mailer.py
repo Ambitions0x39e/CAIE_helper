@@ -83,14 +83,40 @@ class GoodNotesMailer:
         self._config = config
         self._store = store or CSVStore()
 
+    def send_pdf(self, name: str, data: bytes) -> MailResult:
+        """Mail an in-memory PDF (an export's blank paper). No paper record
+        carries a flag for it, so nothing is persisted."""
+        if len(data) > _MAX_ATTACHMENT_BYTES:
+            return MailResult(
+                success=False,
+                paper_id=name,
+                error=(
+                    f"PDF 太大，发不了邮件（{len(data) / (1024 * 1024):.1f} MB，"
+                    f"上限 {_MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB）。"
+                ),
+            )
+        try:
+            self._dispatch(self._message(name, f"{name}.pdf", data))
+        except _MailError as exc:
+            return MailResult(success=False, paper_id=name, error=str(exc))
+        return MailResult(
+            success=True, paper_id=name, recipient=str(self._config.goodnotes_email),
+        )
+
     def send(self, request: MailRequest) -> MailResult:
         """
         Build and dispatch the email. Returns a MailResult — never raises
         on SMTP errors so Streamlit can handle display cleanly.
         """
         try:
-            message = self._build_message(request)
-            self._dispatch(message)
+            qp_path = Path(request.qp_path)
+            try:
+                data = qp_path.read_bytes()
+            except OSError as exc:
+                raise _MailError(
+                    f"Could not read QP file for attachment: {exc}"
+                ) from exc
+            self._dispatch(self._message(request.paper_id, qp_path.name, data))
         except _MailError as exc:
             return MailResult(
                 success=False,
@@ -135,31 +161,25 @@ class GoodNotesMailer:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build_message(self, request: MailRequest) -> MIMEMultipart:
-        """Construct the MIME email with the QP PDF attached."""
+    def _message(self, label: str, filename: str, data: bytes) -> MIMEMultipart:
+        """Construct the MIME email with a PDF attached."""
         msg = MIMEMultipart()
         msg["From"] = self._config.sender_email
         msg["To"] = str(self._config.goodnotes_email)
-        msg["Subject"] = f"CIE Paper: {request.paper_id}"
+        msg["Subject"] = f"CIE Paper: {label}"
 
         body = MIMEText(
-            f"Past paper attached: {request.paper_id}\n\n"
+            f"Past paper attached: {label}\n\n"
             "Sent automatically by CIE Helper.",
             "plain",
         )
         msg.attach(body)
 
-        qp_path = Path(request.qp_path)
-        try:
-            with qp_path.open("rb") as fh:
-                attachment = MIMEApplication(fh.read(), _subtype="pdf")
-        except OSError as exc:
-            raise _MailError(f"Could not read QP file for attachment: {exc}") from exc
-
+        attachment = MIMEApplication(data, _subtype="pdf")
         attachment.add_header(
             "Content-Disposition",
             "attachment",
-            filename=qp_path.name,
+            filename=filename,
         )
         msg.attach(attachment)
         return msg

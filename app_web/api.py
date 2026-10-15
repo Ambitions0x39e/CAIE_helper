@@ -1197,3 +1197,14 @@ class Api:
             return _invalid(exc)
         mailer = GoodNotesMailer(config=self._mail, store=self._store)
         return mailer.send(request).model_dump(mode="json")
+
+    def send_export_to_goodnotes(self, export_id: str) -> Payload:
+        """Mail an export's blank paper to the GoodNotes import address."""
+        if self._mail is None:
+            return {"success": False, "error": "没有配置 SMTP，先在设置里填邮箱。"}
+        try:
+            data = self._exports.blank_pdf(export_id)
+        except (OSError, ValueError, KeyError) as exc:
+            return {"success": False, "error": f"读不了这条导出记录：{exc}"}
+        mailer = GoodNotesMailer(config=self._mail, store=self._store)
+        return mailer.send_pdf(export_id, data).model_dump(mode="json")

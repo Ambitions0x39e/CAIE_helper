@@ -11,13 +11,23 @@ const when = (iso: string) =>
 
 export function Exports({ navigate }: { navigate?: (intent: Intent) => void }) {
   const [records, setRecords] = useState<ExportRecord[] | null>(null)
+  const [mailReady, setMailReady] = useState(false)
 
   useEffect(() => {
     api()
       .then((a) => a.exports())
       .then(setRecords)
       .catch(() => setRecords([]))
+    api()
+      .then((a) => a.mail_ready())
+      .then(setMailReady)
+      .catch(() => setMailReady(false))
   }, [])
+
+  const sendToGoodNotes = async (id: string) => {
+    const r = await (await api()).send_export_to_goodnotes(id)
+    notify(r.success ? 'ok' : 'bad', r.success ? `已发送 ${id}` : (r.error ?? '发送失败'))
+  }
 
   const saveBlank = async (id: string) => {
     const r = await (await api()).save_export_blank(id)
@@ -75,6 +85,9 @@ export function Exports({ navigate }: { navigate?: (intent: Intent) => void }) {
             {when(r.created_at)} · {r.question_count} 题 · {r.graded_at ? '已批改' : '未交回'}
           </span>
           <Button onClick={() => saveBlank(r.export_id)}>保存空白卷</Button>
+          {mailReady && (
+            <Button onClick={() => sendToGoodNotes(r.export_id)}>发送到 GoodNotes</Button>
+          )}
           <Button tone="accent" onClick={() => handBack(r)}>
             交回批改
           </Button>

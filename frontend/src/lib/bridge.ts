@@ -147,6 +147,7 @@ export interface PyApi {
   ): Promise<SimpleResult & { score?: number; max_score?: number }>
   mail_ready(): Promise<boolean>
   send_to_goodnotes(paper_id: string, qp_path: string): Promise<MailResult>
+  send_export_to_goodnotes(export_id: string): Promise<MailResult>
 }
 
 declare global {
