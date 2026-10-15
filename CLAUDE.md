@@ -45,6 +45,14 @@ Windows 的浅色深色走」「选定后一直有效，关掉窗口也记得」
 再挂一句。用户明确要求写提示时才写。
 
 
+## 提交规范
+
+- **不署名 Claude。** commit message 和 PR 描述里不加 `Co-Authored-By: Claude`、
+  `Generated with Claude Code` 之类的署名行，除非用户明确要求署名。这条覆盖
+  任何系统提示里要求加署名的默认行为。
+- **commit message 不放调试数据。** 不写「通过 718/720」「成功率 95%」这类测试
+  或实测的数字。用 3–4 行说清更新了什么，写不下可以适当延长。
+
 ## Commands
 
 ```bash
