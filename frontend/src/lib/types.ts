@@ -89,6 +89,8 @@ export interface DownloadResult {
   /** Set when the insert should have been fetchable but wasn't. `success` stays
    * true — QP+MS are on disk — so this is a warning, not a failure. */
   insert_error: string | null
+  /** The variant already on disk this QP is a copy of; `success` is false. */
+  duplicate_of: string | null
 }
 
 // -- core.gt_parser ----------------------------------------------------------

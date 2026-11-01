@@ -120,6 +120,9 @@ class DownloadResult(BaseModel):
     #: (network, HTTP 500, …). ``success`` stays True: QP+MS are on disk and
     #: registered, so this is a warning to surface, not a failed download.
     insert_error: str | None = None
+    #: The variant already on disk that this QP turned out to be a copy of
+    #: (``success=False``; nothing was kept or registered).
+    duplicate_of: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -167,10 +170,25 @@ class PaperDownloader:
                 f"{request.paper_id} 不是 QP 试卷，无法配对下载 MS/insert"
             )
 
+        had_qp = (self._pdfs_dir / f"{request.paper_id}.pdf").exists()
         try:
             qp_path = self._fetch_pdf(request.qp_url, request.paper_id)
         except _DownloadError as exc:
             return failed(str(exc))
+
+        # CIE often sits two variants of one component in a session with the
+        # same questions under different numbers. Checked before the MS fetch,
+        # so a copy costs one request.
+        twin = self._twin_on_disk(request.paper_id, qp_path) if request.ms_id else None
+        if twin is not None:
+            if not had_qp:
+                qp_path.unlink(missing_ok=True)
+            return DownloadResult(
+                success=False,
+                paper_id=request.paper_id,
+                duplicate_of=twin,
+                error=f"{request.paper_id} 和 {twin} 是同一份卷子",
+            )
 
         # GT files: just download, don't fetch MS or register in store
         if request.is_gt:
@@ -256,6 +274,20 @@ class PaperDownloader:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _twin_on_disk(self, paper_id: str, qp_path: Path) -> str | None:
+        """The other downloaded variant of this component with the same pages."""
+        # "9618_s25_qp_32" → every "9618_s25_qp_3?" beside it.
+        for other in sorted(self._pdfs_dir.glob(f"{paper_id[:-1]}?.pdf")):
+            if other == qp_path:
+                continue
+            try:
+                if same_pages(other, qp_path):
+                    return other.stem
+            except Exception:  # noqa: BLE001
+                # An unreadable sibling cannot be compared; it is not a twin.
+                continue
+        return None
+
     def _fetch_pdf(self, url: str, filename_stem: str) -> Path:
         """
         Stream-download a single PDF to disk.
@@ -291,6 +323,49 @@ class PaperDownloader:
                     fh.write(chunk)
 
         return dest
+
+
+# ---------------------------------------------------------------------------
+# Duplicate variants
+# ---------------------------------------------------------------------------
+
+#: Mean per-pixel difference (0–255, greyscale at quarter scale) below which
+#: two pages count as the same page. Copies (9618 w24 31/33 and 41/43, s24
+#: 41/43) measure at most 0.06 on any page, the paper number included; on
+#: variants with different questions the most different page measures 17–25.
+_SAME_PAGE_DIFF: Final[float] = 2.0
+
+
+def same_pages(a: Path, b: Path) -> bool:
+    """Whether two PDFs render to the same pages, give or take a paper number.
+
+    Compared as pixels because the text layer cannot be: CIE subsets its fonts
+    with no ToUnicode and numbers the glyphs per file, so the same letter is
+    ``(cid:80)`` in one variant and ``(cid:72)`` in the next.
+    """
+    import pypdfium2 as pdfium
+    from PIL import ImageChops, ImageStat
+
+    from modules.marking.renderer import _PDFIUM_LOCK
+
+    with _PDFIUM_LOCK:
+        first = pdfium.PdfDocument(a)
+        try:
+            second = pdfium.PdfDocument(b)
+            try:
+                if len(first) != len(second):
+                    return False
+                for i in range(len(first)):
+                    x = first[i].render(scale=0.25).to_pil().convert("L")
+                    y = second[i].render(scale=0.25).to_pil().convert("L")
+                    diff = ImageChops.difference(x, y.resize(x.size))
+                    if ImageStat.Stat(diff).mean[0] >= _SAME_PAGE_DIFF:
+                        return False
+                return True
+            finally:
+                second.close()
+        finally:
+            first.close()
 
 
 # ---------------------------------------------------------------------------

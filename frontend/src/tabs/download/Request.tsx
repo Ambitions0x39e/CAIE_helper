@@ -148,6 +148,7 @@ export function Request({ source }: { source: DownloadSource }) {
     let skipped = 0
     const failed: string[] = []
     const warned: string[] = []
+    const duplicates: string[] = []
     const done = new Set<string>()
     try {
       const a = await api()
@@ -165,6 +166,8 @@ export function Request({ source }: { source: DownloadSource }) {
           if (dl.insert_error) {
             warned.push(`${entry.paper_id} 的 insert 没下到: ${dl.insert_error}`)
           }
+        } else if (dl.duplicate_of) {
+          duplicates.push(`${entry.paper_id} 和 ${dl.duplicate_of}`)
         } else {
           failed.push(`${entry.paper_id}: ${dl.error}`)
         }
@@ -178,7 +181,12 @@ export function Request({ source }: { source: DownloadSource }) {
         ) ?? null,
       )
       setPicked(new Set())
-      setStatus(`成功 ${ok} · 跳过 ${skipped} · 失败 ${failed.length}`)
+      setStatus(
+        `已下载 ${ok}/${chosen.length}` +
+          (skipped ? ` · 跳过 ${skipped}` : '') +
+          (duplicates.length ? ` · 重复 ${duplicates.length}` : '') +
+          (failed.length ? ` · 失败 ${failed.length}` : ''),
+      )
       // One line each, and only for what went wrong: the counts are already on
       // the status line, so a toast repeating them would say nothing new.
       if (failed.length > 0) {
@@ -186,6 +194,8 @@ export function Request({ source }: { source: DownloadSource }) {
           'bad',
           failed.length === 1 ? failed[0] : `${failed.length} 份失败 — ${failed[0]}`,
         )
+      } else if (duplicates.length > 0) {
+        notify('warn', `${duplicates.join('、')} 是同一份卷子，只保留了前一份`)
       } else if (warned.length > 0) {
         notify(
           'warn',
