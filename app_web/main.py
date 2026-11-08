@@ -196,6 +196,14 @@ def main() -> None:
     # or installed by an update) came up showing the previous build's UI.
     # Nothing in that cache is worth keeping for files read off local disk.
     shutil.rmtree(storage / "EBWebView" / "Default" / "Cache", ignore_errors=True)
+    if sys.platform == "darwin":
+        # WKWebView ignores `storage_path` for its HTTP cache and keeps it under
+        # the bundle id instead. Left alone, 2.1.0 opened on 2.0.0's cached
+        # About page — the one without the install button.
+        bundle_id = AppKit.NSBundle.mainBundle().bundleIdentifier()
+        if bundle_id:
+            webkit = Path.home() / "Library" / "Caches" / bundle_id / "WebKit"
+            shutil.rmtree(webkit / "NetworkCache", ignore_errors=True)
     webview.start(
         debug=debug,
         private_mode=False,
