@@ -123,7 +123,7 @@ class LocalRenderer:
         clips: list[PageClip],
         dpi: int = 200,
     ) -> list[bytes]:
-        """Render each clip (full-width vertical slice) to a PNG.
+        """Render each clip to a PNG, full width unless it names its own.
 
         Degenerate clips are dropped rather than returned as broken images:
         callers hand the whole list to the grader without pairing it back up
@@ -146,7 +146,9 @@ class LocalRenderer:
             try:
                 for clip in clips:
                     page = doc[clip.page_idx]
-                    _, height = page.get_size()
+                    width, height = page.get_size()
+                    left = clip.x_left if clip.x_left is not None else 0.0
+                    right = clip.x_right if clip.x_right is not None else width
                     # Clamp into the page: a region running past the bottom
                     # edge would otherwise become a negative inset, which
                     # PDFium honours by rendering *outside* the page.
@@ -155,7 +157,8 @@ class LocalRenderer:
                     if bottom - top < _MIN_SLICE_PT:
                         continue
                     bitmap = page.render(
-                        scale=scale, crop=(0, height - bottom, 0, top),
+                        scale=scale,
+                        crop=(left, height - bottom, width - right, top),
                     )
                     buf = io.BytesIO()
                     bitmap.to_pil().save(buf, format="PNG")

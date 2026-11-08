@@ -47,6 +47,12 @@ export interface PyApi {
   ): Promise<SimpleResult>
   delete_paper(paper_id: string, delete_local_files?: boolean): Promise<SimpleResult>
   open_pdf(path: string): Promise<SimpleResult>
+  paper_questions(
+    paper_id: string,
+  ): Promise<SimpleResult & { questions: string[]; has_ms: boolean }>
+  paper_question_images(
+    paper_id: string, question_id: string,
+  ): Promise<SimpleResult & { question: string[]; mark_scheme: string[] }>
   mistakes(): Promise<MistakeRecord[]>
   mistake_topic_keys(): Promise<string[]>
   topics_for(paper_id: string): Promise<Record<string, string> | null>

@@ -134,6 +134,11 @@ class AppSettings(BaseSettings):
         return self.base_dir / ".cache" / "topics"
 
     @property
+    def question_cache_dir(self) -> Path:
+        """Where each question sits in its QP and MS — see ``modules.question_view``."""
+        return self.base_dir / ".cache" / "questions"
+
+    @property
     def mistakes_csv(self) -> Path:
         """Backing file for the mistake notebook — see ``MistakeStore``."""
         return self.base_dir / "mistakes.csv"

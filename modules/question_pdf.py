@@ -208,7 +208,8 @@ def crops_for_paper(
     regions, _ = match_scanned(doc, every)
     targets = list(wanted) if wanted is not None else every
     by_id = {region.question_id: region for region in regions}
-    column = document_column(qp_path)
+    layouts = _read_layouts(qp_path)
+    column = document_column(layouts)
 
     crops: list[QuestionCrop] = []
     missing: list[str] = []
@@ -221,6 +222,7 @@ def crops_for_paper(
         trimmed = content_bands(
             qp_path, whole, column,
             top_margin=doc.top_margin, footer_y=doc.footer_y, trim=trim,
+            layouts=layouts,
         )
         if not trim:
             crops.append(QuestionCrop(
@@ -749,7 +751,15 @@ def _column_from(
     return _writing_column(spans, page_width)
 
 
-def document_column(qp_path: str) -> tuple[float, float]:
+def _read_layouts(qp_path: str) -> list[object]:
+    """Every page's pdfminer layout. Reading a paper takes seconds, and a question
+    is cropped against the same pages as the one before it."""
+    from pdfminer.high_level import extract_pages
+
+    return list(extract_pages(qp_path))
+
+
+def document_column(layouts: Sequence[object]) -> tuple[float, float]:
     """The paper's writing column, measured over the whole document.
 
     Measured once, over everything: per question it wobbles, because a
@@ -761,15 +771,9 @@ def document_column(qp_path: str) -> tuple[float, float]:
     property of the paper's template, so the leftmost ruling in the whole
     document is what defines it.
     """
-    from pdfminer.high_level import extract_pages
-
-    pages: dict[int, object] = {}
-    heights: dict[int, float] = {}
-    width = 0.0
-    for index, layout in enumerate(extract_pages(qp_path)):
-        pages[index] = layout
-        heights[index] = layout.height
-        width = max(width, layout.width)
+    pages = dict(enumerate(layouts))
+    heights = {i: layout.height for i, layout in pages.items()}  # type: ignore[attr-defined]
+    width = max((layout.width for layout in layouts), default=0.0)  # type: ignore[attr-defined]
     return _column_from(pages, heights, width or 612.0)
 
 
@@ -781,12 +785,16 @@ def content_bands(
     top_margin: float = _TOP_MARGIN,
     footer_y: float = _FOOTER_Y,
     trim: bool = True,
+    layouts: Sequence[object] | None = None,
 ) -> list[Band]:
     """Cut the answer space out of each band, keeping everything else.
 
     ``trim=False`` keeps the answer space: each band is still narrowed to
     the writing column, freed of blank pages and of a top edge that cuts
     through the question's first line, but nothing inside it is cut.
+
+    ``layouts`` is the paper already read, for a caller going through several
+    of its questions.
 
     Cutting out the ruling rather than hunting for the question is what makes
     this work on both kinds of paper. Detecting ruling is reliable — it is
@@ -812,11 +820,12 @@ def content_bands(
     pages: dict[int, object] = {}
     heights: dict[int, float] = {}
     widths: dict[int, float] = {}
-    for index, layout in enumerate(extract_pages(qp_path)):
+    source = layouts if layouts is not None else extract_pages(qp_path)
+    for index, layout in enumerate(source):
         if index in wanted:
             pages[index] = layout
-            heights[index] = layout.height
-            widths[index] = layout.width
+            heights[index] = layout.height  # type: ignore[attr-defined]
+            widths[index] = layout.width  # type: ignore[attr-defined]
         if len(pages) == len(wanted):
             break
 

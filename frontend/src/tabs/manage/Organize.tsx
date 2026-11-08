@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, FileText, Send, Trash2 } from 'lucide-react'
+import { BookOpen, ChevronDown, FileText, Send, Trash2 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { api } from '../../lib/bridge'
 import type { Intent } from '../../lib/commands'
 import { groupBySyllabus, subjectGlyph } from '../../lib/papers'
+import { ringOffsets } from '../../lib/ring'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
 import { Button } from '../../ui/Button'
@@ -14,6 +15,7 @@ import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
+import { QuestionView } from './QuestionView'
 
 const LAYOUTS = [
   { id: 'icons', label: '图标' },
@@ -21,14 +23,15 @@ const LAYOUTS = [
 ] as const
 type LayoutId = (typeof LAYOUTS)[number]['id']
 
-/** What one paper can be made to do. The same four whether they are laid out
- * as circles over the icon or as buttons at the end of a row. */
+/** What one paper can be made to do. The same list whether they are laid out
+ * as circles over the icon or as buttons at the end of a row. `from` is the
+ * control that was clicked, for an action that opens a panel out of it. */
 interface Action {
   key: string
   label: string
   Icon: typeof FileText
   danger?: boolean
-  run: () => void
+  run: (from: DOMRect) => void
 }
 
 type Act = (
@@ -52,6 +55,9 @@ export function Organize({
   const [layout, setLayout] = useState<LayoutId>('icons')
   const [hideCompleted, setHideCompleted] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
+  /** The paper 看题 is open on. Over the detail panel when one is open, so going
+   * back from it lands where it was started. */
+  const [viewing, setViewing] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [alsoFiles, setAlsoFiles] = useState(false)
   const [mailReady, setMailReady] = useState(false)
@@ -95,6 +101,7 @@ export function Organize({
     })
 
   const current = shown.find((p) => p.paper_id === selected) ?? null
+  const viewed = papers.find((p) => p.paper_id === viewing) ?? null
   const pendingDelete = papers.find((p) => p.paper_id === deleting) ?? null
 
   const call: Act = (fn, ok) => {
@@ -128,6 +135,17 @@ export function Organize({
         run: () => call((a) => a.open_pdf(p.ms_path), '已在系统阅读器中打开 MS'),
       },
     ]
+    if (p.qp_path) {
+      acts.push({
+        key: 'view',
+        label: '看题',
+        Icon: BookOpen,
+        run: (from) => {
+          if (!selected) setOrigin(from)
+          setViewing(p.paper_id)
+        },
+      })
+    }
     if (mailReady && p.qp_path) {
       acts.push({
         key: 'gn',
@@ -275,17 +293,24 @@ export function Organize({
       )}
 
       <Overlay
-        open={current !== null}
+        open={current !== null || viewed !== null}
         origin={origin}
-        onClose={() => setSelected(null)}
+        onClose={() => {
+          setSelected(null)
+          setViewing(null)
+        }}
       >
-        {current && (
-          <PaperDetail
-            paper={current}
-            actions={actionsOf(current)}
-            onAct={call}
-            onClose={() => setSelected(null)}
-          />
+        {viewed ? (
+          <QuestionView paper={viewed} onClose={() => setViewing(null)} />
+        ) : (
+          current && (
+            <PaperDetail
+              paper={current}
+              actions={actionsOf(current)}
+              onAct={call}
+              onClose={() => setSelected(null)}
+            />
+          )
         )}
       </Overlay>
     </div>
@@ -332,9 +357,11 @@ function SubjectRule({
 /** The icon cell's square, and one action circle inside it. */
 const CELL = 96
 const CIRCLE = 34
+/** Centre to centre around the ring. Five at this spacing just fill the square. */
+const RING_SPACING = 40
 
 /** One paper as an icon. Clicking the icon turns that same square into a
- * two-by-two ring of its actions; clicking the square's empty ground turns it
+ * ring of its actions; clicking the square's empty ground turns it
  * back. The square keeps its size across the flip so the grid never reflows. */
 function IconCell({
   paper,
@@ -347,6 +374,7 @@ function IconCell({
 }) {
   const [open, setOpen] = useState(false)
   const done = paper.status === 'Completed'
+  const ring = ringOffsets(actions.length, RING_SPACING)
 
   return (
     <div className="w-29 shrink-0">
@@ -359,25 +387,31 @@ function IconCell({
         {open ? (
           // Out of the middle of the square the glyph just left, one after the
           // next — the order they are read in is the order they arrive in.
-          <div className="grid grid-cols-2 gap-2">
+          <div className="relative size-0">
             {actions.map((a, i) => (
               <motion.button
                 key={a.key}
                 title={a.label}
-                initial={{ scale: 0.3, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                // Short and slightly past 1 at the end of the curve. Four
-                // circles staggered 30ms apart have to be over almost at
-                // once, or the ring reads as four arrivals instead of one.
+                initial={{ x: 0, y: 0, scale: 0.3, opacity: 0 }}
+                animate={{ ...ring[i], scale: 1, opacity: 1 }}
+                // Short and slightly past 1 at the end of the curve. Circles
+                // staggered 30ms apart have to be over almost at once, or the
+                // ring reads as several arrivals instead of one.
                 transition={{ duration: 0.16, delay: i * 0.03, ease: [0.34, 1.4, 0.64, 1] }}
                 onClick={(e) => {
                   e.stopPropagation()
                   setOpen(false)
-                  a.run()
+                  a.run(e.currentTarget.getBoundingClientRect())
                 }}
-                className={`flex items-center justify-center rounded-full border border-hairline
-                            bg-panel hover:bg-raised ${a.danger ? 'text-bad' : 'text-accent'}`}
-                style={{ width: CIRCLE, height: CIRCLE }}
+                className={`absolute flex items-center justify-center rounded-full border
+                            border-hairline bg-panel hover:bg-raised
+                            ${a.danger ? 'text-bad' : 'text-accent'}`}
+                style={{
+                  width: CIRCLE,
+                  height: CIRCLE,
+                  left: -CIRCLE / 2,
+                  top: -CIRCLE / 2,
+                }}
               >
                 <a.Icon className="size-4" aria-hidden />
               </motion.button>
@@ -456,7 +490,7 @@ function DetailList({
                         title={a.label}
                         onClick={(e) => {
                           e.stopPropagation()
-                          a.run()
+                          a.run(e.currentTarget.getBoundingClientRect())
                         }}
                         className={`flex size-7 items-center justify-center rounded-ui
                                     hover:bg-raised ${a.danger ? 'text-bad' : 'text-accent'}`}
@@ -514,7 +548,11 @@ function PaperDetail({
         <span className="text-section font-bold tabular-nums">{paper.paper_id}</span>
         <div className="ml-auto flex gap-2">
           {actions.map((a) => (
-            <Button key={a.key} onClick={a.run} className={a.danger ? 'text-bad' : ''}>
+            <Button
+              key={a.key}
+              onClick={(e) => a.run(e.currentTarget.getBoundingClientRect())}
+              className={a.danger ? 'text-bad' : ''}
+            >
               {a.label}
             </Button>
           ))}
