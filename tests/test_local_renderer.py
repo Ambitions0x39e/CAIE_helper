@@ -146,3 +146,10 @@ def test_concurrent_renders_all_succeed(tmp_path: Path) -> None:
     with ThreadPoolExecutor(max_workers=8) as pool:
         pngs = list(pool.map(render, range(80)))
     assert all(len(p) == 1 for p in pngs)
+
+
+def test_clip_can_be_narrowed_to_a_column():
+    """A band cropped to x 100-300 on a 600pt page is 200pt wide, not 600."""
+    clip = PageClip(page_idx=0, y_top=0, y_bottom=100, x_left=100, x_right=300)
+    (png,) = LocalRenderer().render_regions(_banded_pdf(), [clip], dpi=72)
+    assert _open(png).size == (200, 100)

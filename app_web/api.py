@@ -38,6 +38,7 @@ from core.models import (
     AttemptRecord,
     ExportedMark,
     MistakeRecord,
+    PaperRecord,
     PaperType,
 )
 from core.settings import GraderConfig, MailConfig, app_settings
@@ -95,6 +96,7 @@ from modules.marking.workflow import (
     topics_for_paper,
 )
 from modules.practice import PracticeRequest, build_practice, component_topics
+from modules.question_view import list_questions, question_images
 from modules.tutor import read_notes, refresh_notes
 from modules.updater import AppUpdater, current_app_version, format_progress
 
@@ -299,6 +301,27 @@ class Api:
     def open_pdf(self, path: str) -> Payload:
         """Hand a stored PDF to the OS viewer."""
         return self._manager.open_pdf(path).model_dump(mode="json")
+
+    def _paper(self, paper_id: str) -> PaperRecord | None:
+        return next(
+            (r for r in self._store.load_all() if r.paper_id == paper_id), None,
+        )
+
+    def paper_questions(self, paper_id: str) -> Payload:
+        """The main questions a paper can be looked at by."""
+        record = self._paper(paper_id)
+        if record is None:
+            return {"success": False, "error": f"找不到 {paper_id}"}
+        return list_questions(record.qp_path, record.ms_path).model_dump(mode="json")
+
+    def paper_question_images(self, paper_id: str, question_id: str) -> Payload:
+        """One question and its mark scheme, as pictures."""
+        record = self._paper(paper_id)
+        if record is None:
+            return {"success": False, "error": f"找不到 {paper_id}"}
+        return question_images(
+            record.qp_path, record.ms_path, question_id,
+        ).model_dump(mode="json")
 
     # -- manage: mistakes ----------------------------------------------------
 

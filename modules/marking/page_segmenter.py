@@ -140,6 +140,9 @@ class PageClip(BaseModel):
     page_idx: int
     y_top: float
     y_bottom: float
+    #: Horizontal limits. None is the page's own edge.
+    x_left: float | None = None
+    x_right: float | None = None
 
 
 class QuestionRegion(BaseModel):

@@ -815,8 +815,9 @@ def _fake_three_question_scan(monkeypatch: pytest.MonkeyPatch) -> None:
         "modules.marking.page_segmenter.match_scanned",
         lambda _d, ids: ([r for r in regions if r.question_id in ids], None),
     )
+    monkeypatch.setattr("modules.question_pdf._read_layouts", lambda _p: [])
     monkeypatch.setattr(
-        "modules.question_pdf.document_column", lambda _p: (40.0, 560.0),
+        "modules.question_pdf.document_column", lambda _l: (40.0, 560.0),
     )
     monkeypatch.setattr(
         "modules.question_pdf.content_bands",
