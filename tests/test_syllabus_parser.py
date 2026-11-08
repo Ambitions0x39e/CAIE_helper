@@ -70,6 +70,7 @@ def _placed_pages_pdf(
 ) -> Path:
     """Same, one inner list per page."""
     pdf = FPDF(unit="pt", format=(612, 792))
+    pdf.core_fonts_encoding = "cp1252"  # bullets and en dashes, as printed
     pdf.set_auto_page_break(auto=False)
     pdf.set_font("Helvetica", size=9)
     for cells in pages:
@@ -741,13 +742,223 @@ class TestScienceGeometry:
         assert info.component_topics["4"] == ["1", "2", "3", "4", "5", "6"]
 
 
+# ── Overview split into sections, papers naming their section range ──
+
+
+def _sectioned_overview_pdf(path: Path) -> Path:
+    """The real 9618 layout: sections on the left, their ``N.M`` topics on
+    the right, one overview page per level, and each paper naming its section
+    range. x offsets are the document's. The subject content repeats the
+    level heading and the dotted ids further down."""
+    return _placed_pages_pdf(path, [
+        [
+            (56.7, 60, "Contents ................................ 3"),
+            (56.7, 80, "Content overview"),
+            (56.7, 100, "AS Level content"),
+            (56.7, 120, "Assessment overview"),
+        ],
+        [
+            (176.3, 30, "Computer Science 9618 syllabus for 2026.  Syllabus overview"),
+            (56.7, 60, "Content overview"),
+            (56.7, 85, "AS Level content"),
+            (56.7, 110, "1  Information representation"),
+            (283.5, 110, "1.1  Data Representation"),
+            (283.5, 126, "1.2  Multimedia – Graphics, Sound"),
+            (56.7, 160, "8  Databases"),
+            (283.5, 160, "8.1  Database Concepts"),
+            (283.5, 176, "8.3"),
+            (320, 176, "Data Definition Language (DDL) and Data"),
+            (320, 189, "Manipulation Language (DML)"),
+            (56.7, 220, "9  Algorithm Design and Problem-solving"),
+            (283.5, 220, "9.1  Computational Thinking Skills"),
+            (569.9, 766, "9"),
+        ],
+        [
+            (56.7, 60, "A Level content"),
+            (56.7, 85, "13  Data Representation"),
+            (283.5, 85, "13.1  User-defined data types"),
+            (283.5, 101, "13.3  Floating-point numbers, representation and"),
+            (306.1, 114, "manipulation"),
+            (56.7, 145, "19  Computational thinking and"),
+            (283.5, 145, "19.1  Algorithms"),
+            (73.6, 161, "Problem-solving"),
+            (283.5, 161, "19.2  Recursion"),
+            (56.7, 400, "School feedback: Cambridge prepares students well"),
+            (569.9, 766, "10"),
+        ],
+        [
+            (56.7, 60, "Assessment overview"),
+            (62.4, 90, "Paper 1 Theory Fundamentals"),
+            (319.7, 90, "Paper 3"),
+            (319.7, 110, "Advanced Theory"),
+            (62.4, 130, "Paper 1 will assess sections 1 to 8 of the"),
+            (319.7, 130, "Paper 3 will assess sections 13 to 20 of the"),
+            (62.4, 143, "syllabus content."),
+            (319.7, 143, "syllabus content."),
+            (62.4, 300, "Paper 2"),
+            (319.7, 300, "Paper 4"),
+            (62.4, 320, "Paper 2 will assess sections 9 to 12 of the"),
+            (319.7, 320, "Paper 4 will assess sections 19 to 20 of the"),
+            (62.4, 333, "syllabus content."),
+            (319.7, 333, "syllabus content, except for low-level programming."),
+        ],
+        [
+            (56.7, 60, "A Level content"),
+            (62.4, 90, "13"),
+            (93.5, 90, "Data Representation"),
+            (62.4, 110, "13.1  User-defined data types"),
+            (62.4, 130, "13.9  A subheading the overview does not list"),
+        ],
+    ])
+
+
+class TestSectionedOverview:
+    def test_topics_come_from_the_overview_column_across_both_pages(
+        self, tmp_path: Path
+    ) -> None:
+        info = parse_syllabus(_sectioned_overview_pdf(tmp_path / "s.pdf"), "9618")
+
+        assert list(info.topics) == [
+            "1.1", "1.2", "8.1", "8.3", "9.1", "13.1", "13.3", "19.1", "19.2",
+        ]
+        assert info.topics["1.2"].name == "Multimedia – Graphics, Sound"
+        assert info.topics["8.3"].name == (
+            "Data Definition Language (DDL) and Data Manipulation Language (DML)"
+        )
+        assert info.topics["13.3"].name == (
+            "Floating-point numbers, representation and manipulation"
+        )
+
+    def test_each_paper_gets_the_sections_it_names(self, tmp_path: Path) -> None:
+        info = parse_syllabus(_sectioned_overview_pdf(tmp_path / "s.pdf"), "9618")
+
+        assert info.component_topics == {
+            "1": ["1.1", "1.2", "8.1", "8.3"],
+            "2": ["9.1"],
+            "3": ["13.1", "13.3", "19.1", "19.2"],
+            "4": ["19.1", "19.2"],
+        }
+
+
+# ── Core studies, research methods and specialist options ─────────
+
+
+def _specialist_options_pdf(path: Path) -> Path:
+    """The real 9990 layout: no numbered topic in the content overview. The
+    subject content lists core studies as bullets, research methods as
+    headings over "Candidates should be able to:", and numbers only the
+    specialist options' topics. x offsets are the document's."""
+    header = (213.3, 30, "Psychology 9990 syllabus for 2027.  Subject content")
+    footer = (17, 766, "Back to contents page")
+    return _placed_pages_pdf(path, [
+        [
+            (56.7, 60, "Contents ................................ 3"),
+            (56.7, 80, "3.1  AS Level Content"),
+            (56.7, 100, "Specialist Option 1: Clinical Psychology"),
+            (56.7, 120, "Paper 1 – Approaches, Issues and Debates"),
+        ],
+        [
+            header,
+            (56.7, 60, "Content overview"),
+            (56.7, 80, "At AS Level candidates study four psychological approaches:"),
+            (56.7, 100, "• Biological"),
+            (56.7, 120, "1  Clinical Psychology"),
+            (56.7, 180, "Assessment overview"),
+            (62.4, 200, "Paper 1"),
+            (319.7, 200, "Paper 3"),
+            (62.4, 300, "Paper 2"),
+            (319.7, 300, "Paper 4"),
+            footer,
+        ],
+        [
+            header,
+            (56.7, 60, "3.1  AS Level Content"),
+            (56.7, 80, "Each of the approaches is supported by three core studies."),
+            (56.7, 100, "Biological"),
+            (56.7, 120, "• Dement and Kleitman (sleep and dreams)"),
+            (56.7, 140, "Learning"),
+            (56.7, 160, "•"),
+            (90, 160, "Fagen et al. (elephant learning)"),
+            (56.7, 200, "AS Level issues and debates"),
+            (56.7, 220, "•"),
+            (90, 220, "nature versus nurture"),
+            (56.7, 260, "3.1.1  The core studies"),
+            (56.7, 280, "Candidates should be able to:"),
+            (56.7, 320, "3.1.2  Research methodology"),
+            (62.4, 340, "Experiments"),
+            (62.4, 356, "Candidates should be able to:"),
+            (62.4, 374, "• describe the main features of each type of experiment"),
+            (62.4, 740, "Variables"),
+            footer,
+        ],
+        [
+            header,
+            (62.4, 60, "Candidates should be able to:"),
+            (62.4, 78, "• describe what is meant by an independent variable"),
+            (56.7, 120, "3.2  A Level Content"),
+            (62.4, 140, "Questionnaires"),
+            (62.4, 156, "Candidates should be able to:"),
+            (56.7, 200, "Specialist Option 1: Clinical Psychology"),
+            (56.7, 220, "Key Studies"),
+            (62.4, 260, "1.1  Schizophrenia"),
+            (62.4, 280, "1.1.1  Diagnostic criteria for schizophrenia"),
+            (62.4, 320, "1.2"),
+            (100, 320, "Mood (affective) disorders: depressive disorder and bipolar"),
+            (100, 333, "disorder"),
+            (62.4, 360, "1.2.1  Symptoms"),
+            (56.7, 400, "Specialist Option 2: Consumer Psychology"),
+            (62.4, 440, "2.1  The physical environment"),
+            (62.4, 460, "1.3  A reference back to the other option"),
+            footer,
+        ],
+        [
+            (56.7, 60, "4  Details of the assessment"),
+            (56.7, 90, "Paper 1 – Approaches, Issues and Debates"),
+            (56.7, 200, "Paper 2 – Research Methods"),
+            (56.7, 300, "Paper 3 – Specialist Options: Approaches, Issues and Debates"),
+            (56.7, 400, "Paper 4 – Specialist Options: Application and Research"),
+            (56.7, 500, "3.5  Mentioned in the list of changes"),
+        ],
+    ])
+
+
+class TestSpecialistOptions:
+    def test_each_kind_of_content_is_read_from_its_own_section(
+        self, tmp_path: Path
+    ) -> None:
+        info = parse_syllabus(_specialist_options_pdf(tmp_path / "s.pdf"), "9990")
+
+        assert {tid: t.name for tid, t in info.topics.items()} == {
+            "1": "Dement and Kleitman (sleep and dreams)",
+            "2": "Fagen et al. (elephant learning)",
+            "3": "Experiments",
+            "4": "Variables",
+            "1.1": "Schizophrenia",
+            "1.2": (
+                "Mood (affective) disorders: depressive disorder and bipolar disorder"
+            ),
+            "2.1": "The physical environment",
+        }
+
+    def test_each_paper_gets_the_content_its_title_names(
+        self, tmp_path: Path
+    ) -> None:
+        info = parse_syllabus(_specialist_options_pdf(tmp_path / "s.pdf"), "9990")
+
+        assert info.component_topics == {
+            "1": ["1", "2"],
+            "2": ["3", "4"],
+            "3": ["1.1", "1.2", "2.1"],
+            "4": ["1.1", "1.2", "2.1"],
+        }
+
+
 # ── Which grading path each paper takes ───────────────────────────
 
 
 def _papers_only_pdf(path: Path) -> Path:
-    """An assessment overview and nothing a topic reader recognises — the
-    shape of the real 9618 document, whose content overview fits neither
-    layout. Papers side by side, as there."""
+    """An assessment overview and nothing a topic reader recognises. Papers
+    side by side, as a real document prints them."""
     return _placed_pdf(path, [
         (62, 60, "Paper 1"),
         (320, 60, "Paper 3"),

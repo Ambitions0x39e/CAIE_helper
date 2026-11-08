@@ -57,6 +57,17 @@ def test_the_syllabus_is_the_one_covering_the_year(
     assert syllabus_pdf_path(_SUBJECT, year) == expected
 
 
+def test_a_syllabus_for_a_single_year_is_found() -> None:
+    subject = """
+    <a href="/Images/636089-2024-2025-syllabus.pdf">2024-2025</a>
+    <a href="/Images/697372-2026-syllabus.pdf">2026</a>
+    <a href="/Images/747145-2026-syllabus-update.pdf">Update</a>
+    <a href="/Images/721397-2027-2029-syllabus.pdf">2027-2029</a>
+    """
+
+    assert syllabus_pdf_path(subject, 2026) == "/Images/697372-2026-syllabus.pdf"
+
+
 def test_an_unreachable_site_is_none_not_an_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

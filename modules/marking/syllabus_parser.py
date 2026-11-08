@@ -4,7 +4,7 @@ The Mark tab uses the result to tell the VL grader which topics a paper can
 possibly be about, so every graded question can be tagged with one. Input is
 always a local file the user picked — nothing here fetches anything.
 
-Two subject families lay out their "Content overview" section differently
+Subject families lay out their "Content overview" section differently
 (see docs/superpowers/specs/2026-08-20-mistake-notebook-design.md):
 
 * **Math family** (9709 / 9231) — an explicit three-column table
@@ -19,9 +19,16 @@ Two subject families lay out their "Content overview" section differently
   "Subject content" chapter ("Candidates for Cambridge International AS Level
   should study topics 1–22.") combined with each paper's own "based on the
   AS/A Level syllabus content" statement.
+* **Sectioned overview** (9618) — ``N`` sections beside their ``N.M`` topics,
+  one page per level, with each paper naming its range ("Paper 1 will assess
+  sections 1 to 8"). Topics are kept at ``N.M``, as the overview lists them.
+* **Specialist options** (9990) — the overview is prose and numbers nothing, so
+  topics come from the subject content: the core studies (Paper 1), the research
+  methods (Paper 2), and each specialist option's ``N.M`` topics (Papers 3, 4).
+  Only the last are numbered there; the other two take sequential ids.
 
-The parser does **not** force one granularity on both — each family keeps the
-depth its own syllabus presents.
+The parser does **not** force one granularity on all of them — each family
+keeps the depth its own syllabus presents.
 
 Everything comes from ``pdfminer`` — no VL call, no rendering: syllabus PDFs
 extract cleanly, unlike the CID-garbled mark-scheme cover pages.
@@ -789,6 +796,182 @@ def _parse_science_geometry(
     return topics, component_topics
 
 
+# ── Sectioned overview, read from the page geometry ───────────────
+#
+# 9618 prints "1  Information representation" on the left and its "1.1 …"
+# topics on the right, AS and A Level on consecutive pages. The level headings
+# say "AS Level content", and the dotted ids repeat in the subject content, so
+# the read is confined to the overview pages.
+
+#: The sentence names its own paper, and its column keeps it on one line. Not
+#: every edition sets "Paper 1" alone on a line for ``_paper_blocks`` to find.
+_ASSESS_SECTIONS_RE = re.compile(
+    r"^Paper\s+(\d{1,2})\s+will\s+assess\s+sections\s+(\d{1,2})\s+to\s+(\d{1,2})\b",
+    re.IGNORECASE,
+)
+
+
+def _is_contents_page(lines: list[_Line]) -> bool:
+    return any(_DOT_LEADER_RE.search(line.text) for line in lines)
+
+
+def _content_overview_pages(pages: list[list[_Line]]) -> list[list[_Line]]:
+    """The pages from the "Content overview" heading to "Assessment overview"."""
+    found: list[list[_Line]] = []
+    for lines in pages:
+        if _is_contents_page(lines):
+            continue
+        texts = {line.text for line in lines}
+        if "Assessment overview" in texts:
+            break
+        if found or "Content overview" in texts:
+            found.append(lines)
+    return found
+
+
+def _parse_section_overview(
+    pages: list[list[_Line]],
+) -> tuple[dict[str, SyllabusTopic], dict[str, list[str]]] | None:
+    """Read a sectioned content overview off the page. None if absent."""
+    topics: dict[str, SyllabusTopic] = {}
+    for lines in _content_overview_pages(pages):
+        ids = [line.x0 for line in lines if _TOPIC_LINE_RE.match(line.text)]
+        if not ids:
+            continue
+        column = [line for line in lines if _in_column(line, min(ids), None)]
+        for _, topic_id, name in _read_topic_cells(column):
+            topics.setdefault(
+                topic_id, SyllabusTopic(topic_id=topic_id, name=name)
+            )
+
+    component_topics: dict[str, list[str]] = {}
+    for line in (line for lines in pages for line in lines):
+        match = _ASSESS_SECTIONS_RE.match(line.text)
+        if match is None:
+            continue
+        low, high = int(match.group(2)), int(match.group(3))
+        in_range = [t for t in topics if low <= int(t.split(".")[0]) <= high]
+        if in_range:
+            component_topics.setdefault(match.group(1), in_range)
+    if not topics or not component_topics:
+        return None
+    return topics, component_topics
+
+
+# ── Specialist options, read from the subject content ─────────────
+#
+# 9990's content overview is prose: four approaches as bullets, four options
+# as a numbered list, nothing for Paper 2. What a question can be about is in
+# the subject content, under headings the contents page lists too.
+
+_AS_CONTENT_RE = re.compile(r"^\d\.\d AS Level Content$", re.IGNORECASE)
+_AS_DEBATES_RE = re.compile(r"^AS Level issues and debates$", re.IGNORECASE)
+_METHODS_RE = re.compile(r"^\d\.\d\.\d Research methodology$", re.IGNORECASE)
+_A_CONTENT_RE = re.compile(r"^\d\.\d A Level Content$", re.IGNORECASE)
+_OPTION_HEADING_RE = re.compile(r"^Specialist Option (\d):")
+#: "1.1 Schizophrenia", not its subsection "1.1.1 Diagnostic criteria".
+_OPTION_TOPIC_RE = re.compile(r"^(\d\.\d)(?![.\d])\s*(.*)$")
+_DETAILS_RE = re.compile(r"^\d Details of the assessment$", re.IGNORECASE)
+_PAPER_TITLE_RE = re.compile(rf"^Paper (\d) {_DASH} (.+)$")
+#: Every research method and concept opens with this line, its name above it.
+_METHOD_LEAD = "Candidates should be able to:"
+
+
+def _reading_order(pages: list[list[_Line]]) -> list[_Line]:
+    """Every line of the document proper, top to bottom, furniture dropped.
+
+    ``str.split`` also takes the no-break spaces these PDFs set in headings.
+    """
+    body: list[_Line] = []
+    for lines in pages:
+        if _is_contents_page(lines):
+            continue
+        for line in sorted(lines, key=lambda ln: (-round(ln.top), ln.x0)):
+            text = " ".join(line.text.split())
+            if text.isdigit() or any(hint in text for hint in _FOOTER_HINTS):
+                continue
+            body.append(line._replace(text=text))
+    return body
+
+
+def _option_topic_name(body: list[_Line], index: int, first: str) -> str:
+    """A topic's name: its own line, plus what sits indented right after it —
+    the name when the id extracted alone, then any wrapped continuation."""
+    line = body[index]
+    parts = [first] if first else []
+    for following in body[index + 1 : index + 3]:
+        if following.x0 <= line.x0 + _COLUMN_TOL:
+            break
+        if not 0 <= line.top - following.top <= _Y_TOL_WRAP:
+            break
+        parts.append(following.text)
+    return " ".join(parts)
+
+
+def _parse_specialist_options(
+    pages: list[list[_Line]],
+) -> tuple[dict[str, SyllabusTopic], dict[str, list[str]]] | None:
+    """Read core studies, methods and options. None if there are no options."""
+    body = _reading_order(pages)
+    studies: list[str] = []
+    methods: list[str] = []
+    options: list[tuple[str, str]] = []
+    section: str | None = None
+    option = ""
+    for index, line in enumerate(body):
+        text = line.text
+        if _DETAILS_RE.match(text):
+            break
+        if _AS_CONTENT_RE.match(text):
+            section = "studies"
+        elif _METHODS_RE.match(text):
+            section = "methods"
+        elif _AS_DEBATES_RE.match(text) or _A_CONTENT_RE.match(text):
+            section = None
+        elif match := _OPTION_HEADING_RE.match(text):
+            section, option = "options", match.group(1)
+        elif section == "studies" and text.startswith("•"):
+            name = text.lstrip("• ")
+            studies.append(name or body[index + 1].text)
+        elif section == "methods" and text == _METHOD_LEAD:
+            methods.append(body[index - 1].text)
+        elif (
+            section == "options"
+            and (match := _OPTION_TOPIC_RE.match(text))
+            and match.group(1).startswith(f"{option}.")
+        ):
+            name = _option_topic_name(body, index, match.group(2))
+            options.append((match.group(1), name or match.group(1)))
+    if not options:
+        return None
+
+    topics: dict[str, SyllabusTopic] = {}
+    numbered = [(str(i), name) for i, name in enumerate(studies + methods, 1)]
+    for topic_id, name in numbered + options:
+        topics.setdefault(topic_id, SyllabusTopic(topic_id=topic_id, name=name))
+    study_ids = [tid for tid, _ in numbered[: len(studies)]]
+    method_ids = [tid for tid, _ in numbered[len(studies) :]]
+    option_ids = list(dict.fromkeys(tid for tid, _ in options))
+
+    component_topics: dict[str, list[str]] = {}
+    for line in body:
+        match = _PAPER_TITLE_RE.match(line.text)
+        if match is None:
+            continue
+        title = match.group(2).lower()
+        if "specialist options" in title:
+            ids = option_ids
+        elif "research methods" in title:
+            ids = method_ids
+        else:
+            ids = study_ids
+        if ids:
+            component_topics.setdefault(match.group(1), ids)
+    if not component_topics:
+        return None
+    return topics, component_topics
+
+
 # ── Store ─────────────────────────────────────────────────────────
 #
 # A parsed syllabus outlives the session that produced it: the user had to
@@ -929,11 +1112,14 @@ def parse_syllabus(
     blocks = _paper_blocks(pages)
     grading = _component_grading(blocks, subject_id)
 
-    # Geometry first for both families — see this module's docstring for what
+    # Geometry first for every family — see this module's docstring for what
     # the flowed text gets wrong on the real documents. Text is the fallback,
-    # for a layout neither geometry reader recognises.
-    geometry = _parse_math_geometry(pdf_path) or _parse_science_geometry(
-        pages, blocks
+    # for a layout no geometry reader recognises.
+    geometry = (
+        _parse_math_geometry(pdf_path)
+        or _parse_science_geometry(pages, blocks)
+        or _parse_section_overview(pages)
+        or _parse_specialist_options(pages)
     )
     if geometry is not None:
         topics, component_topics = geometry
@@ -942,8 +1128,8 @@ def parse_syllabus(
             parsed = parse_syllabus_text(extract_text(str(pdf_path)), subject_id)
         except SyllabusParseError:
             # The papers can be named when the topics cannot be read (the real
-            # 9618 content overview fits neither layout), and which paper is
-            # multiple choice is worth keeping on its own.
+            # 9609 content overview fits no reader), and which paper is multiple
+            # choice is worth keeping on its own.
             if not grading:
                 raise
             topics, component_topics = {}, {}

@@ -27,7 +27,8 @@ _log = logging.getLogger("cie_helper.syllabus_fetch")
 
 _SITE = "https://www.cambridgeinternational.org"
 
-_SYLLABUS_RE = re.compile(r'href="(/Images/\d+-(\d{4})-(\d{4})-syllabus\.pdf)"')
+# A syllabus for one year names it once (``697372-2026-syllabus.pdf``).
+_SYLLABUS_RE = re.compile(r'href="(/Images/\d+-(\d{4})(?:-(\d{4}))?-syllabus\.pdf)"')
 
 
 def subject_page_path(home_html: str, subject_id: str) -> str | None:
@@ -43,7 +44,7 @@ def syllabus_pdf_path(subject_html: str, year: int) -> str | None:
         (
             path
             for path, start, end in _SYLLABUS_RE.findall(subject_html)
-            if int(start) <= year <= int(end)
+            if int(start) <= year <= int(end or start)
         ),
         None,
     )
