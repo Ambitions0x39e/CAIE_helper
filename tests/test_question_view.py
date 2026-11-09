@@ -228,6 +228,61 @@ def test_page_kinds_and_first_content_page(tmp_path):
     assert layout.first_page == 1
 
 
+def _pages(path: Path, kinds: list[str]) -> None:
+    """One page per kind: "prose", "image", "blank", or "table" holding Q2."""
+    pdf = FPDF(unit="pt", format=(792, 612))
+    pdf.set_font("Helvetica", size=10)
+    pdf.set_auto_page_break(False)
+    pdf.set_left_margin(56)
+    picture = io.BytesIO()
+    Image.new("RGB", (40, 40), "white").save(picture, format="PNG")
+    for kind in kinds:
+        pdf.add_page()
+        if kind == "prose":
+            pdf.text(100, 100, "Abbreviations used by examiners in this mark scheme.")
+        elif kind == "image":
+            picture.seek(0)
+            pdf.image(picture, x=0, y=0, w=792, h=612)
+        elif kind == "table":
+            pdf.set_xy(56, 80)
+            _table_row(pdf, ("Question", "Answer", "Marks"))
+            _table_row(pdf, ("2", "an answer", "2"))
+    pdf.output(str(path))
+
+
+@pytest.mark.parametrize(
+    ("kinds", "first_page"),
+    [
+        # 9231_s25_11: annotations as images, abbreviations as text, Q1 on an image.
+        (["prose", "image", "image", "prose", "image", "table"], 4),
+        (["prose", "prose", "table"], 2),
+        # Nothing after the image says it is front matter, so it may be an answer.
+        (["prose", "image", "table"], 1),
+        # A blank page says nothing about the image before it.
+        (["prose", "image", "blank", "table"], 1),
+        (["image", "image", "table"], 1),
+        (["image", "table"], 1),
+        (["table"], 0),
+        # With no table to stop at, every later text page would read as front matter.
+        (["prose", "image", "prose"], 1),
+        (["prose", "prose"], 0),
+    ],
+)
+def test_the_first_answer_page_is_past_the_front_matter(tmp_path, kinds, first_page):
+    path = tmp_path / "ms.pdf"
+    _pages(path, kinds)
+    assert read_ms_layout(str(path)).first_page == first_page
+
+
+def test_an_unlabelled_first_question_is_not_shown_the_front_matter_images(tmp_path):
+    path = tmp_path / "ms.pdf"
+    _pages(path, ["prose", "image", "image", "prose", "image", "table"])
+    layout = read_ms_layout(str(path))
+    labels = accept_labels(layout.candidates, [1, 2], layout.areas)
+    clips = mark_scheme_clips([1, 2], labels, layout.areas, layout.first_page)
+    assert [c.page_idx for c in clips[1]] == [4]
+
+
 def test_table_area_excludes_the_footer_and_side_margins(tmp_path):
     path = tmp_path / "ms.pdf"
     _mark_scheme(path)

@@ -37,7 +37,7 @@ from modules.question_pdf import crops_for_paper
 _log = logging.getLogger("cie_helper.question_view")
 
 #: Raise when the located slices change, so what is cached is worked out again.
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 #: Stays sharp at the viewer's top zoom and still crosses the bridge one question
 #: at a time: the heaviest question measured is about 2 MB and a second to render.
 _RENDER_DPI = 300
@@ -97,8 +97,7 @@ class PageArea:
 class MsLayout:
     candidates: list[MsLabel]
     areas: list[PageArea]
-    #: The earliest page that can hold an answer: past the cover and past the
-    #: marking principles when those are text.
+    #: The earliest page that can hold an answer: see :func:`_first_answer_page`.
     first_page: int
 
 
@@ -256,12 +255,29 @@ def _header_top(text_top: float, rule_tops: Iterable[float]) -> float:
     )
 
 
+def _first_answer_page(
+    first_table: int | None, images: set[int], prose: set[int],
+) -> int:
+    """The earliest page that can hold an answer.
+
+    Front matter can be part images: 9231_s25_11 has its annotations on image
+    pages, then its abbreviations as text, then question 1 on an image page. A
+    page of text before the first question table is still front matter, so nothing
+    before it is an answer. An image page with no such page after it may be one.
+    """
+    if first_table is None:
+        return min((i for i in images if i >= 1), default=0)
+    return max((i + 1 for i in prose if i < first_table), default=min(first_table, 1))
+
+
 def read_ms_layout(ms_path: str) -> MsLayout:
     """Every candidate label, and each page's table area, from one read of the PDF."""
     candidates: list[MsLabel] = []
     #: Per page: None for an image page or one without a table, filled in below.
     tables: list[tuple[float, float, float, float] | None] = []
     images: set[int] = set()
+    #: Pages of text with no question table. A blank page is not one of them.
+    prose: set[int] = set()
     sizes: list[tuple[float, float]] = []
     footers: list[float] = []
     first_table: int | None = None
@@ -289,6 +305,8 @@ def read_ms_layout(ms_path: str) -> MsLayout:
         ]
         if not headers or not rules:
             tables.append(None)
+            if len(chars) >= _MIN_PAGE_CHARS:
+                prose.add(index)
             continue
 
         table_top = _header_top(
@@ -338,11 +356,7 @@ def read_ms_layout(ms_path: str) -> MsLayout:
     return MsLayout(
         candidates=candidates,
         areas=_page_areas(tables, images, sizes, footers),
-        first_page=min(
-            (p for p in (first_table, min((i for i in images if i >= 1), default=None))
-             if p is not None),
-            default=0,
-        ),
+        first_page=_first_answer_page(first_table, images, prose),
     )
 
 
