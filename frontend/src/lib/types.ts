@@ -124,6 +124,8 @@ export interface SimpleResult {
   error?: string | null
 }
 
+export type PdfKind = 'qp' | 'ms'
+
 /** A save-dialog call. `cancelled` is a normal outcome, not a failure —
  * nothing is written until a destination is picked. */
 /** An export record as `exports()` lists it — the snapshot left out. */

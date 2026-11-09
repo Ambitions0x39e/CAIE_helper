@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import base64
 import datetime
-import platform
-import subprocess
 from pathlib import Path
 
 from pydantic import (
@@ -109,11 +108,12 @@ class DeleteResult(BaseModel):
     error: str | None = None
 
 
-class OpenResult(BaseModel):
+class PdfResult(BaseModel):
     model_config = {"strict": False}
 
     success: bool
-    path: str
+    data: str = ""
+    kinds: list[str] = []
     error: str | None = None
 
 
@@ -244,44 +244,21 @@ class PaperManager:
         )
 
     # ------------------------------------------------------------------
-    # Open PDF locally
+    # Read PDF for the in-app preview
     # ------------------------------------------------------------------
 
-    def open_pdf(self, path: str) -> OpenResult:
-        """
-        Open a PDF in the system's default viewer.
-        Cross-platform: Windows / macOS / Linux.
-        """
-        pdf_path = Path(path.strip())
-
-        if not pdf_path.exists():
-            return OpenResult(
-                success=False,
-                path=str(pdf_path),
-                error=f"File not found: {pdf_path}",
+    def read_pdf(self, record: PaperRecord, kind: str) -> PdfResult:
+        """One of a paper's PDFs, base64 for the bridge, and which it has on disk."""
+        paths = {"qp": record.qp_path, "ms": record.ms_path}
+        kinds = [k for k, p in paths.items() if p and Path(p).is_file()]
+        if kind not in kinds:
+            return PdfResult(
+                success=False, kinds=kinds, error=f"找不到 {kind.upper()} 文件",
             )
-        if pdf_path.suffix.lower() != ".pdf":
-            return OpenResult(
-                success=False,
-                path=str(pdf_path),
-                error=f"Expected a .pdf file, got: {pdf_path.suffix!r}",
-            )
-
-        system = platform.system()
         try:
-            if system == "Windows":
-                import os
-                os.startfile(str(pdf_path))  # noqa: S606  # type: ignore[attr-defined,unused-ignore]
-            elif system == "Darwin":
-                subprocess.run(["open", str(pdf_path)], check=True)
-            else:
-                # Linux and other POSIX
-                subprocess.run(["xdg-open", str(pdf_path)], check=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            return OpenResult(
-                success=False,
-                path=str(pdf_path),
-                error=f"Failed to open file: {exc}",
-            )
-
-        return OpenResult(success=True, path=str(pdf_path))
+            data = Path(paths[kind]).read_bytes()
+        except OSError as exc:
+            return PdfResult(success=False, kinds=kinds, error=f"读取失败：{exc}")
+        return PdfResult(
+            success=True, data=base64.b64encode(data).decode(), kinds=kinds,
+        )

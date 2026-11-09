@@ -18,6 +18,7 @@ import type {
   MistakeRecord,
   PaperRecord,
   PaperType,
+  PdfKind,
   QueryResult,
   QuerySeason,
   DownloadSource,
@@ -46,7 +47,9 @@ export interface PyApi {
     paper_id: string, score_raw: number, score_total: number,
   ): Promise<SimpleResult>
   delete_paper(paper_id: string, delete_local_files?: boolean): Promise<SimpleResult>
-  open_pdf(path: string): Promise<SimpleResult>
+  paper_pdf(
+    paper_id: string, kind: PdfKind,
+  ): Promise<SimpleResult & { data: string; kinds: PdfKind[] }>
   paper_questions(
     paper_id: string,
   ): Promise<SimpleResult & { questions: string[]; has_ms: boolean }>

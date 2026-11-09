@@ -197,7 +197,9 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
     one is one whole grey unit. `frontend/src/lib/papers.test.ts` pins the
     slices summing to the paper count.
 - `frontend/src/ui/` — the shared primitives. `Overlay` is the full-cover panel
-  (portal + clip-path grow from the clicked rect); `PushTrack` the sliding
+  (portal + clip-path grow from the clicked rect); `PdfPreview` the paper reader
+  built on it, one host at the app root, showing the PDF in the webview's own
+  viewer from a blob URL; `PushTrack` the sliding
   N-step track; `StepButton` the accent button that becomes a dot-and-line
   step track while its job runs (解析 and 生成; each caller folds its own job
   events into `Step[]`); `motion.ts` the two springs everything animates on.
@@ -215,7 +217,7 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
 
 ### `modules/` — business logic layer
 - **`downloader.py`** — `PaperDownloader` streams PDFs from CIEFrank or PapaCambridge, saves to `~/.cie_helper/pdfs/`, appends `PaperRecord` to store. Uses `_DownloadError` (never leaks outside module).
-- **`manager.py`** — `PaperManager` handles score submission (marks Completed, timestamps), record deletion (optionally removes local PDFs), and opening PDFs in system viewer (cross-platform).
+- **`manager.py`** — `PaperManager` handles score submission (marks Completed, timestamps), record deletion (optionally removes local PDFs), and reading a paper's PDFs for the in-app preview.
 - **`mailer.py`** — `GoodNotesMailer` sends QP PDF to GoodNotes import email via SMTP SSL, updates `sent_to_gn` flag on success. Uses `_MailError` (never leaks outside module).
 - **`updater.py`** — in-app update check / download / silent install against GitHub releases.
 - **`question_pdf.py`** — crops whole questions out of their QPs (vector) and composes them into one PDF, each main question starting a new page. `crops_for_paper(trim=True)` cuts the answer space out, for a model reading the question (practice classification); an export passes `trim=False` and keeps it, since the paper is worked on. Every exported page carries a footer marker in 6pt grey Courier inside the bottom margin — `CIEH <export_id> <paper_id> <Q> i/n` — which is how pages handed back are matched to questions. Takes anything with `paper_id`/`question_id`: the 错题本 export hands it mistake rows, 专项练习 its picks.
@@ -230,7 +232,7 @@ config has no in-app editor — `data/syllabus_config.json` is edited by hand.
   - **`workflow.py` and `sheet.py` must never import `app_web`.** That constraint is what makes the grading pipeline testable (`tests/test_marking_workflow.py`); keep user-facing strings on the UI side of the boundary.
 
 ### Data patterns
-- **Result objects** — all operations return typed result objects (`DownloadResult`, `MailResult`, `UpdateResult`, `DeleteResult`, `OpenResult`) with `success: bool`, `error: str | None`, and operation-specific fields. Exceptions are caught and wrapped — never propagate to the UI layer.
+- **Result objects** — all operations return typed result objects (`DownloadResult`, `MailResult`, `UpdateResult`, `DeleteResult`, `PdfResult`) with `success: bool`, `error: str | None`, and operation-specific fields. Exceptions are caught and wrapped — never propagate to the UI layer.
 - **Validation at boundaries** — `DownloadRequest`, `MailRequest`, `ScoreUpdate`, `DeleteRequest` are Pydantic models that validate user input at the entry point.
 - **CSV as database** — file lives at `~/.cie_helper/data.csv`; no SQL database.
 - **`.env`** — SMTP credentials stored at repo root, loaded by `MailConfig`/pydantic-settings.

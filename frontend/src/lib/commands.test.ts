@@ -107,9 +107,9 @@ describe('matchPapers — 只在 file 模式里', () => {
     }
   })
 
-  test('落点是那份卷子的 PDF 路径', () => {
+  test('落点是那份卷子的预览', () => {
     const [hit] = matchPapers(parseQuery('file 9709'), papers)
-    assert.equal(hit.intent.open, '/pdf/a.pdf')
+    assert.equal(hit.intent.open, '9709_s25_12')
     assert.equal(hit.intent.tab, undefined)
   })
 

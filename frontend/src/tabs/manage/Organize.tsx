@@ -12,6 +12,7 @@ import { Button } from '../../ui/Button'
 import { PaperGlyph } from '../../ui/Glyph'
 import { SETTLE_FAST } from '../../ui/motion'
 import { Overlay } from '../../ui/Overlay'
+import { openPreview } from '../../ui/PdfPreview'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { TextInput } from '../../ui/TextInput'
 import { notify } from '../../ui/Toast'
@@ -121,20 +122,23 @@ export function Organize({
   }
 
   const actionsOf = (p: PaperRecord): Action[] => {
-    const acts: Action[] = [
-      {
+    const acts: Action[] = []
+    if (p.qp_path) {
+      acts.push({
         key: 'qp',
         label: '打开 QP',
         Icon: FileText,
-        run: () => call((a) => a.open_pdf(p.qp_path), '已在系统阅读器中打开 QP'),
-      },
-      {
+        run: (from) => openPreview(p.paper_id, 'qp', from),
+      })
+    }
+    if (p.ms_path) {
+      acts.push({
         key: 'ms',
         label: '打开 MS',
         Icon: FileText,
-        run: () => call((a) => a.open_pdf(p.ms_path), '已在系统阅读器中打开 MS'),
-      },
-    ]
+        run: (from) => openPreview(p.paper_id, 'ms', from),
+      })
+    }
     if (p.qp_path) {
       acts.push({
         key: 'view',
