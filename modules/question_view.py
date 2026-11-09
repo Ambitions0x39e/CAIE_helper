@@ -38,8 +38,9 @@ _log = logging.getLogger("cie_helper.question_view")
 
 #: Raise when the located slices change, so what is cached is worked out again.
 _CACHE_VERSION = 1
-#: Readable on a 4K screen and small enough to cross the bridge one at a time.
-_RENDER_DPI = 150
+#: Stays sharp at the viewer's top zoom and still crosses the bridge one question
+#: at a time: the heaviest question measured is about 2 MB and a second to render.
+_RENDER_DPI = 300
 #: How far in from a page's leftmost text to look for the "Question" header.
 _HEADER_ZONE = 60.0
 #: Past the header word, how far a label may start. The column's width varies by

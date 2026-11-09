@@ -154,7 +154,7 @@ export type EmptyMode = 'plain' | 'frequent'
 const MODE_KEY = 'cie.palette.emptyMode'
 const COUNTS_KEY = 'cie.palette.counts'
 
-function read<T>(key: string, fallback: T): T {
+export function read<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key)
     return raw === null ? fallback : (JSON.parse(raw) as T)
@@ -163,7 +163,7 @@ function read<T>(key: string, fallback: T): T {
   }
 }
 
-function write(key: string, value: unknown): void {
+export function write(key: string, value: unknown): void {
   try {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {
