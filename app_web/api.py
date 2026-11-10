@@ -222,8 +222,12 @@ class Api:
         #: The paper 仅预览 has open: its PDFs and question map live in a temp
         #: directory that goes when the preview closes. The lock makes a close
         #: that lands mid-download wait for it, then remove what it fetched.
+        #: The token names the panel that opened it: each bridge call runs on its
+        #: own thread, so a closing panel's close can land after the next panel's
+        #: open, and must not take that one down with it.
         self._preview: DownloadResult | None = None
         self._preview_dir: Path | None = None
+        self._preview_token: str | None = None
         self._preview_lock = threading.Lock()
 
     # -- health --------------------------------------------------------------
@@ -283,7 +287,9 @@ class Api:
 
     # -- download: preview ---------------------------------------------------
 
-    def preview_paper(self, paper_id: str, source: str = "CIEFrank") -> Payload:
+    def preview_paper(
+        self, paper_id: str, token: str, source: str = "CIEFrank",
+    ) -> Payload:
         """Fetch a paper into a temp directory and list its questions."""
         try:
             request = DownloadRequest(paper_id=paper_id, source=source)  # type: ignore[arg-type]
@@ -291,6 +297,7 @@ class Api:
             return _invalid(exc)
         with self._preview_lock:
             self._drop_preview()
+            self._preview_token = token
             self._preview_dir = Path(tempfile.mkdtemp(prefix="cie_preview_"))
             result = self._downloader.preview(request, self._preview_dir)
             if not result.success or result.qp_path is None:
@@ -311,16 +318,18 @@ class Api:
                 preview.qp_path, preview.ms_path or "", question_id, folder,
             ).model_dump(mode="json")
 
-    def close_preview(self) -> None:
-        """Remove the open preview's files."""
+    def close_preview(self, token: str) -> None:
+        """Remove the preview *token* opened, if it is still the open one."""
         with self._preview_lock:
-            self._drop_preview()
+            if token == self._preview_token:
+                self._drop_preview()
 
     def _drop_preview(self) -> None:
         if self._preview_dir is not None:
             shutil.rmtree(self._preview_dir, ignore_errors=True)
         self._preview = None
         self._preview_dir = None
+        self._preview_token = None
 
     # -- manage: papers ------------------------------------------------------
 

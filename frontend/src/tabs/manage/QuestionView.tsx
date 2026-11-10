@@ -22,7 +22,10 @@ const SPLIT_KEY = 'cie.questionView.split'
 const DEFAULT_SPLIT = 7 / 17
 const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f))
 
-const TOOL_CLASS = `flex h-7 min-w-7 items-center justify-center rounded-ui text-muted
+/** Names each preview a panel opens, so its close can only ever close that one. */
+let previewCount = 0
+
+const TOOL_CLASS =`flex h-7 min-w-7 items-center justify-center rounded-ui text-muted
   transition-colors [transition-duration:var(--dur-fast)] hover:bg-raised hover:text-ink
   disabled:pointer-events-none disabled:opacity-40`
 
@@ -220,9 +223,12 @@ export function QuestionView({
 
   useEffect(() => {
     let live = true
+    const token = String(++previewCount)
     void (async () => {
       const a = await api()
-      const r = await (preview ? a.preview_paper(paperId, preview) : a.paper_questions(paperId))
+      const r = await (preview
+        ? a.preview_paper(paperId, token, preview)
+        : a.paper_questions(paperId))
       if (!live) return
       if (!r.success) {
         notify('bad', r.error ?? '打开失败')
@@ -235,7 +241,7 @@ export function QuestionView({
     })()
     return () => {
       live = false
-      if (preview) void api().then((a) => a.close_preview())
+      if (preview) void api().then((a) => a.close_preview(token))
     }
     // The paper is fixed for this panel's life; onClose is a new closure on every
     // render and must not re-run the crop.

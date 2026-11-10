@@ -308,10 +308,20 @@ class PaperDownloader:
     # ------------------------------------------------------------------
 
     def _twin_on_disk(self, paper_id: str, qp_path: Path) -> str | None:
-        """The other downloaded variant of this component with the same pages."""
+        """The other variant of this component in the library with the same pages.
+
+        Only a registered variant counts: deleting a paper keeps its PDFs by
+        default, and a file the library no longer lists must not block its twin.
+        """
         # "9618_s25_qp_32" → every "9618_s25_qp_3?" beside it.
-        for other in sorted(self._pdfs_dir.glob(f"{paper_id[:-1]}?.pdf")):
-            if other == qp_path:
+        siblings = sorted(
+            p for p in self._pdfs_dir.glob(f"{paper_id[:-1]}?.pdf") if p != qp_path
+        )
+        if not siblings:
+            return None
+        registered = {record.paper_id for record in self._store.load_all()}
+        for other in siblings:
+            if other.stem not in registered:
                 continue
             try:
                 if same_pages(other, qp_path):

@@ -92,8 +92,14 @@ class _Response:
 
 
 class _Store:
-    def __init__(self) -> None:
+    def __init__(self, registered: list[str]) -> None:
+        self.registered = [
+            PaperRecord(paper_id=paper_id, status="Pending") for paper_id in registered
+        ]
         self.appended: list[PaperRecord] = []
+
+    def load_all(self) -> list[PaperRecord]:
+        return self.registered + self.appended
 
     def append(self, record: PaperRecord) -> None:
         self.appended.append(record)
@@ -101,6 +107,7 @@ class _Store:
 
 def _download(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, qp: bytes,
+    registered: tuple[str, ...] = ("9618_s25_qp_31",),
 ) -> tuple[Any, _Store, list[str]]:
     (tmp_path / "9618_s25_qp_31.pdf").write_bytes(_paper(_QUESTIONS, 1))
     urls: list[str] = []
@@ -110,7 +117,7 @@ def _download(
         return _Response(qp if "_qp_" in url else b"%PDF-1.7\nms\n")
 
     monkeypatch.setattr(requests, "get", get)
-    store = _Store()
+    store = _Store(list(registered))
     downloader = PaperDownloader(store=store)  # type: ignore[arg-type]
     downloader._pdfs_dir = tmp_path
     result = downloader.download(DownloadRequest(paper_id="9618_s25_qp_32"))
@@ -136,4 +143,16 @@ def test_a_different_variant_downloads_as_usual(
 
     assert result.success
     assert result.duplicate_of is None
+    assert [r.paper_id for r in store.appended] == ["9618_s25_qp_32"]
+
+
+def test_a_copy_of_a_file_the_library_no_longer_lists_is_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # 31 was deleted from the library with its PDFs left on disk.
+    result, store, _ = _download(
+        monkeypatch, tmp_path, _paper(_QUESTIONS, 2), registered=(),
+    )
+
+    assert result.success
     assert [r.paper_id for r in store.appended] == ["9618_s25_qp_32"]

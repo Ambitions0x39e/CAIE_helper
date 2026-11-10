@@ -594,3 +594,35 @@ def test_paper_pdf_refuses_what_it_has_no_file_for(
 
     assert result["success"] is False
     assert result["error"]
+
+
+# -- download: preview ---------------------------------------------------------
+
+
+def test_a_closing_panel_does_not_close_the_preview_opened_after_it(
+    api: Api, monkeypatch, tmp_path,
+) -> None:
+    """Each bridge call runs on its own thread, so the old panel's close can
+    arrive after the new panel's open."""
+    from modules.downloader import DownloadResult
+    from modules.question_view import QuestionList
+
+    def preview(request, folder: Path) -> DownloadResult:
+        qp = folder / f"{request.paper_id}.pdf"
+        qp.write_bytes(b"%PDF")
+        return DownloadResult(success=True, paper_id=request.paper_id, qp_path=str(qp))
+
+    monkeypatch.setattr(api._downloader, "preview", preview)
+    monkeypatch.setattr(
+        "app_web.api.list_questions",
+        lambda *_: QuestionList(success=True, questions=["Q1"]),
+    )
+
+    api.preview_paper("9702_s23_qp_42", "1")
+    api.preview_paper("9702_s23_qp_42", "2")
+    api.close_preview("1")
+    assert api._preview is not None and api._preview_dir.is_dir()
+
+    folder = api._preview_dir
+    api.close_preview("2")
+    assert api._preview is None and not folder.exists()
