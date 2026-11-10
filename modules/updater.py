@@ -1,8 +1,16 @@
 """In-app updater — check GitHub Releases, download the installer, run it.
 
-"设置 → 关于 → 更新" does the whole round trip: ask the API what the latest
+"设置 → 关于 → 更新" does the whole round trip: ask GitHub what the latest
 release is, compare it against our own version, and (once the user confirms)
 fetch the installer for *this* platform and hand it to the OS.
+
+The release is read off github.com, never api.github.com. Unauthenticated API
+calls are capped at 60 an hour per IP, and behind a proxy that IP is shared:
+the check came back ``HTTP 403 rate limit exceeded`` while the proxy's other
+users had spent the hour's quota. ``/releases/latest`` redirects to the tag,
+the installers sit at fixed names under it (the build workflow names them
+after the version it checks the tag against), and ``releases.atom`` carries
+the notes.
 
 Same shape as ``modules.downloader``: every public method returns a Pydantic
 result object with ``success`` / ``error``, and the internal ``_UpdateError``
@@ -22,6 +30,8 @@ a working install rather than merely failing to update it:
 from __future__ import annotations
 
 import contextlib
+import html
+import re
 import shlex
 import shutil
 import subprocess
@@ -31,6 +41,7 @@ import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
+from xml.etree import ElementTree
 
 import requests
 from pydantic import BaseModel
@@ -38,17 +49,13 @@ from pydantic import BaseModel
 from core.settings import app_settings
 
 _REPO: Final[str] = "Ambitions0x39e/CAIE_helper"
-_LATEST_RELEASE_API: Final[str] = (
-    f"https://api.github.com/repos/{_REPO}/releases/latest"
-)
 #: Public — the UI opens this in a browser on platforms we cannot install for.
+#: It is also what the check reads: it redirects to the latest tag's page.
 RELEASES_PAGE_URL: Final[str] = (
     f"https://github.com/{_REPO}/releases/latest"
 )
-
-_API_HEADERS: Final[dict[str, str]] = {
-    "Accept": "application/vnd.github+json",
-}
+_RELEASES_FEED: Final[str] = f"https://github.com/{_REPO}/releases.atom"
+_ATOM: Final[str] = "{http://www.w3.org/2005/Atom}"
 
 # Same value as downloader._REQUEST_TIMEOUT: 10s to connect, 30s between
 # chunks. The connect budget is what the brief asks for; the read budget has
@@ -447,29 +454,42 @@ class AppUpdater:
         return script
 
     def _fetch_latest_release(self) -> dict[str, Any]:
-        """GET the latest-release JSON. Raises _UpdateError on any failure."""
+        """The latest release's tag, notes and installers, in the shape the
+        releases API names them. Raises _UpdateError when the tag cannot be read.
+        """
         try:
             response = requests.get(
-                _LATEST_RELEASE_API,
+                RELEASES_PAGE_URL,
                 timeout=_REQUEST_TIMEOUT,
-                headers=_API_HEADERS,
+                allow_redirects=False,
             )
         except requests.RequestException as exc:
             raise _UpdateError(f"Network error contacting GitHub: {exc}") from exc
 
-        if not response.ok:
+        if not response.is_redirect:
             raise _UpdateError(
-                f"HTTP {response.status_code} from the GitHub releases API"
+                f"HTTP {response.status_code} from the GitHub releases page"
             )
+        # A repo with no release redirects to /releases, which names no tag;
+        # check() reports the empty tag.
+        location = response.headers.get("Location", "")
+        _, found, tag = location.rstrip("/").rpartition("/releases/tag/")
+        tag = tag if found else ""
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise _UpdateError(f"Malformed JSON from GitHub: {exc}") from exc
-
-        if not isinstance(payload, dict):
-            raise _UpdateError("Unexpected release payload from GitHub")
-        return payload
+        version = tag.strip().lstrip("vV")
+        assets = [
+            {
+                "name": name,
+                "browser_download_url": (
+                    f"https://github.com/{_REPO}/releases/download/{tag}/{name}"
+                ),
+            }
+            for name in (
+                f"cie-helper-{version}-setup{suffix}"
+                for suffix in _ASSET_SUFFIX.values()
+            )
+        ]
+        return {"tag_name": tag, "body": _fetch_notes(tag), "assets": assets}
 
     def _fetch_installer(
         self, url: str, on_progress: ProgressCallback | None = None,
@@ -732,6 +752,41 @@ def _guard_callback(
             on_progress(progress)
 
     return report
+
+
+def _fetch_notes(tag: str) -> str:
+    """The release notes for *tag*, from the releases feed. "" when they cannot
+    be had: the dialog shows nothing in their place, and the update still works.
+    """
+    try:
+        response = requests.get(_RELEASES_FEED, timeout=_REQUEST_TIMEOUT)
+        if not response.ok:
+            return ""
+        feed = ElementTree.fromstring(response.content)
+    except (requests.RequestException, ElementTree.ParseError):
+        return ""
+    for entry in feed.iter(f"{_ATOM}entry"):
+        if (entry.findtext(f"{_ATOM}id") or "").endswith(f"/{tag}"):
+            return _notes_text(entry.findtext(f"{_ATOM}content") or "")
+    return ""
+
+
+def _notes_text(rendered: str) -> str:
+    """The feed's rendered HTML back as the Markdown-ish text it was written in.
+
+    The dialog shows the notes as plain text, so only what the notes use —
+    headings and list items — is turned back; any other tag is dropped.
+    """
+    text = re.sub(
+        r"<h([1-6])[^>]*>(.*?)</h\1>",
+        lambda m: f"{'#' * int(m[1])} {m[2]}\n",
+        rendered,
+        flags=re.S,
+    )
+    text = re.sub(r"<li[^>]*>(.*?)</li>", r"* \1", text, flags=re.S)
+    text = re.sub(r"<br\s*/?>", "\n", text)
+    text = html.unescape(re.sub(r"<[^>]+>", "", text))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _pick_asset_url(assets: object, suffix: str) -> str | None:

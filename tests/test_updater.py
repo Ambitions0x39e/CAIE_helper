@@ -1,7 +1,7 @@
 """Tests for modules.updater — the in-app update check / download / install.
 
 Every test fakes the network with monkeypatch: nothing here may touch
-api.github.com, and nothing here may actually spawn an installer.
+github.com, and nothing here may actually spawn an installer.
 
 The version comparison is the dangerous part of this module. Getting it
 backwards raises nothing and logs nothing — it just silently offers
@@ -13,6 +13,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 import sys
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -58,67 +59,86 @@ class _Clock:
 
 
 class _FakeResponse:
-    """Stands in for requests.Response for both the API and the download."""
+    """Stands in for requests.Response: the releases page, the feed, and the
+    installer download."""
 
     def __init__(
         self,
         *,
-        payload: object = None,
         ok: bool = True,
         status_code: int = 200,
         chunks: list[bytes] | None = None,
-        raise_on_json: bool = False,
+        content: bytes = b"",
         headers: dict[str, str] | None = None,
     ) -> None:
-        self._payload = payload
         self.ok = ok
         self.status_code = status_code
         self._chunks = chunks if chunks is not None else [b"installer-bytes"]
-        self._raise_on_json = raise_on_json
+        self.content = content
         # Real responses always have headers; Content-Length is what drives
         # the "downloaded / total" readout and is legitimately absent for
         # chunked responses.
         self.headers = headers if headers is not None else {}
 
-    def json(self) -> object:
-        if self._raise_on_json:
-            raise ValueError("Expecting value: line 1 column 1 (char 0)")
-        return self._payload
+    @property
+    def is_redirect(self) -> bool:
+        return "Location" in self.headers and 300 <= self.status_code < 400
 
     def iter_content(self, chunk_size: int = 1) -> list[bytes]:
         return self._chunks
 
 
-def _release(
-    tag: str = "v9.9.9",
-    *,
-    body: str = "Bug fixes.",
-    assets: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    """A minimal copy of the real GitHub latest-release payload shape.
+_REPO_URL = "https://github.com/Ambitions0x39e/CAIE_helper"
 
-    Field names and the asset naming convention were verified against the
-    live API on 2026-07-28 (which then served v1.0.0 with
-    cie-helper-1.0.0-setup.exe / -setup.dmg).
-    """
-    if assets is None:
-        assets = [
-            {
-                "name": "cie-helper-9.9.9-setup.exe",
-                "browser_download_url": (
-                    "https://github.com/Ambitions0x39e/CAIE_helper/releases"
-                    "/download/v9.9.9/cie-helper-9.9.9-setup.exe"
-                ),
-            },
-            {
-                "name": "cie-helper-9.9.9-setup.dmg",
-                "browser_download_url": (
-                    "https://github.com/Ambitions0x39e/CAIE_helper/releases"
-                    "/download/v9.9.9/cie-helper-9.9.9-setup.dmg"
-                ),
-            },
-        ]
-    return {"tag_name": tag, "body": body, "assets": assets}
+
+def _feed(tag: str, rendered: str) -> bytes:
+    """``releases.atom`` as GitHub serves it: the notes as escaped HTML. Shape
+    checked against the live feed on 2026-11-10, which then led with v2.4.0."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom">'
+        "<entry>"
+        "<id>tag:github.com,2008:Repository/1/v0.0.1</id>"
+        "<content type=\"html\">&lt;p&gt;Someone else's notes.&lt;/p&gt;</content>"
+        "</entry>"
+        "<entry>"
+        f"<id>tag:github.com,2008:Repository/1/{tag}</id>"
+        f'<content type="html">{escape(rendered)}</content>'
+        "</entry>"
+        "</feed>"
+    ).encode()
+
+
+def _serve_release(
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str,
+    *,
+    notes: str = "<p>Bug fixes.</p>",
+    page: _FakeResponse | None = None,
+    feed: _FakeResponse | None = None,
+) -> list[dict[str, Any]]:
+    """github.com with *tag* as its latest release: ``/releases/latest``
+    redirects to the tag, ``releases.atom`` carries its notes. Returns a log of
+    the calls made."""
+    if page is None:
+        page = _FakeResponse(
+            status_code=302,
+            headers={"Location": f"{_REPO_URL}/releases/tag/{tag}"},
+        )
+    if feed is None:
+        feed = _FakeResponse(content=_feed(tag, notes))
+    calls: list[dict[str, Any]] = []
+
+    def _fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+        calls.append({"url": url, **kwargs})
+        if url == f"{_REPO_URL}/releases/latest":
+            return page
+        if url == f"{_REPO_URL}/releases.atom":
+            return feed
+        raise AssertionError(f"unexpected request: {url}")
+
+    monkeypatch.setattr(requests, "get", _fake_get)
+    return calls
 
 
 @pytest.fixture
@@ -213,7 +233,7 @@ def test_current_app_version_is_readable_and_parseable() -> None:
 def test_check_reports_update_when_remote_version_is_newer(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v9.9.9")))
+    _serve_release(monkeypatch, "v9.9.9")
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -230,7 +250,7 @@ def test_check_reports_update_when_remote_version_is_newer(
 def test_check_reports_no_update_when_versions_are_equal(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v1.1.2")))
+    _serve_release(monkeypatch, "v1.1.2")
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -245,7 +265,7 @@ def test_check_reports_no_update_when_remote_version_is_older(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
     """Never offer a downgrade — this is the live situation today (v1.0.0)."""
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v1.0.0")))
+    _serve_release(monkeypatch, "v1.0.0")
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -259,7 +279,7 @@ def test_check_reports_no_update_when_remote_version_is_older(
 def test_check_treats_patch_bump_as_newer(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v1.1.3")))
+    _serve_release(monkeypatch, "v1.1.3")
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -270,7 +290,7 @@ def test_check_treats_minor_bump_below_current_minor_as_older(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
     """1.1.2 local vs 1.0.9 upstream — patch number must not win alone."""
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v1.0.9")))
+    _serve_release(monkeypatch, "v1.0.9")
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -281,7 +301,7 @@ def test_check_treats_minor_bump_below_current_minor_as_older(
 def test_check_fails_on_unparseable_remote_version_tag(
     monkeypatch: pytest.MonkeyPatch, on_windows: None, tag: str,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload=_release(tag)))
+    _serve_release(monkeypatch, tag)
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -291,10 +311,16 @@ def test_check_fails_on_unparseable_remote_version_tag(
     assert "tag" in result.error.lower()
 
 
-def test_check_fails_when_tag_name_is_missing_entirely(
+def test_check_fails_when_there_is_no_release_yet(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload={"body": "x", "assets": []}))
+    """A repo with no release redirects /releases/latest to /releases."""
+    _serve_release(
+        monkeypatch, "v9.9.9",
+        page=_FakeResponse(
+            status_code=302, headers={"Location": f"{_REPO_URL}/releases"},
+        ),
+    )
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -321,19 +347,21 @@ def test_check_fails_on_unparseable_local_version(
 def test_check_picks_the_exe_asset_on_windows(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v9.9.9")))
+    """The name the build workflow gives the installer, under the tag."""
+    _serve_release(monkeypatch, "v9.9.9")
 
     result = AppUpdater(current_version="1.1.2").check()
 
-    assert result.download_url is not None
-    assert result.download_url.endswith(".exe")
+    assert result.download_url == (
+        f"{_REPO_URL}/releases/download/v9.9.9/cie-helper-9.9.9-setup.exe"
+    )
 
 
 def test_check_picks_the_dmg_asset_on_macos(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v9.9.9")))
+    _serve_release(monkeypatch, "v9.9.9")
 
     result = AppUpdater(current_version="1.1.2").check()
 
@@ -352,46 +380,6 @@ def test_check_reports_platform_not_supported_without_touching_network(
 
     assert result.success is False
     assert result.update_available is False
-    assert result.error == "platform not supported"
-
-
-def test_check_reports_platform_not_supported_when_no_asset_matches(
-    monkeypatch: pytest.MonkeyPatch, on_windows: None,
-) -> None:
-    """A release that only shipped a .dmg must not hand Windows the .dmg."""
-    _patch_get(
-        monkeypatch,
-        _FakeResponse(
-            payload=_release(
-                "v9.9.9",
-                assets=[
-                    {
-                        "name": "cie-helper-9.9.9-setup.dmg",
-                        "browser_download_url": "https://example.test/a.dmg",
-                    },
-                ],
-            ),
-        ),
-    )
-
-    result = AppUpdater(current_version="1.1.2").check()
-
-    assert result.success is False
-    assert result.update_available is False
-    assert result.error == "platform not supported"
-    assert result.download_url is None
-
-
-def test_check_reports_platform_not_supported_when_assets_list_is_empty(
-    monkeypatch: pytest.MonkeyPatch, on_windows: None,
-) -> None:
-    _patch_get(
-        monkeypatch, _FakeResponse(payload=_release("v9.9.9", assets=[])),
-    )
-
-    result = AppUpdater(current_version="1.1.2").check()
-
-    assert result.success is False
     assert result.error == "platform not supported"
 
 
@@ -451,49 +439,90 @@ def test_check_returns_failure_on_connection_error(
 def test_check_returns_failure_on_http_error_status(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    _patch_get(
-        monkeypatch, _FakeResponse(payload=None, ok=False, status_code=403),
+    _serve_release(
+        monkeypatch, "v9.9.9", page=_FakeResponse(ok=False, status_code=503),
     )
 
     result = AppUpdater(current_version="1.1.2").check()
 
     assert result.success is False
     assert result.error is not None
-    assert "403" in result.error
+    assert "503" in result.error
 
 
-def test_check_returns_failure_on_malformed_json(
+def test_check_never_calls_the_rate_limited_api(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(raise_on_json=True))
+    """api.github.com allows 60 unauthenticated calls an hour per IP, shared by
+    everyone behind the same proxy."""
+    calls = _serve_release(monkeypatch, "v9.9.9")
+
+    AppUpdater(current_version="1.1.2").check()
+
+    assert calls
+    assert all("api.github.com" not in call["url"] for call in calls)
+
+
+def test_check_reads_the_redirect_rather_than_following_it(
+    monkeypatch: pytest.MonkeyPatch, on_windows: None,
+) -> None:
+    calls = _serve_release(monkeypatch, "v9.9.9")
+
+    AppUpdater(current_version="1.1.2").check()
+
+    assert calls[0]["url"].endswith("/releases/latest")
+    assert calls[0]["allow_redirects"] is False
+
+
+def test_check_turns_the_feed_html_back_into_the_notes_as_written(
+    monkeypatch: pytest.MonkeyPatch, on_windows: None,
+) -> None:
+    _serve_release(
+        monkeypatch, "v9.9.9",
+        notes=(
+            "<h3>新增</h3>\n<ul>\n<li>A &amp; B</li>\n<li>C</li>\n</ul>\n"
+            "<h3>修复</h3>\n<ul>\n<li>D</li>\n</ul>"
+        ),
+    )
 
     result = AppUpdater(current_version="1.1.2").check()
 
-    assert result.success is False
-    assert result.error is not None
+    assert result.release_notes == "### 新增\n\n* A & B\n* C\n\n### 修复\n\n* D"
 
 
-def test_check_returns_failure_when_payload_is_not_an_object(
-    monkeypatch: pytest.MonkeyPatch, on_windows: None,
+@pytest.mark.parametrize(
+    "feed",
+    [
+        _FakeResponse(ok=False, status_code=500),
+        _FakeResponse(content=b"<html>not a feed"),
+        _FakeResponse(content=_feed("v1.0.0", "<p>An older release.</p>")),
+    ],
+    ids=["http-error", "not-xml", "tag-absent"],
+)
+def test_check_still_offers_the_update_when_the_notes_cannot_be_had(
+    monkeypatch: pytest.MonkeyPatch, on_windows: None, feed: _FakeResponse,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload=["not", "a", "dict"]))
+    _serve_release(monkeypatch, "v9.9.9", feed=feed)
 
     result = AppUpdater(current_version="1.1.2").check()
 
-    assert result.success is False
+    assert result.success is True
+    assert result.update_available is True
+    assert result.release_notes == ""
 
 
 def test_check_uses_a_ten_second_connect_timeout(
     monkeypatch: pytest.MonkeyPatch, on_windows: None,
 ) -> None:
-    calls = _patch_get(monkeypatch, _FakeResponse(payload=_release("v9.9.9")))
+    calls = _serve_release(monkeypatch, "v9.9.9")
 
     AppUpdater(current_version="1.1.2").check()
 
-    assert len(calls) == 1
-    timeout = calls[0]["timeout"]
-    connect = timeout[0] if isinstance(timeout, tuple) else timeout
-    assert connect == 10
+    assert calls
+    for call in calls:
+        timeout = call["timeout"]
+        connect = timeout[0] if isinstance(timeout, tuple) else timeout
+        assert connect == 10
 
 
 # ---------------------------------------------------------------------------
@@ -1046,7 +1075,7 @@ def test_check_download_install_round_trip_never_raises(
     on_windows: None,
     updates_dir: Path,
 ) -> None:
-    _patch_get(monkeypatch, _FakeResponse(payload=_release("v9.9.9")))
+    _serve_release(monkeypatch, "v9.9.9")
     popen_calls = _spy_popen(monkeypatch)
     up = AppUpdater(current_version="1.1.2")
 
