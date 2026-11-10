@@ -9,7 +9,7 @@ export type TabId = 'download' | 'manage' | 'practice' | 'mark' | 'settings'
  * F1.4 holds by construction rather than by review.
  *
  * `open` is the one destination that is not a page — F1.3 asks that a paper
- * found in the palette opens its PDF — and it is still just a path.
+ * found in the palette opens its PDF — and it is still just an id.
  */
 export interface Intent {
   tab?: TabId
@@ -20,7 +20,7 @@ export interface Intent {
   /** Whatever the destination makes of it — a paper id to prefill, a topic to
    * filter by. A tab that has no use for one ignores it. */
   param?: string
-  /** A local PDF to hand to the system viewer. */
+  /** A paper id to show in the PDF preview. */
   open?: string
 }
 
@@ -128,7 +128,7 @@ export function matchPapers(q: Query, papers: readonly PaperRecord[]): Command[]
       group: '卷子',
       label: p.paper_id,
       keys: [],
-      intent: { open: p.qp_path },
+      intent: { open: p.paper_id },
     }))
 }
 

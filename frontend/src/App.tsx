@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, LayoutGrid, Pencil, Settings, Target } from 'lucide-react'
-import { BRIDGE_ABSENT, api, bridge } from './lib/bridge'
+import { BRIDGE_ABSENT, bridge } from './lib/bridge'
 import type { Intent } from './lib/commands'
 import { DownloadTab } from './tabs/download'
 import { ManageTab } from './tabs/manage'
@@ -9,8 +9,9 @@ import { PracticeTab } from './tabs/practice'
 import { SettingsTab } from './tabs/settings'
 import { CommandPalette } from './ui/CommandPalette'
 import { OVERLAY_ROOT } from './ui/Overlay'
+import { PdfPreviewHost, closePreview, openPreview } from './ui/PdfPreview'
 import { PushTrack } from './ui/PushTrack'
-import { ToastHost, notify } from './ui/Toast'
+import { ToastHost } from './ui/Toast'
 
 const TABS = [
   { id: 'download', label: '下载', Icon: Download },
@@ -37,17 +38,16 @@ export default function App() {
   const index = TABS.findIndex((t) => t.id === tab)
 
   const go = (id: TabId) => {
+    // The preview covers the content area, so a tab switched under it would
+    // look like the click did nothing.
+    closePreview()
     setDir(TABS.findIndex((t) => t.id === id) > index ? 1 : -1)
     setTab(id)
   }
 
   const run = (next: Intent) => {
     if (next.open !== undefined) {
-      const path = next.open
-      api()
-        .then((a) => a.open_pdf(path))
-        .then((r) => notify(r.success ? 'ok' : 'bad', r.success ? '已在系统阅读器中打开' : (r.error ?? '打开失败')))
-        .catch((err) => notify('bad', String(err instanceof Error ? err.message : err)))
+      openPreview(next.open, 'qp')
       return
     }
     if (next.tab !== undefined) go(next.tab)
@@ -146,6 +146,8 @@ export default function App() {
       </main>
 
       <CommandPalette open={palette} onClose={() => setPalette(false)} onRun={run} />
+
+      <PdfPreviewHost />
 
       {/* One host for the whole app: what just happened is said in the same
           corner whichever tab said it. */}

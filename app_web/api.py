@@ -352,14 +352,18 @@ class Api:
             return _invalid(exc)
         return self._manager.delete(request).model_dump(mode="json")
 
-    def open_pdf(self, path: str) -> Payload:
-        """Hand a stored PDF to the OS viewer."""
-        return self._manager.open_pdf(path).model_dump(mode="json")
-
     def _paper(self, paper_id: str) -> PaperRecord | None:
         return next(
             (r for r in self._store.load_all() if r.paper_id == paper_id), None,
         )
+
+    def paper_pdf(self, paper_id: str, kind: str) -> Payload:
+        """A paper's QP or MS for the preview. By id, so the page can only ever
+        read a file the store already points at."""
+        record = self._paper(paper_id)
+        if record is None:
+            return {"success": False, "error": f"找不到 {paper_id}"}
+        return self._manager.read_pdf(record, kind).model_dump(mode="json")
 
     def paper_questions(self, paper_id: str) -> Payload:
         """The main questions a paper can be looked at by."""

@@ -13,8 +13,10 @@ adapter itself owns:
 """
 from __future__ import annotations
 
+import base64
 import datetime
 import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -538,3 +540,57 @@ def test_a_record_id_that_is_not_one_is_refused(api: Api) -> None:
     """The id comes from the page; it must not reach outside exports/."""
     out = api.save_export_blank("../../data")
     assert out["success"] is False
+
+
+# -- paper_pdf ---------------------------------------------------------------
+
+
+@pytest.fixture
+def stored_paper(api: Api, tmp_path):
+    """A paper with both PDFs on disk, in a store under tmp_path."""
+    from core.models import PaperRecord
+    from core.storage import CSVStore
+    from modules.manager import PaperManager
+
+    qp = tmp_path / "qp.pdf"
+    ms = tmp_path / "ms.pdf"
+    qp.write_bytes(b"%PDF-qp")
+    ms.write_bytes(b"%PDF-ms")
+    api._store = CSVStore(csv_path=tmp_path / "data.csv")
+    api._manager = PaperManager(api._store)
+    record = PaperRecord(
+        paper_id="9709_s24_qp_12", status="Pending", qp_path=str(qp), ms_path=str(ms),
+    )
+    api._store.save_all([record])
+    return record
+
+
+def test_paper_pdf_returns_the_file_as_base64(api: Api, stored_paper) -> None:
+    result = api.paper_pdf(stored_paper.paper_id, "ms")
+
+    assert result["success"] is True
+    assert base64.b64decode(result["data"]) == b"%PDF-ms"
+    assert result["kinds"] == ["qp", "ms"]
+    json.dumps(result)
+
+
+def test_paper_pdf_lists_only_the_files_on_disk(api: Api, stored_paper) -> None:
+    Path(stored_paper.ms_path).unlink()
+
+    assert api.paper_pdf(stored_paper.paper_id, "qp")["kinds"] == ["qp"]
+    missing = api.paper_pdf(stored_paper.paper_id, "ms")
+    assert missing["success"] is False
+    assert missing["error"]
+
+
+@pytest.mark.parametrize(
+    ("paper_id", "kind"),
+    [("nope", "qp"), ("9709_s24_qp_12", "answers"), ("9709_s24_qp_12", "../../etc")],
+)
+def test_paper_pdf_refuses_what_it_has_no_file_for(
+    api: Api, stored_paper, paper_id: str, kind: str,
+) -> None:
+    result = api.paper_pdf(paper_id, kind)
+
+    assert result["success"] is False
+    assert result["error"]
