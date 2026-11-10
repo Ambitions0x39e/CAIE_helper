@@ -50,6 +50,13 @@ export interface PyApi {
   paper_questions(
     paper_id: string,
   ): Promise<SimpleResult & { questions: string[]; has_ms: boolean }>
+  preview_paper(
+    paper_id: string, source?: DownloadSource,
+  ): Promise<SimpleResult & { questions: string[]; has_ms: boolean }>
+  preview_question_images(
+    question_id: string,
+  ): Promise<SimpleResult & { question: string[]; mark_scheme: string[] }>
+  close_preview(): Promise<void>
   paper_question_images(
     paper_id: string, question_id: string,
   ): Promise<SimpleResult & { question: string[]; mark_scheme: string[] }>

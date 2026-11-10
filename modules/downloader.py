@@ -270,6 +270,39 @@ class PaperDownloader:
             success=True, paper_id=request.paper_id, ms_path=str(ms_path)
         )
 
+    def preview(self, request: DownloadRequest, dest_dir: Path) -> DownloadResult:
+        """Fetch a paper's QP and MS into *dest_dir*, registering nothing.
+
+        A missing MS still previews: the questions are shown on their own.
+        """
+        if not request.ms_id:
+            return DownloadResult(
+                success=False, paper_id=request.paper_id,
+                error=f"{request.paper_id} 不是 QP 试卷",
+            )
+        try:
+            qp_path = self._fetch_pdf(request.qp_url, request.paper_id, dest_dir)
+        except _DownloadError as exc:
+            return DownloadResult(
+                success=False, paper_id=request.paper_id, error=str(exc),
+            )
+        try:
+            ms_path: Path | None = self._fetch_pdf(
+                request.ms_url, request.ms_id, dest_dir,
+            )
+        except _DownloadError as exc:
+            if not exc.missing:
+                return DownloadResult(
+                    success=False, paper_id=request.paper_id, error=str(exc),
+                )
+            ms_path = None
+        return DownloadResult(
+            success=True,
+            paper_id=request.paper_id,
+            qp_path=str(qp_path),
+            ms_path=str(ms_path) if ms_path else None,
+        )
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -288,9 +321,11 @@ class PaperDownloader:
                 continue
         return None
 
-    def _fetch_pdf(self, url: str, filename_stem: str) -> Path:
+    def _fetch_pdf(
+        self, url: str, filename_stem: str, dest_dir: Path | None = None,
+    ) -> Path:
         """
-        Stream-download a single PDF to disk.
+        Stream-download a single PDF to *dest_dir*, the PDF library by default.
         Raises _DownloadError on HTTP errors or non-PDF content.
         """
         try:
@@ -316,7 +351,7 @@ class PaperDownloader:
                 "Expected a PDF file."
             )
 
-        dest: Path = self._pdfs_dir / f"{filename_stem}.pdf"
+        dest: Path = (dest_dir or self._pdfs_dir) / f"{filename_stem}.pdf"
         with dest.open("wb") as fh:
             for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
                 if chunk:

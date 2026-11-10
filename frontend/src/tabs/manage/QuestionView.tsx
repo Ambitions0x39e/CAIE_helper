@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom'
 import { Minus, Plus } from 'lucide-react'
 import { api } from '../../lib/bridge'
 import { read, write } from '../../lib/commands'
-import type { PaperRecord } from '../../lib/types'
+import type { DownloadSource } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
 import { notify } from '../../ui/Toast'
 
@@ -16,6 +16,11 @@ interface Images {
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
+
+const SPLIT_KEY = 'cie.questionView.split'
+/** The QP's share of the two panes: the widths they are cropped to, 7 to 10. */
+const DEFAULT_SPLIT = 7 / 17
+const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f))
 
 const TOOL_CLASS = `flex h-7 min-w-7 items-center justify-center rounded-ui text-muted
   transition-colors [transition-duration:var(--dur-fast)] hover:bg-raised hover:text-ink
@@ -31,7 +36,7 @@ function Slices({ urls, alt, blurred }: { urls: string[]; alt: string; blurred?:
         className={`space-y-2 ${blurred ? '[filter:blur(calc(var(--zoom)*5px))]' : ''}`}
       >
         {urls.map((url, i) => (
-          <img key={i} src={url} alt={alt} className="block w-full" />
+          <img key={i} src={url} alt={alt} draggable={false} className="block w-full" />
         ))}
       </div>
     </div>
@@ -41,11 +46,11 @@ function Slices({ urls, alt, blurred }: { urls: string[]; alt: string; blurred?:
 /** A scrolling pane with its own zoom, as a multiple of the pane's width. */
 function ZoomPane({
   storageKey,
-  className,
+  style,
   children,
 }: {
   storageKey: string
-  className: string
+  style?: CSSProperties
   children: ReactNode
 }) {
   const [zoom, setZoom] = useState(() => clampZoom(Number(read(storageKey, 1)) || 1))
@@ -93,8 +98,13 @@ function ZoomPane({
     return () => el?.removeEventListener('wheel', onWheel)
   }, [zoomTo])
 
+  /** Where a press started, and the scroll then. `moved` once it is a drag. */
+  const pan = useRef<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(
+    null,
+  )
+
   return (
-    <div className={`flex min-w-0 flex-col gap-2 ${className}`}>
+    <div className="flex min-w-0 flex-1 flex-col gap-2" style={style}>
       <div className="flex shrink-0 items-center justify-end gap-1">
         <button
           onClick={() => zoomStep(-1)}
@@ -123,7 +133,42 @@ function ZoomPane({
           <Plus className="size-4" aria-hidden />
         </button>
       </div>
-      <section ref={scroller} className="min-h-0 flex-1 overflow-auto">
+      <section
+        ref={scroller}
+        className="min-h-0 flex-1 cursor-grab overflow-auto active:cursor-grabbing"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          const pane = e.currentTarget
+          pan.current = {
+            x: e.clientX, y: e.clientY, left: pane.scrollLeft, top: pane.scrollTop, moved: false,
+          }
+        }}
+        onPointerMove={(e) => {
+          const start = pan.current
+          if (!start) return
+          if (!(e.buttons & 1)) {
+            pan.current = null
+            return
+          }
+          const dx = e.clientX - start.x
+          const dy = e.clientY - start.y
+          // A few pixels of wobble is still a click: the blurred mark scheme opens on one.
+          if (!start.moved && Math.hypot(dx, dy) < 4) return
+          if (!start.moved) {
+            start.moved = true
+            e.currentTarget.setPointerCapture(e.pointerId)
+          }
+          e.currentTarget.scrollTo({ left: start.left - dx, top: start.top - dy })
+        }}
+        onPointerUp={() => {
+          // Cleared after the click this release fires, which a drag swallows.
+          setTimeout(() => (pan.current = null))
+        }}
+        onPointerCancel={() => (pan.current = null)}
+        onClickCapture={(e) => {
+          if (pan.current?.moved) e.stopPropagation()
+        }}
+      >
         {/* Gone while the next question loads, which is what returns the scroll
             to the start of it. */}
         {children && (
@@ -142,14 +187,19 @@ function ZoomPane({
 /** One question of a paper at a time, its mark scheme blurred until asked for.
  *
  * Both sides scroll and zoom on their own: a question and its mark scheme rarely
- * run the same length, and comparing them means holding one still. The columns
- * are in proportion to the widths they are cropped to, so at one zoom the two
- * print at one size. */
+ * run the same length, and comparing them means holding one still. The line
+ * between them sets their widths, starting from the widths they are cropped to,
+ * where at one zoom the two print at one size.
+ *
+ * With `preview` the paper is fetched from that source into a temp folder rather
+ * than read from the library, and the folder goes when the panel does. */
 export function QuestionView({
-  paper,
+  paperId,
+  preview,
   onClose,
 }: {
-  paper: PaperRecord
+  paperId: string
+  preview?: DownloadSource
   onClose: () => void
 }) {
   const [questions, setQuestions] = useState<string[] | null>(null)
@@ -157,11 +207,22 @@ export function QuestionView({
   const [current, setCurrent] = useState<string | null>(null)
   const [images, setImages] = useState<Images | null>(null)
   const [revealed, setRevealed] = useState(false)
+  const [split, setSplit] = useState(() =>
+    clampSplit(Number(read(SPLIT_KEY, DEFAULT_SPLIT)) || DEFAULT_SPLIT),
+  )
+  const panes = useRef<HTMLDivElement>(null)
+
+  const moveSplit = (f: number) => {
+    const next = clampSplit(f)
+    setSplit(next)
+    write(SPLIT_KEY, next)
+  }
 
   useEffect(() => {
     let live = true
     void (async () => {
-      const r = await (await api()).paper_questions(paper.paper_id)
+      const a = await api()
+      const r = await (preview ? a.preview_paper(paperId, preview) : a.paper_questions(paperId))
       if (!live) return
       if (!r.success) {
         notify('bad', r.error ?? '打开失败')
@@ -174,11 +235,12 @@ export function QuestionView({
     })()
     return () => {
       live = false
+      if (preview) void api().then((a) => a.close_preview())
     }
     // The paper is fixed for this panel's life; onClose is a new closure on every
     // render and must not re-run the crop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paper.paper_id])
+  }, [paperId])
 
   useEffect(() => {
     if (!current) return
@@ -186,7 +248,10 @@ export function QuestionView({
     setImages(null)
     setRevealed(false)
     void (async () => {
-      const r = await (await api()).paper_question_images(paper.paper_id, current)
+      const a = await api()
+      const r = await (preview
+        ? a.preview_question_images(current)
+        : a.paper_question_images(paperId, current))
       if (!live) return
       if (r.success) setImages(r)
       else notify('bad', r.error ?? '打开失败')
@@ -194,13 +259,13 @@ export function QuestionView({
     return () => {
       live = false
     }
-  }, [paper.paper_id, current])
+  }, [paperId, preview, current])
 
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="flex items-center gap-3">
         <BackButton onClick={onClose} />
-        <span className="text-section font-bold tabular-nums">{paper.paper_id}</span>
+        <span className="text-section font-bold tabular-nums">{paperId}</span>
       </div>
 
       {questions === null ? (
@@ -223,29 +288,59 @@ export function QuestionView({
             ))}
           </nav>
 
-          <ZoomPane storageKey="cie.questionView.zoom.qp" className="flex-[7]">
-            {images && <Slices urls={images.question} alt={`${current} 题目`} />}
-          </ZoomPane>
-
-          {hasMs && (
-            <ZoomPane storageKey="cie.questionView.zoom.ms" className="flex-[10]">
-              {images &&
-                (revealed ? (
-                  <Slices urls={images.mark_scheme} alt={`${current} mark scheme`} />
-                ) : (
-                  // Without the press every button gets: a whole page shrinking
-                  // under the pointer moves every line on it.
-                  <button
-                    onClick={() => setRevealed(true)}
-                    aria-label="显示 Mark Scheme"
-                    className="block w-full cursor-pointer text-left"
-                    style={{ scale: '1' }}
-                  >
-                    <Slices urls={images.mark_scheme} alt="" blurred />
-                  </button>
-                ))}
+          <div ref={panes} className="flex min-w-0 flex-1">
+            <ZoomPane
+              storageKey="cie.questionView.zoom.qp"
+              style={hasMs ? { flex: `${split} 1 0` } : undefined}
+            >
+              {images && <Slices urls={images.question} alt={`${current} 题目`} />}
             </ZoomPane>
-          )}
+
+            {hasMs && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-valuenow={Math.round(split * 100)}
+                tabIndex={0}
+                className="group flex w-4 shrink-0 cursor-col-resize touch-none justify-center outline-none"
+                onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+                onPointerMove={(e) => {
+                  const box = panes.current?.getBoundingClientRect()
+                  if (!box || !e.currentTarget.hasPointerCapture(e.pointerId)) return
+                  moveSplit((e.clientX - box.left) / box.width)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowLeft') moveSplit(split - 0.02)
+                  if (e.key === 'ArrowRight') moveSplit(split + 0.02)
+                }}
+              >
+                <div className="w-px bg-hairline transition-colors [transition-duration:var(--dur-fast)] group-hover:w-0.5 group-hover:bg-accent group-focus-visible:w-0.5 group-focus-visible:bg-accent group-active:w-0.5 group-active:bg-accent" />
+              </div>
+            )}
+
+            {hasMs && (
+              <ZoomPane
+                storageKey="cie.questionView.zoom.ms"
+                style={{ flex: `${1 - split} 1 0` }}
+              >
+                {images &&
+                  (revealed ? (
+                    <Slices urls={images.mark_scheme} alt={`${current} mark scheme`} />
+                  ) : (
+                    // Without the press every button gets: a whole page shrinking
+                    // under the pointer moves every line on it.
+                    <button
+                      onClick={() => setRevealed(true)}
+                      aria-label="显示 Mark Scheme"
+                      className="block w-full cursor-pointer text-left"
+                      style={{ scale: '1' }}
+                    >
+                      <Slices urls={images.mark_scheme} alt="" blurred />
+                    </button>
+                  ))}
+              </ZoomPane>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import datetime
 import logging
+import shutil
+import tempfile
 import threading
 import webbrowser
 from collections.abc import Callable, Mapping
@@ -43,7 +45,12 @@ from core.models import (
 )
 from core.settings import GraderConfig, MailConfig, app_settings
 from core.storage import AttemptStore, CSVStore, ExportStore, MistakeStore
-from modules.downloader import DownloadRequest, PaperDownloader, query_available
+from modules.downloader import (
+    DownloadRequest,
+    DownloadResult,
+    PaperDownloader,
+    query_available,
+)
 from modules.exports import build_record
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
@@ -212,6 +219,12 @@ class Api:
         #: throw away.
         self._practice_pdf: bytes | None = None
         self._practice_name = "practice.pdf"
+        #: The paper 仅预览 has open: its PDFs and question map live in a temp
+        #: directory that goes when the preview closes. The lock makes a close
+        #: that lands mid-download wait for it, then remove what it fetched.
+        self._preview: DownloadResult | None = None
+        self._preview_dir: Path | None = None
+        self._preview_lock = threading.Lock()
 
     # -- health --------------------------------------------------------------
 
@@ -267,6 +280,47 @@ class Api:
             # A malformed row is the store's problem to report elsewhere; here
             # it only means "cannot mark anything", which is not worth failing.
             return []
+
+    # -- download: preview ---------------------------------------------------
+
+    def preview_paper(self, paper_id: str, source: str = "CIEFrank") -> Payload:
+        """Fetch a paper into a temp directory and list its questions."""
+        try:
+            request = DownloadRequest(paper_id=paper_id, source=source)  # type: ignore[arg-type]
+        except ValidationError as exc:
+            return _invalid(exc)
+        with self._preview_lock:
+            self._drop_preview()
+            self._preview_dir = Path(tempfile.mkdtemp(prefix="cie_preview_"))
+            result = self._downloader.preview(request, self._preview_dir)
+            if not result.success or result.qp_path is None:
+                self._drop_preview()
+                return {"success": False, "error": result.error}
+            self._preview = result
+            return list_questions(
+                result.qp_path, result.ms_path or "", self._preview_dir,
+            ).model_dump(mode="json")
+
+    def preview_question_images(self, question_id: str) -> Payload:
+        """One question of the open preview and its mark scheme, as pictures."""
+        with self._preview_lock:
+            preview, folder = self._preview, self._preview_dir
+            if preview is None or preview.qp_path is None:
+                return {"success": False, "error": "预览已关闭"}
+            return question_images(
+                preview.qp_path, preview.ms_path or "", question_id, folder,
+            ).model_dump(mode="json")
+
+    def close_preview(self) -> None:
+        """Remove the open preview's files."""
+        with self._preview_lock:
+            self._drop_preview()
+
+    def _drop_preview(self) -> None:
+        if self._preview_dir is not None:
+            shutil.rmtree(self._preview_dir, ignore_errors=True)
+        self._preview = None
+        self._preview_dir = None
 
     # -- manage: papers ------------------------------------------------------
 

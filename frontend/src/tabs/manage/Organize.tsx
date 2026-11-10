@@ -301,7 +301,7 @@ export function Organize({
         }}
       >
         {viewed ? (
-          <QuestionView paper={viewed} onClose={() => setViewing(null)} />
+          <QuestionView paperId={viewed.paper_id} onClose={() => setViewing(null)} />
         ) : (
           current && (
             <PaperDetail

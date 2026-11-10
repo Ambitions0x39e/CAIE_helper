@@ -390,13 +390,16 @@ def _page_areas(
     return areas
 
 
-def _load_map(qp_path: str, ms_path: str) -> dict[str, QuestionClips]:
+def _load_map(
+    qp_path: str, ms_path: str, cache_dir: Path | None = None,
+) -> dict[str, QuestionClips]:
     """Question id → its slices of the QP and MS, worked out once per paper.
 
     A paper with no MS yet is not cached: it would keep its empty side after
     the MS arrived.
     """
-    cache = app_settings.question_cache_dir / f"{Path(qp_path).stem}.json"
+    folder = cache_dir or app_settings.question_cache_dir
+    cache = folder / f"{Path(qp_path).stem}.json"
     has_ms = bool(ms_path) and Path(ms_path).is_file()
     if has_ms and cache.is_file():
         try:
@@ -478,7 +481,9 @@ def _data_urls(source: str, clips: list[PageClip]) -> list[str]:
     return urls
 
 
-def list_questions(qp_path: str, ms_path: str) -> QuestionList:
+def list_questions(
+    qp_path: str, ms_path: str, cache_dir: Path | None = None,
+) -> QuestionList:
     """The paper's main questions, or why they cannot be listed."""
     from core.models import PaperType
     from modules.marking.syllabus_parser import resolve_grading_type
@@ -486,7 +491,7 @@ def list_questions(qp_path: str, ms_path: str) -> QuestionList:
     if resolve_grading_type(Path(qp_path).stem) is PaperType.MCQ:
         return QuestionList(success=False, error="选择题卷不能按题查看")
     try:
-        questions = _load_map(qp_path, ms_path)
+        questions = _load_map(qp_path, ms_path, cache_dir)
     except Exception as exc:  # noqa: BLE001 — a bad PDF is a message, not a crash
         _log.exception("list_questions failed for %s", qp_path)
         return QuestionList(success=False, error=str(exc))
@@ -499,10 +504,12 @@ def list_questions(qp_path: str, ms_path: str) -> QuestionList:
     )
 
 
-def question_images(qp_path: str, ms_path: str, question_id: str) -> QuestionImages:
+def question_images(
+    qp_path: str, ms_path: str, question_id: str, cache_dir: Path | None = None,
+) -> QuestionImages:
     """One question and its mark scheme, as pictures."""
     try:
-        clips = _load_map(qp_path, ms_path).get(question_id)
+        clips = _load_map(qp_path, ms_path, cache_dir).get(question_id)
         if clips is None:
             return QuestionImages(success=False, error=f"找不到 {question_id}")
         return QuestionImages(

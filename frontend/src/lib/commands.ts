@@ -48,6 +48,7 @@ export const COMMANDS: readonly Command[] = [
   { id: 'dl.request', group: '下载', label: '按考季查询', keys: ['session', 'query', 'kj'], intent: { tab: 'download', view: 'request' } },
   { id: 'dl.byid', group: '下载', label: '按 ID 下载', keys: ['id'], intent: { tab: 'download', view: 'by_id' } },
   { id: 'dl.gt', group: '下载', label: '分数线', keys: ['gt', 'threshold'], intent: { tab: 'download', view: 'gt' } },
+  { id: 'dl.preview', group: '下载', label: '仅预览', keys: ['preview', 'yl'], intent: { tab: 'download', view: 'preview' } },
 
   { id: 'mg.overview', group: '管理', label: '总览', keys: ['overview', 'stats', 'zl'], intent: { tab: 'manage', view: 'overview' } },
   { id: 'mg.organize', group: '管理', label: '整理', keys: ['organize', 'files'], intent: { tab: 'manage', view: 'organize' } },

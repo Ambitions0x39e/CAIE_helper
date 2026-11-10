@@ -5,6 +5,7 @@ import { PushTrack } from '../../ui/PushTrack'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
 import { ById } from './ById'
 import { Gt } from './Gt'
+import { Preview } from './Preview'
 import { Request } from './Request'
 
 /** The tab's sub-views, in strip order. `index` is what PushTrack animates
@@ -13,6 +14,7 @@ const VIEWS = [
   { id: 'request', label: '按考季查询' },
   { id: 'by_id', label: '按 ID 下载' },
   { id: 'gt', label: '分数线' },
+  { id: 'preview', label: '仅预览' },
 ] as const
 
 type ViewId = (typeof VIEWS)[number]['id']
@@ -71,8 +73,10 @@ export function DownloadTab({
           <Request source={source} />
         ) : view === 'by_id' ? (
           <ById key={prefill} source={source} prefill={prefill} />
-        ) : (
+        ) : view === 'gt' ? (
           <Gt source={source} />
+        ) : (
+          <Preview source={source} />
         )}
       </PushTrack>
     </div>
