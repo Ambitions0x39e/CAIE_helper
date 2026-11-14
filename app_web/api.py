@@ -52,6 +52,7 @@ from modules.downloader import (
     query_available,
 )
 from modules.exports import build_record
+from modules.grade_lines import GradeLines
 from modules.mailer import GoodNotesMailer, MailRequest
 from modules.manager import DeleteRequest, PaperManager, ScoreUpdate
 from modules.marking.answer_sheet import build_answer_sheet, typeset_answers
@@ -193,6 +194,9 @@ class Api:
         self._store = CSVStore()
         self._config = ConfigStore()
         self._downloader = PaperDownloader(self._store)
+        self._grade_lines = GradeLines(
+            self._downloader.download, app_settings.pdfs_dir, app_settings.gt_cache_dir,
+        )
         self._manager = PaperManager(self._store)
         self._mistakes = MistakeStore()
         self._attempts = AttemptStore()
@@ -1270,6 +1274,16 @@ class Api:
         except Exception as exc:  # noqa: BLE001 — reported, not swallowed
             return {"success": False, "error": f"分数线解析失败：{exc}"}
         return {"success": True, **doc.model_dump(mode="json")}
+
+    def trend(self, paper_ids: list[str]) -> Payload:
+        """The trend chart's points against A* / A / B / C, and the
+        rank-sum verdict on them when they are one component's."""
+        wanted = set(paper_ids)
+        try:
+            records = [r for r in self._store.load_all() if r.paper_id in wanted]
+        except ValueError:
+            records = []
+        return self._grade_lines.trend(records).model_dump(mode="json")
 
     # -- GoodNotes -----------------------------------------------------------
 

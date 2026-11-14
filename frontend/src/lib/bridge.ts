@@ -26,6 +26,7 @@ import type {
   SaveResult,
   SimpleResult,
   SyllabusConfig,
+  Trend,
 } from './types'
 
 /** Mirrors the public methods of `app_web/api.py::Api`. */
@@ -42,6 +43,7 @@ export interface PyApi {
   record_paper(paper_id: string): Promise<DownloadResult>
   downloaded_ids(): Promise<string[]>
   parse_gt(pdf_path: string, session: string): Promise<GTResult>
+  trend(paper_ids: string[]): Promise<Trend>
   papers(): Promise<PaperRecord[]>
   submit_score(
     paper_id: string, score_raw: number, score_total: number,

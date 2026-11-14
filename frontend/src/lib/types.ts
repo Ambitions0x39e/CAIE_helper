@@ -109,6 +109,39 @@ export type GTResult =
   | { success: true; syllabus_id: string; session: string; options: GradeThreshold[] }
   | { success: false; error: string }
 
+/** The grade lines drawn on the trend chart. */
+export const GRADE_LINES = ['A*', 'A', 'B', 'C'] as const
+export type GradeLine = (typeof GRADE_LINES)[number]
+
+/** Each line's height on the grade scale; `modules.grade_lines.LEVELS`. */
+export const GRADE_LEVELS: Record<GradeLine, number> = { 'A*': 4, A: 3, B: 2, C: 1 }
+/** Full marks on the grade scale; `modules.grade_lines.TOP`. */
+export const GRADE_TOP = 5
+
+/** `grade_lines` — one paper's boundaries as percentages of its maximum, and
+ * its score on the grade scale. */
+export interface GradePoint {
+  lines: Partial<Record<GradeLine, number>>
+  position: number | null
+}
+
+/** `modules.progress.Progress` — the rank-sum verdict on one component. */
+export interface Progress {
+  early: number
+  late: number
+  early_median: number
+  late_median: number
+  w: number
+  p: number
+  improved: boolean
+}
+
+/** `trend` — the chart's points, and the verdict when they are one component's. */
+export interface Trend {
+  points: Record<string, GradePoint>
+  progress: Progress | null
+}
+
 // -- modules.mailer ----------------------------------------------------------
 
 export interface MailResult {

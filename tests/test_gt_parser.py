@@ -226,6 +226,29 @@ class TestGTParser:
         pdf = _ruled_pdf(tmp_path / "9701_s25_gt.pdf", [(400.0, rows, _COLS)])
         assert GTParser().parse(pdf, "s25").option_codes == ["AC", "AX"]
 
+    def test_parses_the_component_table(self, tmp_path: Path) -> None:
+        # Laid out as CIE prints it: the "Minimum raw mark required for
+        # grade:" banner sits over the grade columns, a row above the letters.
+        rows = [
+            ["", "", "Minimum", "raw mark", "required", "for", "grade:"],
+            ["", "Maximum raw\nmark\navailable", "A", "B", "C", "D", "E"],
+            ["Component 11", "75", "59", "50", "38", "26", "15"],
+            ["Component 42", "50", "38", "32", "25", "19", "12"],
+            ["Component 43", "50", "38", "32", "25", "9", "12"],  # inverted
+        ]
+        cols = [60.0, 160.0, 230.0, 280.0, 330.0, 380.0, 430.0, 480.0]
+        pdf = _ruled_pdf(
+            tmp_path / "9709_s25_gt.pdf",
+            [(80.0, rows, cols), (400.0, _options_rows(), _COLS)],
+        )
+        doc = GTParser().parse(pdf, "s25")
+
+        assert [(c.component, c.max_raw, c.thresholds) for c in doc.components] == [
+            ("11", 75, {"A": 59, "B": 50, "C": 38, "D": 26, "E": 15}),
+            ("42", 50, {"A": 38, "B": 32, "C": 25, "D": 19, "E": 12}),
+        ]
+        assert doc.option_codes == ["AC", "AX"]
+
     def test_missing_file_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             GTParser().parse(tmp_path / "nope.pdf", "s25")

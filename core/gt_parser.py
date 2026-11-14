@@ -267,6 +267,55 @@ def _page_text(pdf_path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _check_thresholds(thresholds: dict[str, int], maximum: int) -> None:
+    """A higher grade can never need fewer marks than a lower one.
+
+    This is the net under the CID decoding. These PDFs ship no usable
+    character map, so a glyph id we cannot resolve is dropped — and a
+    dropped digit turns 103 into 10, which reads as a perfectly plausible
+    grade boundary. An inversion (D=10 below E=80) is the fingerprint of
+    exactly that, and the table readers skip rows that fail to construct.
+    Better to lose a row than to tell someone they got a D.
+
+    Ties are allowed: only a genuine inversion is rejected.
+    """
+    ranked = [(g, thresholds[g]) for g in _GRADE_COLS if g in thresholds]
+    for (high, hv), (low, lv) in zip(ranked, ranked[1:], strict=False):
+        if hv < lv:
+            raise ValueError(
+                f"threshold for {high} ({hv}) is below {low} ({lv}) — "
+                "the source text was probably mis-decoded"
+            )
+    if maximum > 0:
+        over = [f"{g}={v}" for g, v in ranked if v > maximum]
+        if over:
+            raise ValueError(
+                f"threshold(s) above the paper maximum "
+                f"{maximum}: {', '.join(over)}"
+            )
+
+
+class ComponentThreshold(BaseModel):
+    """One paper's raw-mark boundaries, from the table above the options.
+
+    CIE publishes no A* for a single component; that grade only exists on
+    the weighted options.
+    """
+
+    model_config = {"strict": False}
+
+    component: str
+    max_raw: int
+    thresholds: dict[str, int]
+
+    @model_validator(mode="after")
+    def thresholds_must_not_invert(self) -> ComponentThreshold:
+        if self.max_raw <= 0:
+            raise ValueError("component maximum must be positive")
+        _check_thresholds(self.thresholds, self.max_raw)
+        return self
+
+
 class GradeThreshold(BaseModel):
     model_config = {"strict": False}
 
@@ -292,33 +341,7 @@ class GradeThreshold(BaseModel):
 
     @model_validator(mode="after")
     def thresholds_must_not_invert(self) -> GradeThreshold:
-        """A higher grade can never need fewer marks than a lower one.
-
-        This is the net under the CID decoding. These PDFs ship no usable
-        character map, so a glyph id we cannot resolve is dropped — and a
-        dropped digit turns 103 into 10, which reads as a perfectly plausible
-        grade boundary. An inversion (D=10 below E=80) is the fingerprint of
-        exactly that, and _try_parse_options_table skips rows that fail to
-        construct. Better to lose a row than to tell someone they got a D.
-
-        Ties are allowed: only a genuine inversion is rejected.
-        """
-        ranked = [
-            (g, self.thresholds[g]) for g in _GRADE_COLS if g in self.thresholds
-        ]
-        for (high, hv), (low, lv) in zip(ranked, ranked[1:], strict=False):
-            if hv < lv:
-                raise ValueError(
-                    f"threshold for {high} ({hv}) is below {low} ({lv}) — "
-                    "the source text was probably mis-decoded"
-                )
-        if self.max_weighted > 0:
-            over = [f"{g}={v}" for g, v in ranked if v > self.max_weighted]
-            if over:
-                raise ValueError(
-                    f"threshold(s) above the paper maximum "
-                    f"{self.max_weighted}: {', '.join(over)}"
-                )
+        _check_thresholds(self.thresholds, self.max_weighted)
         return self
 
     def grade_for_score(self, total_raw: int | float) -> str:
@@ -340,6 +363,7 @@ class GTDocument(BaseModel):
     syllabus_id: str
     session: str
     options: list[GradeThreshold]
+    components: list[ComponentThreshold] = []
 
     @model_validator(mode="after")
     def must_have_options(self) -> GTDocument:
@@ -373,12 +397,19 @@ class GTParser:
             raise FileNotFoundError(f"GT PDF not found: {pdf_path}")
 
         syllabus_id = self._extract_syllabus_id(pdf_path)
-        options = self._extract_options(pdf_path)
+        tables = [
+            [[_decode(cell) if cell is not None else None for cell in row]
+             for row in table]
+            for table in _extract_tables(pdf_path)
+        ]
 
         return GTDocument(
             syllabus_id=syllabus_id,
             session=session,
-            options=options,
+            options=[o for t in tables for o in self._try_parse_options_table(t)],
+            components=[
+                c for t in tables for c in self._try_parse_components_table(t)
+            ],
         )
 
     # ------------------------------------------------------------------
@@ -396,14 +427,48 @@ class GTParser:
             return match.group(1)
         raise ValueError("Could not determine syllabus ID from PDF")
 
-    def _extract_options(self, pdf_path: Path) -> list[GradeThreshold]:
-        results: list[GradeThreshold] = []
-        for table in _extract_tables(pdf_path):
-            decoded = [
-                [_decode(cell) if cell is not None else None for cell in row]
-                for row in table
-            ]
-            results.extend(self._try_parse_options_table(decoded))
+    def _try_parse_components_table(
+        self, table: list[list[str | None]]
+    ) -> list[ComponentThreshold]:
+        """Rows like ``['Component 11', '75', '59', '50', '38', '26', '15']``
+        under a header naming the grades."""
+        header_row_idx = next(
+            (
+                i for i, row in enumerate(table)
+                if {"A", "B"} <= {str(c or "").strip() for c in row}
+            ),
+            None,
+        )
+        if header_row_idx is None:
+            return []
+        # The row itself: the one above it carries "Minimum raw mark required
+        # for grade:" split across the grade columns.
+        header = [str(c or "").strip() for c in table[header_row_idx]]
+        grade_indices = {g: i for i, g in enumerate(header) if g in _GRADE_COLS}
+        max_idx = next((i for i, c in enumerate(header) if "max" in c.lower()), None)
+        if max_idx is None:
+            return []
+
+        results: list[ComponentThreshold] = []
+        for row in table[header_row_idx + 1:]:
+            match = re.fullmatch(r"Component\s+(\d+)", str(row[0] or "").strip())
+            if not match or max_idx >= len(row):
+                continue
+            thresholds: dict[str, int] = {}
+            for grade, idx in grade_indices.items():
+                if idx < len(row):
+                    with contextlib.suppress(ValueError, TypeError):
+                        thresholds[grade] = int(str(row[idx]).strip())
+            try:
+                results.append(
+                    ComponentThreshold(
+                        component=match.group(1),
+                        max_raw=int(str(row[max_idx]).strip()),
+                        thresholds=thresholds,
+                    )
+                )
+            except ValueError:
+                continue
         return results
 
     @staticmethod

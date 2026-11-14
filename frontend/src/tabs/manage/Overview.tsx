@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../lib/bridge'
 import { groupBySyllabus, paperDigit, subjectGlyph, tally } from '../../lib/papers'
-import type { PaperRecord, SyllabusConfig } from '../../lib/types'
+import type { PaperRecord, SyllabusConfig, Trend } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
 import { Donut } from '../../ui/Donut'
 import { Glyph } from '../../ui/Glyph'
 import { Overlay } from '../../ui/Overlay'
 import { SegmentedStrip } from '../../ui/SegmentedStrip'
-import { TrendChart } from './TrendChart'
+import { ProgressLine, TrendChart } from './TrendChart'
 
 /** A paper's marks over time need at least two points to be a line. */
 const MIN_FOR_TREND = 2
@@ -216,6 +216,25 @@ export function Overview({
   )
 }
 
+/** Every paper's place among its own grade boundaries, and the rank-sum
+ * verdict on them. Null until it arrives, after the panel itself: a session
+ * whose threshold file is not on disk yet is fetched first. */
+function useTrend(attempts: PaperRecord[]): Trend | null {
+  const key = attempts.map((a) => a.paper_id).join(' ')
+  const [got, setGot] = useState<{ key: string; trend: Trend } | null>(null)
+  useEffect(() => {
+    let live = true
+    api()
+      .then((a) => a.trend(key.split(' ')))
+      .then((trend) => live && setGot({ key, trend }))
+      .catch(() => live && setGot({ key, trend: { points: {}, progress: null } }))
+    return () => {
+      live = false
+    }
+  }, [key])
+  return got?.key === key ? got.trend : null
+}
+
 function SyllabusDetail({
   syllabusId,
   name,
@@ -254,6 +273,7 @@ function SyllabusDetail({
         }),
     [records, paper],
   )
+  const trend = useTrend(attempts)
 
   return (
     // Sized to the panel rather than to its content, so the marks scroll
@@ -331,7 +351,10 @@ function SyllabusDetail({
         <div className="flex min-h-0 flex-col gap-4">
           <div className="shrink-0">
             {attempts.length >= MIN_FOR_TREND ? (
-              <TrendChart attempts={attempts} />
+              <div className="space-y-2">
+                <TrendChart attempts={attempts} points={trend?.points ?? {}} />
+                {component && trend && <ProgressLine trend={trend} />}
+              </div>
             ) : (
               <div className="py-8 text-center text-caption italic text-muted">
                 至少需要 2 次成绩才能绘制趋势图

@@ -134,6 +134,11 @@ class AppSettings(BaseSettings):
         return self.base_dir / ".cache" / "topics"
 
     @property
+    def gt_cache_dir(self) -> Path:
+        """Each session's per-component thresholds — see ``modules.grade_lines``."""
+        return self.base_dir / ".cache" / "gt"
+
+    @property
     def question_cache_dir(self) -> Path:
         """Where each question sits in its QP and MS — see ``modules.question_view``."""
         return self.base_dir / ".cache" / "questions"
