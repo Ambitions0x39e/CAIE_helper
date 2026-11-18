@@ -575,6 +575,33 @@ class TestContentBands:
 # ── Composition ───────────────────────────────────────────────────
 
 
+class TestPicturePage:
+    """A page that is one embedded picture (9702 s24 qp 42, Q4) has no text."""
+
+    def _picture_pdf(self, path: Path) -> Path:
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (560, 790), "white").save(buffer, format="PNG")
+        buffer.seek(0)
+        pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))
+        pdf.set_auto_page_break(auto=False)
+        pdf.add_page()
+        pdf.image(buffer, x=26, y=0, w=560, h=790)
+        pdf.output(str(path))
+        return path
+
+    @pytest.mark.parametrize("trim", [True, False])
+    def test_the_picture_is_the_question(self, tmp_path: Path, trim: bool) -> None:
+        pdf = self._picture_pdf(tmp_path / "qp.pdf")
+
+        bands = content_bands(
+            str(pdf), [Band(page_idx=0, y_top=45.0, y_bottom=740.0)], trim=trim,
+        )
+
+        assert len(bands) == 1 and bands[0].height > 600
+
+
 def _answer_pdf(path: Path, text: str) -> bytes:
     """A stand-in for a typeset mark-scheme page."""
     pdf = FPDF(unit="pt", format=(_PAGE_W, _PAGE_H))

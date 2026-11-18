@@ -20,6 +20,7 @@ from modules.marking.page_segmenter import (
     _build_regions,
     _detect_format,
     _extract_boundaries,
+    _fill_image_page_questions,
     _is_cid_encoded,
     _load_pages,
     _match_boundaries,
@@ -867,6 +868,61 @@ class TestSegmentQuestions:
             pdf_bytes, ["Q1", "Q2"], skip_pages=set()
         )
         assert regions == []
+
+
+
+class TestImagePageQuestions:
+    """A question that starts on a page with no text layer has no number to read."""
+
+    @staticmethod
+    def _main(page: int, num: int) -> _Boundary:
+        return _Boundary(
+            kind=_BoundaryKind.MAIN, page_idx=page, y=60.0, question_num=num,
+        )
+
+    def _filled(
+        self, texts: list[bool], mains: list[tuple[int, int]],
+    ) -> list[tuple[int, int | None]]:
+        """(page, number) of every MAIN after filling; texts[i] says page i has text."""
+        pages = [_page_of([(72.4, 53.0, "x")] if t else []) for t in texts]
+        boundaries = [self._main(pg, n) for pg, n in mains]
+        return [
+            (b.page_idx, b.question_num)
+            for b in _fill_image_page_questions(boundaries, pages, {0})
+        ]
+
+    def test_the_gap_is_filled_by_the_text_less_page(self) -> None:
+        got = self._filled(
+            [True, True, True, False, True], [(1, 1), (2, 2), (4, 4)],
+        )
+
+        assert got == [(1, 1), (2, 2), (3, 3), (4, 4)]
+
+    def test_a_gap_with_no_text_less_page_stays_a_gap(self) -> None:
+        got = self._filled(
+            [True, True, True, True, True], [(1, 1), (2, 2), (4, 4)],
+        )
+
+        assert got == [(1, 1), (2, 2), (4, 4)]
+
+    def test_runs_and_gaps_that_do_not_pair_up_are_left_alone(self) -> None:
+        got = self._filled(
+            [True, True, False, True, False, True], [(1, 1), (5, 3)],
+        )
+
+        assert got == [(1, 1), (5, 3)]
+
+    def test_a_long_image_run_is_one_question(self) -> None:
+        got = self._filled(
+            [True, True, False, False, True], [(1, 1), (4, 3)],
+        )
+
+        assert got == [(1, 1), (2, 2), (4, 3)]
+
+    def test_a_skipped_page_is_not_a_question(self) -> None:
+        got = self._filled([False, True, True], [(1, 2), (2, 3)])
+
+        assert got == [(1, 2), (2, 3)]
 
 
 class TestTwoPhaseSegmentation:

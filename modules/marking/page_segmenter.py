@@ -1198,6 +1198,56 @@ def _build_regions(
     return regions
 
 
+def _fill_image_page_questions(
+    boundaries: list[_Boundary],
+    pages: list[_SegPage],
+    skip_pages: set[int],
+    top_margin: float = 45.0,
+) -> list[_Boundary]:
+    """Give a question that starts on a text-less page its MAIN boundary.
+
+    A page that is one embedded picture has no text layer, so the number of
+    the question starting on it is never read: 9702 s24 qp 42 loses Q4 this
+    way, and Q3 then runs on through Q4's later pages. The decoded numbers
+    show where one is missing; when the gaps between two decoded questions
+    and the runs of text-less pages between them pair up one to one, each run
+    is that question's first page. Anything that does not pair up is left a
+    gap.
+    """
+    mains = [
+        b for b in boundaries
+        if b.kind == _BoundaryKind.MAIN and b.question_num is not None
+    ]
+    if not mains:
+        return boundaries
+
+    added: list[_Boundary] = []
+    anchors = [(0, max(skip_pages, default=-1))] + [
+        (b.question_num or 0, b.page_idx) for b in mains
+    ]
+    for (prev_num, prev_page), (next_num, next_page) in zip(
+        anchors, anchors[1:], strict=False,
+    ):
+        wanted = list(range(prev_num + 1, next_num))
+        textless = [
+            i for i in range(prev_page + 1, next_page)
+            if i not in skip_pages and not pages[i].words
+        ]
+        starts = [i for i in textless if i - 1 not in textless]
+        if wanted and len(starts) == len(wanted):
+            added.extend(
+                _Boundary(
+                    kind=_BoundaryKind.MAIN, page_idx=page,
+                    y=top_margin + _CLIP_TOP_PAD, question_num=num,
+                )
+                for num, page in zip(wanted, starts, strict=True)
+            )
+    return sorted(
+        [*boundaries, *added],
+        key=lambda b: (b.page_idx, b.y, _KIND_RANK[b.kind]),
+    )
+
+
 # ── Public API ────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -1243,13 +1293,16 @@ def scan_document(
         skip_pages = {0}
 
     pages = _load_pages(source)
-    boundaries = _extract_boundaries(pages, skip_pages=skip_pages)
     char_map = _build_char_mapping(pages)
     # A page-less / boundary-less PDF never reaches _build_regions (see
     # match_scanned's early return), so these fall back to any valid params.
     params = _FORMAT_PARAMS[
         _detect_format(pages[0]) if pages else "a4"
     ]
+    boundaries = _fill_image_page_questions(
+        _extract_boundaries(pages, skip_pages=skip_pages),
+        pages, skip_pages, params["top_margin"],
+    )
     last_boundary_page = (
         max(b.page_idx for b in boundaries) if boundaries else 0
     )

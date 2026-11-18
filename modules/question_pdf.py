@@ -418,6 +418,12 @@ def _content_spans(
             x1=element.x1,  # type: ignore[attr-defined]
         ))
 
+    # A page with no text at all is one embedded picture of the question
+    # (9702 s24 qp 42, p.10): it is as tall as the page, and it is the content.
+    picture_page = not any(
+        isinstance(element, LTTextContainer)
+        for element in layout  # type: ignore[attr-defined]
+    )
     for element in layout:  # type: ignore[attr-defined]
         if isinstance(element, LTTextContainer):
             for line in element:
@@ -430,6 +436,15 @@ def _content_spans(
                     continue  # barcode / running head, not question content
                 _add(line, content)
                 text_lines += 1
+        elif picture_page and isinstance(element, LTFigure | LTImage):
+            # The picture reaches past the region's end — it is the whole
+            # page, footer included — so it is cut to the region, not judged
+            # by where it ends.
+            content.append(_Span(
+                top=max(page_height - element.y1, y_top),
+                bottom=min(page_height - element.y0, y_bottom),
+                x0=element.x0, x1=element.x1,
+            ))
         elif isinstance(
             element, (LTLine, LTRect, LTCurve, LTFigure, LTImage)
         ) and element.height <= _FURNITURE_RATIO * page_height:
