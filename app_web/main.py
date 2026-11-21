@@ -128,8 +128,23 @@ def _add_titlebar_grip(window: webview.Window) -> None:
 def _center_traffic_lights(window: webview.Window) -> None:
     """Centre the three window buttons over the nav column. AppKit lays the
     title bar out again whenever the window resizes, which puts them back at
-    the left edge, so the shift is re-applied after every resize."""
-    nav = window.evaluate_js("document.querySelector('nav').clientWidth")
+    the left edge, so the shift is re-applied after every resize.
+
+    `loaded` fires once the document has, which can be before React's first
+    render has put the nav in it, so the width is read from a promise that
+    waits for the nav to exist."""
+    window.evaluate_js(_NAV_WIDTH, lambda nav: _shift_traffic_lights(window, nav))
+
+
+_NAV_WIDTH = (
+    "new Promise(function wait(done) {"
+    " var nav = document.querySelector('nav');"
+    " nav ? done(nav.clientWidth) : setTimeout(function () { wait(done) }, 50);"
+    " })"
+)
+
+
+def _shift_traffic_lights(window: webview.Window, nav: float) -> None:
     ns: Any = window.native
     kinds = (AppKit.NSWindowCloseButton, AppKit.NSWindowMiniaturizeButton,
              AppKit.NSWindowZoomButton)
