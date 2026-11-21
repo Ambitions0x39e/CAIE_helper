@@ -4,7 +4,8 @@ import { BookOpen, ChevronDown, FileText, Send, Trash2 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { api } from '../../lib/bridge'
 import type { Intent } from '../../lib/commands'
-import { groupBySyllabus, subjectGlyph } from '../../lib/papers'
+import { useKept } from '../../lib/kept'
+import { PAPER_ORDERS, type PaperOrder, groupBySyllabus, subjectGlyph } from '../../lib/papers'
 import { ringOffsets } from '../../lib/ring'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { BackButton } from '../../ui/BackButton'
@@ -23,6 +24,12 @@ const LAYOUTS = [
   { id: 'detail', label: '详细信息' },
 ] as const
 type LayoutId = (typeof LAYOUTS)[number]['id']
+
+const ORDERS = [
+  { id: 'year', label: '年份' },
+  { id: 'component', label: 'Component' },
+  { id: 'season', label: '季节' },
+] as const satisfies readonly { id: PaperOrder; label: string }[]
 
 /** What one paper can be made to do. The same list whether they are laid out
  * as circles over the icon or as buttons at the end of a row. `from` is the
@@ -53,8 +60,9 @@ export function Organize({
    * an intent meant for a sibling view cannot knock this one over. */
   intent?: Intent | null
 }) {
-  const [layout, setLayout] = useState<LayoutId>('icons')
-  const [hideCompleted, setHideCompleted] = useState(false)
+  const [layout, setLayout] = useKept<LayoutId>('manage.layout', 'icons')
+  const [order, setOrder] = useKept<PaperOrder>('manage.order', 'year')
+  const [hideCompleted, setHideCompleted] = useKept('manage.hideCompleted', false)
   const [selected, setSelected] = useState<string | null>(null)
   /** The paper 看题 is open on. Over the detail panel when one is open, so going
    * back from it lands where it was started. */
@@ -71,7 +79,7 @@ export function Organize({
   useEffect(() => {
     const asked = LAYOUTS.find((l) => l.id === intent?.sub)?.id
     if (asked) setLayout(asked)
-  }, [intent])
+  }, [intent, setLayout])
 
   useEffect(() => {
     api()
@@ -90,10 +98,12 @@ export function Organize({
     [papers, hideCompleted],
   )
 
-  const bands = useMemo(() => groupBySyllabus(shown), [shown])
+  const bands = useMemo(() => groupBySyllabus(shown, PAPER_ORDERS[order]), [shown, order])
+  /** The 详细信息 rows: the bands laid end to end, so both layouts share one order. */
+  const rows = useMemo(() => bands.flatMap(([, list]) => list), [bands])
 
   /** Which subjects are folded away, by code. */
-  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set())
+  const [folded, setFolded] = useKept<ReadonlySet<string>>('manage.folded', new Set())
   const toggleFold = (code: string) =>
     setFolded((prev) => {
       const next = new Set(prev)
@@ -180,19 +190,22 @@ export function Organize({
 
   return (
     <div className="space-y-4">
-      {/* The strip sits centred and the switch hard right, the same balance the
-          two views are read with. */}
+      {/* The layout strip sits centred, the filter and the order hard right,
+          the same balance the two views are read with. */}
       <div className="flex items-center">
         <div className="flex-1" />
         <SegmentedStrip items={LAYOUTS} value={layout} onChange={setLayout} />
-        <label className="flex flex-1 items-center justify-end gap-1.5 text-caption text-muted">
-          <input
-            type="checkbox"
-            checked={hideCompleted}
-            onChange={(e) => setHideCompleted(e.target.checked)}
-          />
-          隐藏已完成
-        </label>
+        <div className="flex flex-1 items-center justify-end gap-3">
+          <label className="flex items-center gap-1.5 text-caption text-muted">
+            <input
+              type="checkbox"
+              checked={hideCompleted}
+              onChange={(e) => setHideCompleted(e.target.checked)}
+            />
+            隐藏已完成
+          </label>
+          <SegmentedStrip items={ORDERS} value={order} onChange={setOrder} />
+        </div>
       </div>
 
       {/* Floated over the page rather than laid into it: the icon that was
@@ -286,7 +299,7 @@ export function Organize({
         </div>
       ) : (
         <DetailList
-          shown={shown}
+          shown={rows}
           onSelect={(id, rect) => {
             setOrigin(rect)
             setSelected(id)

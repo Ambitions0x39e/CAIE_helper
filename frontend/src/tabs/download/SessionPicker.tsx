@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../lib/bridge'
+import { useKept } from '../../lib/kept'
 import { Select } from '../../ui/Select'
 import type { QuerySeason, SyllabusConfig } from '../../lib/types'
 import { FIRST_YEAR, SEASONS, type Session } from './session'
@@ -12,11 +13,18 @@ import { FIRST_YEAR, SEASONS, type Session } from './session'
  * to correct it — an effect that both reads and writes the same prop. Owning
  * the three fields here and reporting upward leaves one direction of flow.
  */
-export function SessionPicker({ onChange }: { onChange: (s: Session) => void }) {
+export function SessionPicker({
+  onChange,
+  keep,
+}: {
+  onChange: (s: Session) => void
+  /** Remember the three fields under this name across unmounts. */
+  keep?: string
+}) {
   const [syllabuses, setSyllabuses] = useState<SyllabusConfig[]>([])
-  const [syllabus, setSyllabus] = useState('')
-  const [year, setYear] = useState(String(new Date().getFullYear()))
-  const [season, setSeason] = useState<QuerySeason>('m')
+  const [syllabus, setSyllabus] = useKept(keep && `${keep}.syllabus`, '')
+  const [year, setYear] = useKept(keep && `${keep}.year`, String(new Date().getFullYear()))
+  const [season, setSeason] = useKept<QuerySeason>(keep && `${keep}.season`, 'm')
 
   // Held in a ref so the report-upward effect below depends on the session
   // fields alone; an inline arrow from the parent changes identity every render
@@ -34,10 +42,13 @@ export function SessionPicker({ onChange }: { onChange: (s: Session) => void }) 
           a.syllabus_id.localeCompare(b.syllabus_id),
         )
         setSyllabuses(sorted)
-        if (sorted.length > 0) setSyllabus(sorted[0].syllabus_id)
+        // A remembered subject stands as long as it is still in the config.
+        setSyllabus((prev) =>
+          sorted.some((s) => s.syllabus_id === prev) ? prev : (sorted[0]?.syllabus_id ?? ''),
+        )
       })
       .catch(() => setSyllabuses([]))
-  }, [])
+  }, [setSyllabus])
 
   useEffect(() => {
     if (syllabus) report.current({ syllabus, year, season })

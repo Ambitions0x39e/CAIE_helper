@@ -221,7 +221,7 @@ export function Request({ source }: { source: DownloadSource }) {
   return (
     <div className="space-y-4">
       <div className="rounded-ui border border-hairline bg-panel p-4.5 space-y-3">
-        <SessionPicker onChange={setSession} />
+        <SessionPicker keep="download.request" onChange={setSession} />
         <Button tone="accent" onClick={runQuery} disabled={busy || !session}>
           查询
         </Button>

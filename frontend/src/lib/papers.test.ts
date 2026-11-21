@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   FALLBACK_GLYPH,
+  PAPER_ORDERS,
   comparePaperIds,
   groupBySyllabus,
   paperDigit,
@@ -143,6 +144,28 @@ describe('paperDigit — which paper of the syllabus this is', () => {
   test('anything without a digit lands in the ? bucket', () => {
     assert.equal(paperDigit('9701_w25_gt'), '?')
     assert.equal(paperDigit('9702_s23_qp_ab'), '?')
+  })
+})
+
+describe('PAPER_ORDERS', () => {
+  const ids = ['9709_s24_qp_32', '9709_w23_qp_12', '9709_s23_qp_31', '9709_m24_qp_12']
+
+  test('component groups each paper number, oldest first within it', () => {
+    assert.deepEqual([...ids].sort(PAPER_ORDERS.component), [
+      '9709_w23_qp_12',
+      '9709_m24_qp_12',
+      '9709_s23_qp_31',
+      '9709_s24_qp_32',
+    ])
+  })
+
+  test('season runs March, Summer, Winter, oldest first within each', () => {
+    assert.deepEqual([...ids].sort(PAPER_ORDERS.season), [
+      '9709_m24_qp_12',
+      '9709_s23_qp_31',
+      '9709_s24_qp_32',
+      '9709_w23_qp_12',
+    ])
   })
 })
 

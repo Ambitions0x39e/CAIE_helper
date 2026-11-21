@@ -122,12 +122,24 @@ export function comparePaperIds(a: string, b: string): number {
   return ay - by || as - bs || a.localeCompare(b)
 }
 
+export type PaperOrder = 'year' | 'component' | 'season'
+
+/** The 整理 view's three orders. Each leads with its own key and falls back to
+ * chronological order, so papers that tie on it still read oldest first. */
+export const PAPER_ORDERS: Record<PaperOrder, (a: string, b: string) => number> = {
+  year: comparePaperIds,
+  component: (a, b) => paperDigit(a).localeCompare(paperDigit(b)) || comparePaperIds(a, b),
+  season: (a, b) => sitting(a)[1] - sitting(b)[1] || comparePaperIds(a, b),
+}
+
 /** Papers bucketed by syllabus code, buckets in code order and each bucket in
- * chronological order — what both the 总览 cards and the 图标 view's subject
- * bands are built from. Ordering by code rather than by size keeps a subject
- * from jumping the queue the moment it overtakes another. */
+ * `compare` order, chronological unless told otherwise — what both the 总览
+ * cards and the 图标 view's subject bands are built from. Ordering by code
+ * rather than by size keeps a subject from jumping the queue the moment it
+ * overtakes another. */
 export function groupBySyllabus(
   records: readonly PaperRecord[],
+  compare: (a: string, b: string) => number = comparePaperIds,
 ): [string, PaperRecord[]][] {
   const groups = new Map<string, PaperRecord[]>()
   for (const p of records) {
@@ -138,6 +150,6 @@ export function groupBySyllabus(
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([id, list]) => [
       id,
-      [...list].sort((x, y) => comparePaperIds(x.paper_id, y.paper_id)),
+      [...list].sort((x, y) => compare(x.paper_id, y.paper_id)),
     ])
 }

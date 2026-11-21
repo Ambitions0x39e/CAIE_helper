@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../lib/bridge'
+import { useKept } from '../../lib/kept'
 import type { Intent } from '../../lib/commands'
 import type { PaperRecord, SyllabusConfig } from '../../lib/types'
 import { PushTrack } from '../../ui/PushTrack'
@@ -20,7 +21,7 @@ export function ManageTab({
   intent?: Intent | null
   onConsumed?: () => void
 }) {
-  const [section, setSection] = useState<SectionId>('overview')
+  const [section, setSection] = useKept<SectionId>('manage.section', 'overview')
   const [dir, setDir] = useState(1)
   const [papers, setPapers] = useState<PaperRecord[]>([])
   const [syllabuses, setSyllabuses] = useState<SyllabusConfig[]>([])
