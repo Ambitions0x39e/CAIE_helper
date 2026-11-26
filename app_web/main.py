@@ -49,9 +49,24 @@ def _entry() -> str:
 
 if sys.platform == "darwin":
     import AppKit  # type: ignore[import-untyped]
+    import objc  # type: ignore[import-untyped]
     import WebKit  # type: ignore[import-untyped]
     from PyObjCTools import AppHelper  # type: ignore[import-untyped]
     from webview.platforms.cocoa import BrowserView
+
+    def _fullscreen_options(_self: Any, _window: Any, proposed: int) -> int:
+        """In full screen AppKit moves the title bar and toolbar into a window
+        of their own, pinned over the top of the page and painted opaque — the
+        clear background `_inset_titlebar` sets stays behind with the original
+        container. Auto-hiding the toolbar lets that strip slide away with the
+        menu bar instead of sitting white over the page."""
+        return proposed | int(AppKit.NSApplicationPresentationAutoHideToolbar)
+
+    objc.classAddMethods(BrowserView.WindowDelegate, [objc.selector(
+        _fullscreen_options,
+        selector=b"window:willUseFullScreenPresentationOptions:",
+        signature=b"Q@:@Q",
+    )])
 
     class _TitlebarGrip(AppKit.NSView):  # type: ignore[misc]
         def mouseDown_(self, event: AppKit.NSEvent) -> None:
