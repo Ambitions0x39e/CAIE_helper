@@ -54,6 +54,8 @@ if sys.platform == "darwin":
     from PyObjCTools import AppHelper  # type: ignore[import-untyped]
     from webview.platforms.cocoa import BrowserView
 
+    from app_web import mac_menu
+
     def _fullscreen_options(_self: Any, _window: Any, proposed: int) -> int:
         """In full screen AppKit moves the title bar and toolbar into a window
         of their own, pinned over the top of the page and painted opaque — the
@@ -212,6 +214,7 @@ def main() -> None:
         window.events.before_show += _inset_titlebar
         window.events.loaded += _add_titlebar_grip
         window.events.loaded += _center_traffic_lights
+        window.events.loaded += mac_menu.install
     # `private_mode` defaults to True, which throws the webview's storage away
     # on exit — localStorage included, so anything the UI remembers between
     # launches (the command palette's usage counts, its empty-state setting)

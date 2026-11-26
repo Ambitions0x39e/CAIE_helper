@@ -140,5 +140,9 @@ if sys.platform == "darwin":
             # plain windowed app.
             "LSApplicationCategoryType": "public.app-category.education",
             "CFBundleShortVersionString": VERSION,
+            # The bundle ships no .lproj, so this is the language AppKit picks
+            # for the menu items it adds itself (服务's contents, the window
+            # tiling entries) — Chinese, like the menus the app builds.
+            "CFBundleDevelopmentRegion": "zh_CN",
         },
     )

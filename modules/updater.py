@@ -49,6 +49,8 @@ from pydantic import BaseModel
 from core.settings import app_settings
 
 _REPO: Final[str] = "Ambitions0x39e/CAIE_helper"
+#: Public — the macOS Help menu links to the project page off it.
+REPO_URL: Final[str] = f"https://github.com/{_REPO}"
 #: Public — the UI opens this in a browser on platforms we cannot install for.
 #: It is also what the check reads: it redirects to the latest tag's page.
 RELEASES_PAGE_URL: Final[str] = (

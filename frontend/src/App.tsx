@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, LayoutGrid, Pencil, Settings, Target } from 'lucide-react'
 import { BRIDGE_ABSENT, bridge } from './lib/bridge'
-import type { Intent } from './lib/commands'
+import { COMMANDS, type Intent } from './lib/commands'
 import { DownloadTab } from './tabs/download'
 import { ManageTab } from './tabs/manage'
 import { MarkTab } from './tabs/mark'
@@ -22,6 +22,12 @@ const TABS = [
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
+
+declare global {
+  interface Window {
+    __cieMenu?: (id: string) => void
+  }
+}
 
 export default function App() {
   const [tab, setTab] = useState<TabId>('download')
@@ -81,6 +87,16 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // The macOS menu bar (`app_web/mac_menu.py`) names a command by its id.
+  // Re-bound every render: `run` closes over the current tab.
+  useEffect(() => {
+    window.__cieMenu = (id) => {
+      if (id === 'palette') setPalette(true)
+      const command = COMMANDS.find((c) => c.id === id)
+      if (command) run(command.intent)
+    }
+  })
 
   return (
     // The nav is fixed and the main column scrolls on its own. A page-level
