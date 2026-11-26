@@ -100,7 +100,7 @@ wheels = [
 
 [[package]]
 name = "cie-helper"
-version = "2.5.1"
+version = "2.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "openai" },
