@@ -150,6 +150,14 @@
       {
         "digit": "2",
         "name": "AS Programming"
+      },
+      {
+        "digit": "3",
+        "name": "Advanced Theory"
+      },
+      {
+        "digit": "4",
+        "name": "Practical"
       }
     ]
   },
